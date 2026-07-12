@@ -26,6 +26,7 @@ import { coversEntireFile, extractSignedBytes } from './pdf-parser.js';
 import {
   checkRevocation,
   evaluateTrust,
+  fetchMissingIssuers,
   parseCertificates,
   parseCrls,
   parseOcspResponses,
@@ -127,6 +128,19 @@ export async function verifySignatures(
       } else {
         notes.push('Document timestamp could not be fully verified.');
       }
+
+      // v0.4: evaluate the TSA chain of a document timestamp against anchors
+      const tsaArtifacts = extractCmsArtifacts(sig.contents);
+      if (tsaArtifacts?.signerCert && trustStore.certificates.length > 0) {
+        report.trust = await evaluateTrust({
+          signerCert: tsaArtifacts.signerCert,
+          availableCerts: [...tsaArtifacts.certificates, ...dssCerts],
+          trustAnchors: trustStore.certificates,
+          checkDate: new Date(),
+          crls: dssCrls,
+          ocsps: dssOcsps,
+        });
+      }
       reports.push(report);
       continue;
     }
@@ -173,6 +187,17 @@ export async function verifySignatures(
         artifacts.signingTime ??
         (cms.signatureTimestamp?.genTime ? new Date(cms.signatureTimestamp.genTime) : new Date());
 
+      // v0.4: complete the chain via AIA caIssuers (online mode only)
+      if (revocationMode === RevocationMode.ONLINE) {
+        const fetchedIssuers = await fetchMissingIssuers(artifacts.signerCert, availableCerts);
+        if (fetchedIssuers.length > 0) {
+          availableCerts.push(...fetchedIssuers);
+          notes.push(
+            `Fetched ${fetchedIssuers.length} issuer certificate(s) via AIA caIssuers to complete the chain.`,
+          );
+        }
+      }
+
       report.trust = await evaluateTrust({
         signerCert: artifacts.signerCert,
         availableCerts,
@@ -208,6 +233,26 @@ export async function verifySignatures(
           notes.push(
             `Signature timestamp verified (TSA: ${cms.signatureTimestamp.tsaSubject ?? 'unknown'}, genTime: ${cms.signatureTimestamp.genTime ?? 'unknown'}).`,
           );
+        }
+
+        // v0.4: evaluate the TSA chain against trust anchors
+        if (artifacts.signatureTimestampToken && trustStore.certificates.length > 0) {
+          const tsaArtifacts = extractCmsArtifacts(artifacts.signatureTimestampToken);
+          if (tsaArtifacts?.signerCert) {
+            cms.signatureTimestamp.tsaTrust = await evaluateTrust({
+              signerCert: tsaArtifacts.signerCert,
+              availableCerts: [...tsaArtifacts.certificates, ...availableCerts],
+              trustAnchors: trustStore.certificates,
+              checkDate: cms.signatureTimestamp.genTime
+                ? new Date(cms.signatureTimestamp.genTime)
+                : checkDate,
+              crls: embeddedCrls,
+              ocsps: embeddedOcsps,
+            });
+            if (cms.signatureTimestamp.tsaTrust.status === TrustStatus.UNTRUSTED) {
+              notes.push(`TSA chain evaluation failed: ${cms.signatureTimestamp.tsaTrust.detail}`);
+            }
+          }
         }
       }
     }

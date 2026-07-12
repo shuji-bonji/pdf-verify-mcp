@@ -233,6 +233,7 @@ export async function verifyCms(
         signatureVerified: false,
         genTime: null,
         tsaSubject: null,
+        tsaTrust: null,
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -347,6 +348,7 @@ export async function verifyTimestampToken(
     signatureVerified: false,
     genTime: null,
     tsaSubject: null,
+    tsaTrust: null,
     error: null,
   };
 

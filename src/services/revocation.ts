@@ -10,7 +10,9 @@
 import * as asn1js from 'asn1js';
 import * as pkijs from 'pkijs';
 import {
+  AIA_MAX_CHAIN_DEPTH,
   ASN1_LARGE_STRUCTURE_LIMITS,
+  OID,
   REVOCATION_FETCH_TIMEOUT,
   RevocationStatus,
   TrustStatus,
@@ -178,6 +180,113 @@ export function extractCrlUrls(cert: pkijs.Certificate): string[] {
 
 async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
   return fetch(url, { ...init, signal: AbortSignal.timeout(REVOCATION_FETCH_TIMEOUT) });
+}
+
+function subjectName(cert: pkijs.Certificate): string {
+  return cert.subject.typesAndValues
+    .map((tv) => `${tv.type}=${tv.value.valueBlock.value}`)
+    .join(',');
+}
+
+function issuerName(cert: pkijs.Certificate): string {
+  return cert.issuer.typesAndValues
+    .map((tv) => `${tv.type}=${tv.value.valueBlock.value}`)
+    .join(',');
+}
+
+/** Extract caIssuers URLs from the AIA extension (v0.4) */
+export function extractCaIssuersUrls(cert: pkijs.Certificate): string[] {
+  const ext = cert.extensions?.find((e) => e.extnID === X509_OID.AUTHORITY_INFO_ACCESS);
+  const infoAccess = ext?.parsedValue as pkijs.InfoAccess | undefined;
+  if (!infoAccess) return [];
+  const urls: string[] = [];
+  for (const ad of infoAccess.accessDescriptions) {
+    if (ad.accessMethod === X509_OID.ACCESS_METHOD_CA_ISSUERS && ad.accessLocation.type === 6) {
+      urls.push(String(ad.accessLocation.value));
+    }
+  }
+  return urls.filter((u) => u.startsWith('http'));
+}
+
+/** Parse a caIssuers payload: a bare DER certificate or a PKCS#7 bundle */
+function parseCaIssuersPayload(der: Uint8Array): pkijs.Certificate[] {
+  const single = fromBerOrNull(der, (s) => new pkijs.Certificate({ schema: s }));
+  if (single) return [single];
+  const contentInfo = fromBerOrNull(der, (s) => new pkijs.ContentInfo({ schema: s }));
+  if (contentInfo?.contentType === OID.SIGNED_DATA) {
+    try {
+      const signedData = new pkijs.SignedData({ schema: contentInfo.content });
+      return (signedData.certificates ?? []).filter(
+        (c): c is pkijs.Certificate => c instanceof pkijs.Certificate,
+      );
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+/**
+ * Fetch missing issuer certificates via the AIA caIssuers access method (v0.4).
+ * Walks up the chain until an issuer is already available, the certificate is
+ * self-signed, or the depth limit is reached. Network access is the caller's
+ * decision (only invoked in online revocation mode).
+ *
+ * @returns The certificates fetched (possibly empty)
+ */
+export async function fetchMissingIssuers(
+  leaf: pkijs.Certificate,
+  available: pkijs.Certificate[],
+  maxDepth = AIA_MAX_CHAIN_DEPTH,
+): Promise<pkijs.Certificate[]> {
+  const fetched: pkijs.Certificate[] = [];
+  const known = [...available];
+  let current = leaf;
+
+  for (let depth = 0; depth < maxDepth; depth++) {
+    // Self-signed: top of the chain
+    if (subjectName(current) === issuerName(current)) break;
+    // Issuer already available (embedded or previously fetched)
+    const existing = known.find((c) => subjectName(c) === issuerName(current));
+    if (existing) {
+      current = existing;
+      continue;
+    }
+
+    const urls = extractCaIssuersUrls(current);
+    if (urls.length === 0) break;
+
+    let found: pkijs.Certificate | null = null;
+    for (const url of urls) {
+      try {
+        const response = await fetchWithTimeout(url, { method: 'GET' });
+        if (!response.ok) continue;
+        const der = new Uint8Array(await response.arrayBuffer());
+        const certs = parseCaIssuersPayload(der);
+        const issuer = certs.find((c) => subjectName(c) === issuerName(current));
+        if (issuer) {
+          found = issuer;
+          // Keep any extra chain certificates from a PKCS#7 bundle too
+          for (const cert of certs) {
+            if (!known.some((k) => subjectName(k) === subjectName(cert))) {
+              known.push(cert);
+              fetched.push(cert);
+            }
+          }
+          break;
+        }
+      } catch (error) {
+        logger.debug(
+          CONTEXT,
+          `caIssuers fetch failed (${url}): ${error instanceof Error ? error.message : error}`,
+        );
+      }
+    }
+    if (!found) break;
+    current = found;
+  }
+
+  return fetched;
 }
 
 /** Query an OCSP responder for the certificate's status */

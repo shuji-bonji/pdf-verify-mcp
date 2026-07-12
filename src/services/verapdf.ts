@@ -8,12 +8,25 @@
  */
 
 import { execFile } from 'node:child_process';
+import { access, constants } from 'node:fs';
 import { promisify } from 'node:util';
 import { VERAPDF_ENV, VERAPDF_TIMEOUT } from '../constants.js';
 import { logger } from '../utils/logger.js';
 
 const CONTEXT = 'verapdf';
 const execFileAsync = promisify(execFile);
+const accessAsync = promisify(access);
+
+/**
+ * Well-known install locations, checked after PATH. GUI-launched MCP hosts
+ * (e.g. Claude Desktop on macOS) often have a minimal PATH that excludes
+ * Homebrew's bin directories.
+ */
+const WELL_KNOWN_PATHS = [
+  '/opt/homebrew/bin/verapdf', // Homebrew (Apple Silicon)
+  '/usr/local/bin/verapdf', // Homebrew (Intel) / manual install
+  '/usr/bin/verapdf',
+];
 
 export interface VeraPdfViolation {
   ruleId: string;
@@ -45,10 +58,25 @@ export async function findVeraPdf(): Promise<string | null> {
     const which = process.platform === 'win32' ? 'where' : 'which';
     const { stdout } = await execFileAsync(which, ['verapdf'], { timeout: 5000 });
     const found = stdout.split('\n')[0]?.trim();
-    cachedPath = found || null;
+    if (found) {
+      cachedPath = found;
+      return cachedPath;
+    }
   } catch {
-    cachedPath = null;
+    // fall through to well-known locations
   }
+
+  for (const candidate of WELL_KNOWN_PATHS) {
+    try {
+      await accessAsync(candidate, constants.X_OK);
+      cachedPath = candidate;
+      logger.debug(CONTEXT, `veraPDF found at well-known path: ${candidate}`);
+      return cachedPath;
+    } catch {
+      // try next
+    }
+  }
+  cachedPath = null;
   return cachedPath;
 }
 

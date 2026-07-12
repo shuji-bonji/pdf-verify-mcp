@@ -63,6 +63,8 @@ interface CertificateOptions {
   serial?: number;
   /** Add an AIA extension pointing to this OCSP URL */
   ocspUrl?: string;
+  /** Add an AIA caIssuers entry pointing to this URL */
+  caIssuersUrl?: string;
   /** Add a CRLDistributionPoints extension pointing to this URL */
   crlUrl?: string;
 }
@@ -98,15 +100,25 @@ export async function createIdentity(options: CertificateOptions): Promise<TestI
   } else {
     certificate.extensions.push(keyUsageExtension(0x80)); // digitalSignature
   }
-  if (options.ocspUrl) {
-    const infoAccess = new pkijs.InfoAccess({
-      accessDescriptions: [
+  if (options.ocspUrl || options.caIssuersUrl) {
+    const accessDescriptions: pkijs.AccessDescription[] = [];
+    if (options.ocspUrl) {
+      accessDescriptions.push(
         new pkijs.AccessDescription({
           accessMethod: '1.3.6.1.5.5.7.48.1',
           accessLocation: new pkijs.GeneralName({ type: 6, value: options.ocspUrl }),
         }),
-      ],
-    });
+      );
+    }
+    if (options.caIssuersUrl) {
+      accessDescriptions.push(
+        new pkijs.AccessDescription({
+          accessMethod: '1.3.6.1.5.5.7.48.2',
+          accessLocation: new pkijs.GeneralName({ type: 6, value: options.caIssuersUrl }),
+        }),
+      );
+    }
+    const infoAccess = new pkijs.InfoAccess({ accessDescriptions });
     certificate.extensions.push(
       new pkijs.Extension({
         extnID: '1.3.6.1.5.5.7.1.1',
@@ -294,8 +306,10 @@ function buildTemplate(options: BuildPdfOptions): PdfTemplate {
   const contentsPlaceholder = `<${'0'.repeat(PLACEHOLDER_HEX_LEN)}>`;
   const byteRangePlaceholder = '[0 0000000000 0000000000 0000000000]';
 
+  // The whole template is serialized as latin1, so /Length must count
+  // latin1 bytes too (utf8 counting made veraPDF flag a Length mismatch).
   const xmpPacket = options.xmp ? buildXmpPacket(options.xmp) : null;
-  const xmpBytes = xmpPacket ? Buffer.byteLength(xmpPacket, 'utf8') : 0;
+  const xmpBytes = xmpPacket ? Buffer.byteLength(xmpPacket, 'latin1') : 0;
 
   const perms = options.docMdpPermission !== undefined ? ' /Perms << /DocMDP 5 0 R >>' : '';
   const reference =

@@ -77,8 +77,12 @@ export const WEAK_DIGESTS: ReadonlySet<string> = new Set(['MD5', 'SHA-1']);
 export const X509_OID = {
   AUTHORITY_INFO_ACCESS: '1.3.6.1.5.5.7.1.1',
   ACCESS_METHOD_OCSP: '1.3.6.1.5.5.7.48.1',
+  ACCESS_METHOD_CA_ISSUERS: '1.3.6.1.5.5.7.48.2',
   CRL_DISTRIBUTION_POINTS: '2.5.29.31',
 } as const;
+
+/** Maximum chain depth when fetching issuer certificates via AIA */
+export const AIA_MAX_CHAIN_DEPTH = 5;
 
 /** Environment variable: directory containing default trust anchor certificates */
 export const TRUST_ANCHORS_ENV = 'PDF_VERIFY_TRUST_ANCHORS';

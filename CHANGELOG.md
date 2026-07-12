@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - Unreleased
+
+### Added
+
+- AIA chain completion (`check_revocation: "online"`): when the issuer
+  certificate is not embedded in the CMS/DSS, it is fetched via the AIA
+  caIssuers access method (bare DER or PKCS#7 bundle, depth-limited).
+  This enables OCSP and full chain evaluation for signatures that embed
+  only the leaf certificate (e.g. AWS invoices).
+- TSA trust evaluation: when trust anchors are provided, the TSA certificate
+  chain of signature timestamps (`tsaTrust` on the timestamp result) and
+  document timestamps (report-level `trust`) is evaluated.
+
+### Fixed
+
+- Test fixture generator: XMP metadata stream /Length was counted in UTF-8
+  while the template serializes as latin1 (flagged by veraPDF).
+
 ## [0.3.0] - Unreleased
 
 ### Added

@@ -31,6 +31,8 @@ export interface TimestampTokenResult {
   genTime: string | null;
   /** TSA certificate subject when present */
   tsaSubject: string | null;
+  /** TSA certificate chain evaluation against trust anchors (v0.4+) */
+  tsaTrust: TrustResult | null;
   error: string | null;
 }
 
