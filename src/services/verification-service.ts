@@ -3,7 +3,7 @@
  * into the reports returned by the MCP tools.
  */
 
-import { DOCMDP_PERMISSIONS, PadesLevel, SUB_FILTER, Verdict } from '../constants.js';
+import { DOCMDP_PERMISSIONS, PadesLevel, SUB_FILTER, Verdict, WEAK_DIGESTS } from '../constants.js';
 import type {
   IntegrityReport,
   PadesLevelReport,
@@ -39,6 +39,12 @@ export async function verifySignatures(parsed: ParsedPdf): Promise<SignatureVeri
       isDocumentTimestamp: sig.isDocumentTimestamp,
       notes,
     };
+
+    if (parsed.isEncrypted) {
+      notes.push(
+        'Document is encrypted: string metadata (field name, /M, /Reason, /Location) is not decodable without decryption and was omitted. Cryptographic verification is unaffected.',
+      );
+    }
 
     if (!sig.byteRange || !sig.contents || sig.contents.length === 0) {
       notes.push('Signature field is unsigned or missing ByteRange/Contents.');
@@ -113,6 +119,11 @@ export async function verifySignatures(parsed: ParsedPdf): Promise<SignatureVeri
       );
     }
 
+    if (cms.digestAlgorithm && WEAK_DIGESTS.has(cms.digestAlgorithm)) {
+      notes.push(
+        `Digest algorithm ${cms.digestAlgorithm} is cryptographically weak (legacy signature format); integrity assurance is limited.`,
+      );
+    }
     if (cms.signerCertificate?.isExpiredNow) {
       notes.push('Signer certificate is expired as of now (may have been valid at signing time).');
     }

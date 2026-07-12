@@ -161,6 +161,14 @@ export async function parsePdfBytes(bytes: Uint8Array): Promise<ParsedPdf> {
     );
   }
 
+  // In encrypted PDFs all string objects are encrypted; without decryption
+  // decodeText() would yield mojibake. Suppress string metadata in that case.
+  // (Signature verification itself works on raw bytes and is unaffected —
+  // /Contents is excluded from encryption per ISO 32000-1 §7.6.2.)
+  const isEncrypted = doc.isEncrypted;
+  const str = (dict: PDFDict, key: string): string | null =>
+    isEncrypted ? null : lookupString(dict, key);
+
   const fieldNames = collectFieldNames(doc);
   const signatures: SignatureField[] = [];
   const seen = new Set<PDFDict>();
@@ -179,15 +187,15 @@ export async function parsePdfBytes(bytes: Uint8Array): Promise<ParsedPdf> {
 
     const contents = lookupBytes(object, 'Contents');
     signatures.push({
-      fieldName: fieldNames.get(object) ?? null,
+      fieldName: isEncrypted ? null : (fieldNames.get(object) ?? null),
       filter: lookupName(object, 'Filter'),
       subFilter: lookupName(object, 'SubFilter'),
       byteRange: lookupNumberArray(object, 'ByteRange'),
       contents: contents ? stripZeroPadding(contents) : null,
-      signingTimeDictionary: lookupString(object, 'M'),
-      name: lookupString(object, 'Name'),
-      reason: lookupString(object, 'Reason'),
-      location: lookupString(object, 'Location'),
+      signingTimeDictionary: str(object, 'M'),
+      name: str(object, 'Name'),
+      reason: str(object, 'Reason'),
+      location: str(object, 'Location'),
       isDocumentTimestamp: isDts,
       docMdpPermission: extractDocMdpPermission(object),
     });
@@ -216,6 +224,7 @@ export async function parsePdfBytes(bytes: Uint8Array): Promise<ParsedPdf> {
   const parsed: ParsedPdf = {
     bytes,
     fileSize: bytes.length,
+    isEncrypted,
     signatures,
     revisionCount: countPattern(bytes, 'startxref'),
     hasDss: Boolean(dss),

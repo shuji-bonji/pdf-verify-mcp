@@ -37,19 +37,41 @@ export const OID = {
   MESSAGE_DIGEST: '1.2.840.113549.1.9.4',
   SIGNING_TIME: '1.2.840.113549.1.9.5',
   SIGNATURE_TIME_STAMP: '1.2.840.113549.1.9.16.2.14',
+  MD5: '1.2.840.113549.2.5',
   SHA1: '1.3.14.3.2.26',
   SHA256: '2.16.840.1.101.3.4.2.1',
   SHA384: '2.16.840.1.101.3.4.2.2',
   SHA512: '2.16.840.1.101.3.4.2.3',
 } as const;
 
-/** Map of digest algorithm OIDs to WebCrypto hash names */
+/** Map of digest algorithm OIDs to canonical hash names */
 export const DIGEST_OID_TO_HASH: Readonly<Record<string, string>> = {
+  [OID.MD5]: 'MD5',
   [OID.SHA1]: 'SHA-1',
   [OID.SHA256]: 'SHA-256',
   [OID.SHA384]: 'SHA-384',
   [OID.SHA512]: 'SHA-512',
 };
+
+/** Hash names supported by WebCrypto subtle.digest (others need node:crypto) */
+export const WEBCRYPTO_HASHES: ReadonlySet<string> = new Set([
+  'SHA-1',
+  'SHA-256',
+  'SHA-384',
+  'SHA-512',
+]);
+
+/** Canonical hash name → node:crypto hash name */
+export const NODE_HASH_NAMES: Readonly<Record<string, string>> = {
+  MD5: 'md5',
+  'SHA-1': 'sha1',
+  'SHA-256': 'sha256',
+  'SHA-384': 'sha384',
+  'SHA-512': 'sha512',
+};
+
+/** Digest algorithms considered cryptographically weak */
+export const WEAK_DIGESTS: ReadonlySet<string> = new Set(['MD5', 'SHA-1']);
 
 /** SubFilter values (PDF signature encodings) */
 export const SUB_FILTER = {

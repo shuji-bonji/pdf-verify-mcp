@@ -11,10 +11,10 @@
  * OCSP/CRL revocation checking. Results always carry trust: 'not_evaluated'.
  */
 
-import { webcrypto } from 'node:crypto';
+import { createHash, createPublicKey, verify as nodeCryptoVerify, webcrypto } from 'node:crypto';
 import * as asn1js from 'asn1js';
 import * as pkijs from 'pkijs';
-import { DIGEST_OID_TO_HASH, OID } from '../constants.js';
+import { DIGEST_OID_TO_HASH, NODE_HASH_NAMES, OID, WEBCRYPTO_HASHES } from '../constants.js';
 import type { CertificateInfo, CmsVerificationResult } from '../types.js';
 import { logger } from '../utils/logger.js';
 
@@ -41,6 +41,47 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Compute a digest, using node:crypto for algorithms WebCrypto lacks (MD5) */
+async function computeDigest(hashName: string, data: Uint8Array): Promise<Uint8Array> {
+  if (WEBCRYPTO_HASHES.has(hashName)) {
+    return new Uint8Array(await webcrypto.subtle.digest(hashName, toArrayBuffer(data)));
+  }
+  const nodeName = NODE_HASH_NAMES[hashName];
+  if (!nodeName) throw new Error(`Unsupported digest algorithm: ${hashName}`);
+  return new Uint8Array(createHash(nodeName).update(data).digest());
+}
+
+/**
+ * Legacy RSA PKCS#1 v1.5 verification via node:crypto for algorithms
+ * WebCrypto does not support (notably MD5, used e.g. by AWS invoices).
+ *
+ * When signedAttrs are present the signature covers their DER encoding
+ * with the IMPLICIT [0] tag replaced by SET (0x31) — same re-tagging
+ * pkijs performs internally.
+ */
+function verifySignatureLegacy(
+  signerInfo: pkijs.SignerInfo,
+  signerCert: pkijs.Certificate,
+  signedBytes: Uint8Array,
+  hashName: string,
+): boolean {
+  const nodeName = NODE_HASH_NAMES[hashName];
+  if (!nodeName) return false;
+
+  let data: Buffer;
+  if (signerInfo.signedAttrs) {
+    data = Buffer.from(new Uint8Array(signerInfo.signedAttrs.encodedValue));
+    data[0] = 0x31;
+  } else {
+    data = Buffer.from(signedBytes);
+  }
+
+  const spkiDer = Buffer.from(signerCert.subjectPublicKeyInfo.toSchema().toBER(false));
+  const publicKey = createPublicKey({ key: spkiDer, format: 'der', type: 'spki' });
+  const signature = Buffer.from(new Uint8Array(signerInfo.signature.valueBlock.valueHexView));
+  return nodeCryptoVerify(nodeName, data, publicKey, signature);
 }
 
 /** Map common attribute type OIDs in an RDN to short names */
@@ -191,24 +232,43 @@ export async function verifyCms(
   if (hashName) {
     const expected = extractMessageDigest(signerInfo);
     if (expected) {
-      const actual = new Uint8Array(
-        await webcrypto.subtle.digest(hashName, toArrayBuffer(signedBytes)),
-      );
-      result.digestMatches = bytesToHex(actual) === bytesToHex(expected);
+      try {
+        const actual = await computeDigest(hashName, signedBytes);
+        result.digestMatches = bytesToHex(actual) === bytesToHex(expected);
+      } catch (error) {
+        result.error = error instanceof Error ? error.message : String(error);
+      }
     }
   } else {
     result.error = `Unsupported digest algorithm OID: ${digestOid}`;
   }
 
-  // 2. Cryptographic signature verification via pkijs
+  // 2. Cryptographic signature verification.
+  // WebCrypto-supported algorithms go through pkijs; legacy algorithms
+  // (e.g. MD5-based signatures on old AWS invoices) fall back to node:crypto.
+  const useLegacyPath = hashName !== null && !WEBCRYPTO_HASHES.has(hashName);
   try {
-    const hasEncapsulatedContent = Boolean(signedData.encapContentInfo.eContent);
-    result.signatureVerified = await signedData.verify({
-      signer: 0,
-      checkChain: false,
-      // Detached signatures need the external data; encapsulated ones do not.
-      ...(hasEncapsulatedContent ? {} : { data: toArrayBuffer(signedBytes) }),
-    });
+    if (useLegacyPath) {
+      if (!signerCert) throw new Error('Signer certificate not found in CMS');
+      result.signatureVerified = verifySignatureLegacy(
+        signerInfo,
+        signerCert,
+        signedBytes,
+        hashName,
+      );
+      result.error = null; // supersede the provisional "unsupported" diagnostic
+      if (!result.signatureVerified) {
+        result.error = `Legacy ${hashName} signature verification failed`;
+      }
+    } else {
+      const hasEncapsulatedContent = Boolean(signedData.encapContentInfo.eContent);
+      result.signatureVerified = await signedData.verify({
+        signer: 0,
+        checkChain: false,
+        // Detached signatures need the external data; encapsulated ones do not.
+        ...(hasEncapsulatedContent ? {} : { data: toArrayBuffer(signedBytes) }),
+      });
+    }
   } catch (error) {
     result.signatureVerified = false;
     const message = error instanceof Error ? error.message : String(error);

@@ -16,6 +16,12 @@ All notable changes to this project will be documented in this file.
 - `identify_conformance`: PDF/A / PDF/UA declaration identification from XMP metadata.
 - Reproducible test fixtures: self-signed certificate and signed/tampered PDFs
   generated in-memory with pkijs + WebCrypto (no binary assets).
+- Encrypted PDF handling: string metadata (field name, /M, /Reason, /Location)
+  is suppressed with an explanatory note instead of emitting undecodable
+  ciphertext; cryptographic verification is unaffected.
+- Legacy algorithm fallback: MD5-based signatures (e.g. AWS invoices) are
+  verified via node:crypto since WebCrypto lacks MD5. Weak digest algorithms
+  (MD5, SHA-1) are flagged in the report notes.
 
 ### Notes
 
