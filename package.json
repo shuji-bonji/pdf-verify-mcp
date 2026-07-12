@@ -1,0 +1,82 @@
+{
+  "name": "@shuji-bonji/pdf-verify-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for PDF authenticity verification - cryptographic signature verification, tamper detection, PAdES level detection",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "bin": {
+    "pdf-verify-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "README.ja.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc && chmod +x dist/index.js",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:fixtures": "tsx tests/fixtures/create-fixtures.ts",
+    "lint": "biome lint ./src ./tests",
+    "lint:fix": "biome lint --fix ./src ./tests",
+    "format": "biome format ./src ./tests",
+    "format:fix": "biome format --write ./src ./tests",
+    "check": "biome check ./src ./tests",
+    "check:fix": "biome check --fix ./src ./tests",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "pdf",
+    "pdf-verification",
+    "digital-signature",
+    "signature-verification",
+    "tamper-detection",
+    "pades",
+    "cms",
+    "pkcs7",
+    "model-context-protocol",
+    "ai-tools"
+  ],
+  "author": "shuji-bonji",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shuji-bonji/pdf-verify-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/shuji-bonji/pdf-verify-mcp/issues"
+  },
+  "homepage": "https://github.com/shuji-bonji/pdf-verify-mcp#readme",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.1",
+    "asn1js": "^3.0.10",
+    "pdf-lib": "^1.17.1",
+    "pkijs": "^3.4.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.14",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}
