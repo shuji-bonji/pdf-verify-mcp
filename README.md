@@ -14,6 +14,7 @@ Part of the PDF family alongside [pdf-reader-mcp](https://github.com/shuji-bonji
 | `verify_integrity` | Tamper detection: incremental updates, changes after signing, DocMDP certification violations |
 | `detect_pades_level` | PAdES baseline level (B-B / B-T / B-LT / B-LTA) with content-validated LTV data |
 | `identify_conformance` | Declared PDF/A / PDF/UA conformance from XMP metadata |
+| `validate_conformance` | PDF/A validation (ISO 19005): veraPDF when installed, built-in rule subset otherwise |
 
 ## Verdicts
 
@@ -32,6 +33,12 @@ Pass `trust_anchors` (PEM/DER file paths) or set the `PDF_VERIFY_TRUST_ANCHORS` 
 > Without trust anchors, `trust` stays `not_evaluated` and a `valid` verdict asserts cryptographic integrity, not signer identity.
 
 Supported SubFilters: `ETSI.CAdES.detached` (PAdES), `adbe.pkcs7.detached`, `ETSI.RFC3161` (document timestamps). RFC 3161 signature timestamps are fully verified (imprint + TSA signature). Legacy MD5/SHA-1 signatures are verified via node:crypto and flagged as weak.
+
+## PDF/A validation (v0.3)
+
+`validate_conformance` uses a hybrid engine. With veraPDF installed (`PDF_VERIFY_VERAPDF` env var or on PATH) validation is delegated for authoritative results. Otherwise a built-in subset of ~15 high-value ISO 19005 rules runs natively (encryption, trailer /ID, LZW, font embedding, JavaScript/prohibited actions, OutputIntent, transparency for A-1, XFA, and more), each reported with its clause reference.
+
+Native results are honest about their limits: violations mean definitively non-compliant; all-passed means "no violations in the checked subset" — never certification. PDF/UA (accessibility) validation belongs to pdf-reader-mcp's `validate_tagged`.
 
 ## Installation
 

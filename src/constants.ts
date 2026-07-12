@@ -83,6 +83,19 @@ export const X509_OID = {
 /** Environment variable: directory containing default trust anchor certificates */
 export const TRUST_ANCHORS_ENV = 'PDF_VERIFY_TRUST_ANCHORS';
 
+/** Environment variable: path to the veraPDF executable */
+export const VERAPDF_ENV = 'PDF_VERIFY_VERAPDF';
+
+/** Timeout for veraPDF CLI execution (ms) */
+export const VERAPDF_TIMEOUT = 120_000;
+
+/** Conformance validation engine selection */
+export enum ValidationEngine {
+  AUTO = 'auto',
+  NATIVE = 'native',
+  VERAPDF = 'verapdf',
+}
+
 /** Timeout for online OCSP/CRL fetches (ms) */
 export const REVOCATION_FETCH_TIMEOUT = 10_000;
 

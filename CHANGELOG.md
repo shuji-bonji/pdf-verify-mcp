@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - Unreleased
+
+### Added
+
+- `validate_conformance`: PDF/A validation (ISO 19005) with a hybrid engine.
+  - veraPDF delegation when installed (`PDF_VERIFY_VERAPDF` env var or on
+    PATH) — authoritative results via `--format json`.
+  - Native fallback: a built-in subset of ~15 high-value rules (encryption,
+    trailer /ID, LZW/Crypt filters, PDF version limits, XMP declaration,
+    OutputIntent, font embedding, JavaScript / prohibited actions, embedded
+    files and transparency for A-1, XFA, NeedAppearances, catalog /AA), each
+    with its ISO 19005 clause reference.
+  - `flavour` parameter (e.g. "pdfa-2b"; defaults to the XMP declaration) and
+    `engine` parameter ('auto' / 'verapdf' / 'native').
+  - Native results are reported honestly: violations mean definitively
+    non-compliant; all-passed means "no violations in the checked subset",
+    never certification.
+- PDF/UA documents get a pointer to pdf-reader-mcp's `validate_tagged`
+  (accessibility validation stays in the reader's scope).
+
 ## [0.2.0] - Unreleased
 
 ### Added

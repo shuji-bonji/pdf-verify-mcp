@@ -144,6 +144,36 @@ export function formatPadesReports(reports: PadesLevelReport[]): string {
   return lines.join('\n');
 }
 
+export function formatConformanceValidation(
+  report: import('../services/conformance-validation.js').ConformanceValidationReport,
+): string {
+  const lines: string[] = ['# PDF/A Conformance Validation', ''];
+  lines.push(`- Flavour: ${report.flavour}`);
+  lines.push(`- Engine: ${report.engine}`);
+  const compliantLabel =
+    report.compliant === true
+      ? '**COMPLIANT**'
+      : report.compliant === false
+        ? '**NOT COMPLIANT**'
+        : '**NO VIOLATIONS DETECTED** (subset check — not a certification)';
+  lines.push(`- Result: ${compliantLabel}`);
+  lines.push(
+    `- Rules: ${report.checkedRules} checked, ${report.passedRules} passed, ${report.failedRules} failed`,
+  );
+  if (report.violations.length > 0) {
+    lines.push('', '## Violations');
+    for (const v of report.violations) {
+      lines.push(`- **${v.ruleId}** (${v.clause}): ${v.description}`);
+      if (v.detail) lines.push(`  - ${v.detail}`);
+    }
+  }
+  if (report.notes.length > 0) {
+    lines.push('', '## Notes');
+    for (const note of report.notes) lines.push(`- ${note}`);
+  }
+  return lines.join('\n');
+}
+
 export function formatConformanceReport(report: ConformanceReport): string {
   const lines: string[] = ['# Conformance Declaration', ''];
   lines.push(`- PDF version: ${report.pdfVersion ?? 'unknown'}`);
