@@ -73,6 +73,52 @@ export const NODE_HASH_NAMES: Readonly<Record<string, string>> = {
 /** Digest algorithms considered cryptographically weak */
 export const WEAK_DIGESTS: ReadonlySet<string> = new Set(['MD5', 'SHA-1']);
 
+/** X.509 extension / access method OIDs used for revocation checking */
+export const X509_OID = {
+  AUTHORITY_INFO_ACCESS: '1.3.6.1.5.5.7.1.1',
+  ACCESS_METHOD_OCSP: '1.3.6.1.5.5.7.48.1',
+  CRL_DISTRIBUTION_POINTS: '2.5.29.31',
+} as const;
+
+/** Environment variable: directory containing default trust anchor certificates */
+export const TRUST_ANCHORS_ENV = 'PDF_VERIFY_TRUST_ANCHORS';
+
+/** Timeout for online OCSP/CRL fetches (ms) */
+export const REVOCATION_FETCH_TIMEOUT = 10_000;
+
+/**
+ * ASN.1 parse limits for large revocation structures.
+ * asn1js defaults (maxNodes=10,000) are too small for real-world CRLs —
+ * e.g. DigiCert CRLs contain tens of thousands of revoked entries.
+ */
+export const ASN1_LARGE_STRUCTURE_LIMITS = {
+  maxNodes: 5_000_000,
+  maxDepth: 100,
+  maxContentLength: 64 * 1024 * 1024,
+} as const;
+
+/** Revocation check modes */
+export enum RevocationMode {
+  NONE = 'none',
+  EMBEDDED = 'embedded',
+  ONLINE = 'online',
+}
+
+/** Trust evaluation outcome */
+export enum TrustStatus {
+  TRUSTED = 'trusted',
+  UNTRUSTED = 'untrusted',
+  NOT_EVALUATED = 'not_evaluated',
+}
+
+/** Certificate revocation outcome */
+export enum RevocationStatus {
+  GOOD = 'good',
+  REVOKED = 'revoked',
+  UNKNOWN = 'unknown',
+  NOT_CHECKED = 'not_checked',
+}
+
 /** SubFilter values (PDF signature encodings) */
 export const SUB_FILTER = {
   ADBE_PKCS7_DETACHED: 'adbe.pkcs7.detached',

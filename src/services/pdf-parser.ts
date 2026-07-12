@@ -114,6 +114,23 @@ function extractXmp(doc: PDFDocument): string | null {
   }
 }
 
+/** Decode an array of streams referenced from a DSS entry (Certs/OCSPs/CRLs) */
+function decodeStreamArray(dict: PDFDict, key: string): Uint8Array[] {
+  const array = dict.lookup(PDFName.of(key));
+  if (!(array instanceof PDFArray)) return [];
+  const results: Uint8Array[] = [];
+  for (let i = 0; i < array.size(); i++) {
+    const stream = array.lookup(i);
+    if (!(stream instanceof PDFRawStream)) continue;
+    try {
+      results.push(decodePDFRawStream(stream).decode());
+    } catch {
+      results.push(stream.contents);
+    }
+  }
+  return results;
+}
+
 /**
  * Build a map from signature /V dictionaries to their field names,
  * by scanning all AcroForm signature fields.
@@ -210,10 +227,16 @@ export async function parsePdfBytes(bytes: Uint8Array): Promise<ParsedPdf> {
 
   const dss = doc.catalog.get(PDFName.of('DSS'));
   let hasVri = false;
+  let dssStreams: ParsedPdf['dss'] = null;
   if (dss) {
     const dssDict = doc.context.lookup(dss);
     if (dssDict instanceof PDFDict) {
       hasVri = dssDict.has(PDFName.of('VRI'));
+      dssStreams = {
+        certs: decodeStreamArray(dssDict, 'Certs'),
+        ocsps: decodeStreamArray(dssDict, 'OCSPs'),
+        crls: decodeStreamArray(dssDict, 'CRLs'),
+      };
     }
   }
 
@@ -229,6 +252,7 @@ export async function parsePdfBytes(bytes: Uint8Array): Promise<ParsedPdf> {
     revisionCount: countPattern(bytes, 'startxref'),
     hasDss: Boolean(dss),
     hasVri,
+    dss: dssStreams,
     xmpMetadata: extractXmp(doc),
     pdfVersion: headerMatch ? headerMatch[1] : null,
   };

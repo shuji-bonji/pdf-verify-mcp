@@ -2,7 +2,37 @@
  * Shared types for pdf-verify-mcp
  */
 
-import type { PadesLevel, Verdict } from './constants.js';
+import type { PadesLevel, RevocationStatus, TrustStatus, Verdict } from './constants.js';
+
+/** Result of trust chain evaluation against trust anchors */
+export interface TrustResult {
+  status: TrustStatus;
+  /** Human-readable detail (engine message, anchor source, or why not evaluated) */
+  detail: string | null;
+  /** Subjects along the validated certificate path (leaf first) */
+  certificatePath: string[] | null;
+}
+
+/** Result of revocation checking for the signer certificate */
+export interface RevocationResult {
+  status: RevocationStatus;
+  /** Where the decisive revocation information came from */
+  source: 'ocsp_embedded' | 'crl_embedded' | 'ocsp_online' | 'crl_online' | null;
+  detail: string | null;
+}
+
+/** Result of RFC 3161 timestamp token verification */
+export interface TimestampTokenResult {
+  /** messageImprint matches the data the timestamp covers */
+  imprintMatches: boolean | null;
+  /** TSA CMS signature verified */
+  signatureVerified: boolean;
+  /** genTime from TSTInfo (ISO string) */
+  genTime: string | null;
+  /** TSA certificate subject when present */
+  tsaSubject: string | null;
+  error: string | null;
+}
 
 /** A signature (or document timestamp) found in the PDF */
 export interface SignatureField {
@@ -51,6 +81,8 @@ export interface CmsVerificationResult {
   signingTimeAttribute: string | null;
   /** true when a RFC 3161 signature timestamp is embedded in unsigned attributes */
   hasSignatureTimestamp: boolean;
+  /** Verification result of the signature timestamp token (v0.2+, null when absent) */
+  signatureTimestamp: TimestampTokenResult | null;
   /** Signer certificate summary */
   signerCertificate: CertificateInfo | null;
   /** All certificates embedded in the CMS */
@@ -64,8 +96,10 @@ export interface SignatureVerificationReport {
   fieldName: string | null;
   subFilter: string | null;
   verdict: Verdict;
-  /** Trust chain evaluation is out of scope in v0.1 — always 'not_evaluated' */
-  trust: 'not_evaluated';
+  /** Trust chain evaluation result (v0.2+) */
+  trust: TrustResult;
+  /** Revocation check result for the signer certificate (v0.2+) */
+  revocation: RevocationResult | null;
   /** Whether the ByteRange covers the entire file (except /Contents) */
   coversEntireFile: boolean | null;
   /** Byte count that follows the signed range (revisions after signing) */
@@ -115,6 +149,13 @@ export interface PadesLevelReport {
     hasVri: boolean;
     hasDocumentTimestamp: boolean;
   };
+  /** Content-level LTV validation (v0.2+): does DSS revocation data cover the signer? */
+  ltv: {
+    dssCertCount: number;
+    dssOcspCount: number;
+    dssCrlCount: number;
+    revocationDataCoversSigner: boolean | null;
+  } | null;
   notes: string[];
 }
 
@@ -137,6 +178,12 @@ export interface ParsedPdf {
   revisionCount: number;
   hasDss: boolean;
   hasVri: boolean;
+  /** Decoded DSS streams (DER bytes) when a DSS is present */
+  dss: {
+    certs: Uint8Array[];
+    ocsps: Uint8Array[];
+    crls: Uint8Array[];
+  } | null;
   xmpMetadata: string | null;
   pdfVersion: string | null;
 }

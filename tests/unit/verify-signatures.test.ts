@@ -3,7 +3,7 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { Verdict } from '../../src/constants.js';
+import { TrustStatus, Verdict } from '../../src/constants.js';
 import { parsePdfBytes } from '../../src/services/pdf-parser.js';
 import { verifySignatures } from '../../src/services/verification-service.js';
 import {
@@ -29,7 +29,7 @@ describe('verifySignatures', () => {
     expect(reports).toHaveLength(1);
     const report = reports[0];
     expect(report.verdict).toBe(Verdict.VALID);
-    expect(report.trust).toBe('not_evaluated');
+    expect(report.trust.status).toBe(TrustStatus.NOT_EVALUATED);
     expect(report.coversEntireFile).toBe(true);
     expect(report.cms?.digestMatches).toBe(true);
     expect(report.cms?.signatureVerified).toBe(true);

@@ -3,25 +3,66 @@
  * into the reports returned by the MCP tools.
  */
 
-import { DOCMDP_PERMISSIONS, PadesLevel, SUB_FILTER, Verdict, WEAK_DIGESTS } from '../constants.js';
+import {
+  DOCMDP_PERMISSIONS,
+  PadesLevel,
+  RevocationMode,
+  RevocationStatus,
+  SUB_FILTER,
+  TrustStatus,
+  Verdict,
+  WEAK_DIGESTS,
+} from '../constants.js';
 import type {
   IntegrityReport,
   PadesLevelReport,
   ParsedPdf,
   SignatureField,
   SignatureVerificationReport,
+  TrustResult,
 } from '../types.js';
-import { verifyCms, verifyTimestampImprint } from './cms-verifier.js';
+import { extractCmsArtifacts, verifyCms, verifyTimestampImprint } from './cms-verifier.js';
 import { coversEntireFile, extractSignedBytes } from './pdf-parser.js';
+import {
+  checkRevocation,
+  evaluateTrust,
+  parseCertificates,
+  parseCrls,
+  parseOcspResponses,
+} from './revocation.js';
+import { loadTrustAnchors } from './trust-store.js';
 
 function bytesAfterRange(fileSize: number, byteRange: number[] | null): number | null {
   if (byteRange?.length !== 4) return null;
   return fileSize - (byteRange[2] + byteRange[3]);
 }
 
+export interface VerifyOptions {
+  /** PEM/DER file paths for trust anchors (merged with PDF_VERIFY_TRUST_ANCHORS) */
+  trustAnchorPaths?: string[];
+  /** Revocation checking mode (default: embedded) */
+  revocationMode?: RevocationMode;
+}
+
+const NOT_EVALUATED_TRUST: TrustResult = {
+  status: TrustStatus.NOT_EVALUATED,
+  detail: null,
+  certificatePath: null,
+};
+
 /** Verify all signatures in the document */
-export async function verifySignatures(parsed: ParsedPdf): Promise<SignatureVerificationReport[]> {
+export async function verifySignatures(
+  parsed: ParsedPdf,
+  options: VerifyOptions = {},
+): Promise<SignatureVerificationReport[]> {
   const reports: SignatureVerificationReport[] = [];
+  const revocationMode = options.revocationMode ?? RevocationMode.EMBEDDED;
+  const trustStore = await loadTrustAnchors(options.trustAnchorPaths ?? []);
+
+  // DSS materials are shared by all signatures in the document
+  const dssCerts = parseCertificates(parsed.dss?.certs ?? []);
+  const dssOcsps = parseOcspResponses(parsed.dss?.ocsps ?? []);
+  const dssCrls = parseCrls(parsed.dss?.crls ?? []);
 
   for (const sig of parsed.signatures) {
     const notes: string[] = [];
@@ -29,7 +70,8 @@ export async function verifySignatures(parsed: ParsedPdf): Promise<SignatureVeri
       fieldName: sig.fieldName,
       subFilter: sig.subFilter,
       verdict: Verdict.INDETERMINATE,
-      trust: 'not_evaluated',
+      trust: { ...NOT_EVALUATED_TRUST },
+      revocation: null,
       coversEntireFile: null,
       bytesAfterSignedRange: null,
       cms: null,
@@ -39,6 +81,10 @@ export async function verifySignatures(parsed: ParsedPdf): Promise<SignatureVeri
       isDocumentTimestamp: sig.isDocumentTimestamp,
       notes,
     };
+
+    for (const err of trustStore.errors) {
+      notes.push(`Trust anchor load error: ${err}`);
+    }
 
     if (parsed.isEncrypted) {
       notes.push(
@@ -77,7 +123,7 @@ export async function verifySignatures(parsed: ParsedPdf): Promise<SignatureVeri
         );
       } else if (imprintMatches === true && cms.signatureVerified) {
         report.verdict = Verdict.VALID;
-        notes.push('Document timestamp verified. TSA trust was not evaluated.');
+        notes.push('Document timestamp verified.');
       } else {
         notes.push('Document timestamp could not be fully verified.');
       }
@@ -90,7 +136,7 @@ export async function verifySignatures(parsed: ParsedPdf): Promise<SignatureVeri
       sig.subFilter !== SUB_FILTER.ETSI_CADES_DETACHED
     ) {
       notes.push(
-        `SubFilter "${sig.subFilter ?? '(none)'}" is not supported in v0.1 ` +
+        `SubFilter "${sig.subFilter ?? '(none)'}" is not supported ` +
           `(supported: adbe.pkcs7.detached, ETSI.CAdES.detached, ETSI.RFC3161).`,
       );
       reports.push(report);
@@ -114,9 +160,56 @@ export async function verifySignatures(parsed: ParsedPdf): Promise<SignatureVeri
       );
     } else {
       report.verdict = Verdict.VALID;
-      notes.push(
-        'Signature is cryptographically valid. Certificate trust chain was NOT evaluated (v0.1 scope).',
-      );
+      notes.push('Signature is cryptographically valid.');
+    }
+
+    // v0.2: trust chain evaluation and revocation checking
+    const artifacts = extractCmsArtifacts(sig.contents);
+    if (artifacts?.signerCert) {
+      const availableCerts = [...artifacts.certificates, ...dssCerts];
+      const embeddedOcsps = dssOcsps;
+      const embeddedCrls = [...artifacts.crls, ...dssCrls];
+      const checkDate =
+        artifacts.signingTime ??
+        (cms.signatureTimestamp?.genTime ? new Date(cms.signatureTimestamp.genTime) : new Date());
+
+      report.trust = await evaluateTrust({
+        signerCert: artifacts.signerCert,
+        availableCerts,
+        trustAnchors: trustStore.certificates,
+        checkDate,
+        crls: embeddedCrls,
+        ocsps: embeddedOcsps,
+      });
+      if (report.trust.status === TrustStatus.UNTRUSTED) {
+        notes.push(`Trust evaluation failed: ${report.trust.detail}`);
+      }
+
+      if (revocationMode !== RevocationMode.NONE) {
+        report.revocation = await checkRevocation({
+          signerCert: artifacts.signerCert,
+          availableCerts,
+          embeddedOcsps,
+          embeddedCrls,
+          online: revocationMode === RevocationMode.ONLINE,
+        });
+        if (report.revocation.status === RevocationStatus.REVOKED) {
+          report.verdict = Verdict.INVALID;
+          notes.push(
+            `Signer certificate is REVOKED (${report.revocation.source}): ${report.revocation.detail}`,
+          );
+        }
+      }
+
+      if (cms.signatureTimestamp) {
+        if (cms.signatureTimestamp.imprintMatches === false) {
+          notes.push('Signature timestamp messageImprint does NOT match the signature value.');
+        } else if (cms.signatureTimestamp.signatureVerified) {
+          notes.push(
+            `Signature timestamp verified (TSA: ${cms.signatureTimestamp.tsaSubject ?? 'unknown'}, genTime: ${cms.signatureTimestamp.genTime ?? 'unknown'}).`,
+          );
+        }
+      }
     }
 
     if (cms.digestAlgorithm && WEAK_DIGESTS.has(cms.digestAlgorithm)) {
@@ -205,12 +298,18 @@ export async function detectPadesLevels(parsed: ParsedPdf): Promise<PadesLevelRe
     (s) => s.isDocumentTimestamp || s.subFilter === SUB_FILTER.ETSI_RFC3161,
   );
 
+  // DSS materials for content-level LTV validation
+  const dssCerts = parseCertificates(parsed.dss?.certs ?? []);
+  const dssOcsps = parseOcspResponses(parsed.dss?.ocsps ?? []);
+  const dssCrls = parseCrls(parsed.dss?.crls ?? []);
+
   const reports: PadesLevelReport[] = [];
   for (const sig of parsed.signatures) {
     if (sig.isDocumentTimestamp || sig.subFilter === SUB_FILTER.ETSI_RFC3161) continue;
 
     const notes: string[] = [];
     let hasSignatureTimestamp = false;
+    let ltv: PadesLevelReport['ltv'] = null;
 
     if (sig.byteRange && sig.contents?.length) {
       try {
@@ -220,23 +319,49 @@ export async function detectPadesLevels(parsed: ParsedPdf): Promise<PadesLevelRe
       } catch {
         notes.push('CMS payload could not be analyzed for timestamp attributes.');
       }
+
+      // Content-level LTV check: does DSS revocation data cover the signer?
+      if (parsed.hasDss) {
+        let coversSigner: boolean | null = null;
+        const artifacts = extractCmsArtifacts(sig.contents);
+        if (artifacts?.signerCert) {
+          const revocation = await checkRevocation({
+            signerCert: artifacts.signerCert,
+            availableCerts: [...artifacts.certificates, ...dssCerts],
+            embeddedOcsps: dssOcsps,
+            embeddedCrls: [...artifacts.crls, ...dssCrls],
+            online: false,
+          });
+          coversSigner = revocation.source !== null;
+        }
+        ltv = {
+          dssCertCount: dssCerts.length,
+          dssOcspCount: dssOcsps.length,
+          dssCrlCount: dssCrls.length,
+          revocationDataCoversSigner: coversSigner,
+        };
+      }
     }
 
     const isPades = isPadesSubFilter(sig);
     let level: PadesLevel | null = null;
     if (isPades) {
-      if (hasSignatureTimestamp && parsed.hasDss && hasDocumentTimestamp) {
+      const hasUsableLtv = parsed.hasDss && ltv?.revocationDataCoversSigner === true;
+      if (hasSignatureTimestamp && hasUsableLtv && hasDocumentTimestamp) {
         level = PadesLevel.B_LTA;
-      } else if (hasSignatureTimestamp && parsed.hasDss) {
+      } else if (hasSignatureTimestamp && hasUsableLtv) {
         level = PadesLevel.B_LT;
       } else if (hasSignatureTimestamp) {
         level = PadesLevel.B_T;
+        if (parsed.hasDss && ltv?.revocationDataCoversSigner === false) {
+          notes.push(
+            'DSS is present but its revocation data does not cover the signer certificate — level capped at B-T.',
+          );
+        }
       } else {
         level = PadesLevel.B_B;
       }
-      notes.push(
-        `Structural detection: ${level}. Content-level validation of LTV data is v0.2 scope.`,
-      );
+      notes.push(`Detected level: ${level} (content-validated LTV data).`);
     } else if (sig.subFilter === SUB_FILTER.ADBE_PKCS7_DETACHED) {
       notes.push(
         'Legacy ISO 32000-1 signature (adbe.pkcs7.detached) — not a PAdES baseline signature.',
@@ -256,6 +381,7 @@ export async function detectPadesLevels(parsed: ParsedPdf): Promise<PadesLevelRe
         hasVri: parsed.hasVri,
         hasDocumentTimestamp,
       },
+      ltv,
       notes,
     });
   }

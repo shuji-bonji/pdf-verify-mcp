@@ -32,6 +32,12 @@ function formatCms(cms: CmsVerificationResult): string[] {
   if (cms.signingTimeAttribute)
     lines.push(`- Signing time (signed attr): ${cms.signingTimeAttribute}`);
   lines.push(`- Signature timestamp (RFC 3161): ${yesNo(cms.hasSignatureTimestamp)}`);
+  if (cms.signatureTimestamp) {
+    const ts = cms.signatureTimestamp;
+    lines.push(
+      `  - TST: imprint match=${yesNo(ts.imprintMatches)}, TSA signature=${yesNo(ts.signatureVerified)}${ts.genTime ? `, genTime=${ts.genTime}` : ''}${ts.tsaSubject ? `, TSA=${ts.tsaSubject}` : ''}`,
+    );
+  }
   lines.push(`- Embedded certificates: ${cms.embeddedCertificateCount}`);
   if (cms.signerCertificate) {
     const c = cms.signerCertificate;
@@ -58,7 +64,16 @@ export function formatSignatureReports(reports: SignatureVerificationReport[]): 
       `## ${i + 1}. ${r.fieldName ?? '(unnamed field)'}${r.isDocumentTimestamp ? ' [DocTimeStamp]' : ''}`,
     );
     lines.push('');
-    lines.push(`- Verdict: **${r.verdict.toUpperCase()}** (trust: ${r.trust})`);
+    lines.push(`- Verdict: **${r.verdict.toUpperCase()}**`);
+    lines.push(`- Trust: **${r.trust.status}**${r.trust.detail ? ` — ${r.trust.detail}` : ''}`);
+    if (r.trust.certificatePath && r.trust.certificatePath.length > 0) {
+      lines.push(`  - Path: ${r.trust.certificatePath.join(' → ')}`);
+    }
+    if (r.revocation) {
+      lines.push(
+        `- Revocation: **${r.revocation.status}**${r.revocation.source ? ` (${r.revocation.source})` : ''}${r.revocation.detail ? ` — ${r.revocation.detail}` : ''}`,
+      );
+    }
     lines.push(`- SubFilter: ${r.subFilter ?? '(none)'}`);
     lines.push(`- Covers entire file: ${yesNo(r.coversEntireFile)}`);
     if ((r.bytesAfterSignedRange ?? 0) > 0) {
@@ -118,6 +133,11 @@ export function formatPadesReports(reports: PadesLevelReport[]): string {
     lines.push(
       `- Evidence: signature timestamp=${yesNo(r.evidence.hasSignatureTimestamp)}, DSS=${yesNo(r.evidence.hasDss)}, VRI=${yesNo(r.evidence.hasVri)}, document timestamp=${yesNo(r.evidence.hasDocumentTimestamp)}`,
     );
+    if (r.ltv) {
+      lines.push(
+        `- LTV data: ${r.ltv.dssCertCount} cert(s), ${r.ltv.dssOcspCount} OCSP(s), ${r.ltv.dssCrlCount} CRL(s) in DSS — covers signer: ${yesNo(r.ltv.revocationDataCoversSigner)}`,
+      );
+    }
     for (const note of r.notes) lines.push(`- Note: ${note}`);
     lines.push('');
   });

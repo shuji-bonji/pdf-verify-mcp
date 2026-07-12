@@ -10,9 +10,9 @@ Part of the PDF family alongside [pdf-reader-mcp](https://github.com/shuji-bonji
 
 | Tool | Purpose |
 |------|---------|
-| `verify_signatures` | Cryptographically verify digital signatures: ByteRange digest vs CMS messageDigest, PKCS#7/CMS signature verification, certificate summary |
+| `verify_signatures` | Cryptographic verification, trust chain evaluation against trust anchors, revocation checking (embedded OCSP/CRL or online), RFC 3161 timestamp verification |
 | `verify_integrity` | Tamper detection: incremental updates, changes after signing, DocMDP certification violations |
-| `detect_pades_level` | PAdES baseline level (B-B / B-T / B-LT / B-LTA) with structural evidence |
+| `detect_pades_level` | PAdES baseline level (B-B / B-T / B-LT / B-LTA) with content-validated LTV data |
 | `identify_conformance` | Declared PDF/A / PDF/UA conformance from XMP metadata |
 
 ## Verdicts
@@ -23,9 +23,15 @@ Part of the PDF family alongside [pdf-reader-mcp](https://github.com/shuji-bonji
 | `invalid` | Digest mismatch or signature verification failure — possible tampering |
 | `indeterminate` | Unsupported format or verification could not complete |
 
-> **Important (v0.1 scope):** Certificate trust chains are **not** evaluated against trust anchors — every result carries `trust: 'not_evaluated'`. A `valid` verdict asserts cryptographic integrity, not signer identity. Trust anchor support is planned for v0.2 (see [docs/PROJECT_PLAN.md](./docs/PROJECT_PLAN.md)).
+## Trust & revocation (v0.2)
 
-Supported SubFilters: `ETSI.CAdES.detached` (PAdES), `adbe.pkcs7.detached`, `ETSI.RFC3161` (document timestamps, imprint check).
+Pass `trust_anchors` (PEM/DER file paths) or set the `PDF_VERIFY_TRUST_ANCHORS` env var (a directory of certificates) to evaluate the signer's chain: results are `trusted` / `untrusted` / `not_evaluated` with the certificate path, validated at signing time.
+
+`check_revocation` controls revocation checking: `embedded` (default — OCSP/CRL data inside the PDF's DSS or the CMS payload), `online` (additionally query OCSP responders and CRL distribution points over HTTP), or `none`. A revoked signer certificate forces verdict `invalid`.
+
+> Without trust anchors, `trust` stays `not_evaluated` and a `valid` verdict asserts cryptographic integrity, not signer identity.
+
+Supported SubFilters: `ETSI.CAdES.detached` (PAdES), `adbe.pkcs7.detached`, `ETSI.RFC3161` (document timestamps). RFC 3161 signature timestamps are fully verified (imprint + TSA signature). Legacy MD5/SHA-1 signatures are verified via node:crypto and flagged as weak.
 
 ## Installation
 

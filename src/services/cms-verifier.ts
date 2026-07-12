@@ -15,7 +15,7 @@ import { createHash, createPublicKey, verify as nodeCryptoVerify, webcrypto } fr
 import * as asn1js from 'asn1js';
 import * as pkijs from 'pkijs';
 import { DIGEST_OID_TO_HASH, NODE_HASH_NAMES, OID, WEBCRYPTO_HASHES } from '../constants.js';
-import type { CertificateInfo, CmsVerificationResult } from '../types.js';
+import type { CertificateInfo, CmsVerificationResult, TimestampTokenResult } from '../types.js';
 import { logger } from '../utils/logger.js';
 
 const CONTEXT = 'cms-verifier';
@@ -199,6 +199,7 @@ export async function verifyCms(
     digestAlgorithm: null,
     signingTimeAttribute: null,
     hasSignatureTimestamp: false,
+    signatureTimestamp: null,
     signerCertificate: null,
     embeddedCertificateCount: 0,
     error: null,
@@ -216,8 +217,26 @@ export async function verifyCms(
 
   result.embeddedCertificateCount = (signedData.certificates ?? []).length;
   result.signingTimeAttribute = extractSigningTime(signerInfo);
-  result.hasSignatureTimestamp =
-    findAttribute(signerInfo.unsignedAttrs, OID.SIGNATURE_TIME_STAMP) !== null;
+  const tsAttr = findAttribute(signerInfo.unsignedAttrs, OID.SIGNATURE_TIME_STAMP);
+  result.hasSignatureTimestamp = tsAttr !== null;
+  if (tsAttr && tsAttr.values.length > 0) {
+    try {
+      const tokenDer = new Uint8Array((tsAttr.values[0] as asn1js.Sequence).toBER(false));
+      // The signature timestamp's messageImprint covers the signature value.
+      result.signatureTimestamp = await verifyTimestampToken(
+        tokenDer,
+        new Uint8Array(signerInfo.signature.valueBlock.valueHexView),
+      );
+    } catch (error) {
+      result.signatureTimestamp = {
+        imprintMatches: null,
+        signatureVerified: false,
+        genTime: null,
+        tsaSubject: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
 
   const digestOid = signerInfo.digestAlgorithm.algorithmId;
   const hashName = DIGEST_OID_TO_HASH[digestOid] ?? null;
@@ -287,22 +306,148 @@ export async function verifyTimestampImprint(
   contents: Uint8Array,
   signedBytes: Uint8Array,
 ): Promise<boolean | null> {
+  const result = await verifyTimestampToken(contents, signedBytes);
+  return result.imprintMatches;
+}
+
+/**
+ * Extract the raw bytes of an OCTET STRING, handling BER constructed
+ * (segmented) encodings where the payload is split across inner
+ * OCTET STRING chunks (pkijs produces these for encapsulated content).
+ */
+function octetStringBytes(octet: asn1js.OctetString): Uint8Array {
+  if (!octet.idBlock.isConstructed) {
+    return new Uint8Array(octet.valueBlock.valueHexView);
+  }
+  const chunks = (octet.valueBlock.value as asn1js.OctetString[]).map((part) =>
+    octetStringBytes(part),
+  );
+  const total = chunks.reduce((sum, c) => sum + c.length, 0);
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return result;
+}
+
+/**
+ * Fully verify an RFC 3161 timestamp token (v0.2):
+ * - TSTInfo messageImprint vs digest of the covered data
+ * - TSA CMS signature over the encapsulated TSTInfo
+ */
+export async function verifyTimestampToken(
+  tokenDer: Uint8Array,
+  imprintData: Uint8Array,
+): Promise<TimestampTokenResult> {
   ensureCryptoEngine();
+  const result: TimestampTokenResult = {
+    imprintMatches: null,
+    signatureVerified: false,
+    genTime: null,
+    tsaSubject: null,
+    error: null,
+  };
+
+  let parsed: ParsedCms;
   try {
-    const parsed = parseCms(contents);
+    parsed = parseCms(tokenDer);
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : String(error);
+    return result;
+  }
+
+  try {
     const eContent = parsed.signedData.encapContentInfo.eContent;
-    if (!eContent) return null;
-    const tstAsn1 = asn1js.fromBER(eContent.valueBlock.valueHexView.slice().buffer);
-    if (tstAsn1.offset === -1) return null;
-    const tstInfo = new pkijs.TSTInfo({ schema: tstAsn1.result });
-    const hashName = DIGEST_OID_TO_HASH[tstInfo.messageImprint.hashAlgorithm.algorithmId];
-    if (!hashName) return null;
-    const actual = new Uint8Array(
-      await webcrypto.subtle.digest(hashName, toArrayBuffer(signedBytes)),
-    );
-    const expected = new Uint8Array(tstInfo.messageImprint.hashedMessage.valueBlock.valueHexView);
-    return bytesToHex(actual) === bytesToHex(expected);
+    if (!eContent) {
+      result.error = 'Timestamp token has no encapsulated TSTInfo';
+      return result;
+    }
+    const tstDer = octetStringBytes(eContent);
+    const tstAsn1 = asn1js.fromBER(toArrayBuffer(tstDer));
+    if (tstAsn1.offset !== -1) {
+      const tstInfo = new pkijs.TSTInfo({ schema: tstAsn1.result });
+      result.genTime = tstInfo.genTime.toISOString();
+      const hashName = DIGEST_OID_TO_HASH[tstInfo.messageImprint.hashAlgorithm.algorithmId];
+      if (hashName) {
+        const actual = await computeDigest(hashName, imprintData);
+        const expected = new Uint8Array(
+          tstInfo.messageImprint.hashedMessage.valueBlock.valueHexView,
+        );
+        result.imprintMatches = bytesToHex(actual) === bytesToHex(expected);
+      }
+    }
+
+    const tsaCert = findSignerCertificate(parsed);
+    if (tsaCert) {
+      result.tsaSubject = formatRdn(tsaCert.subject);
+    }
+
+    // TSA CMS signature verification. pkijs treats TSTInfo content specially:
+    // it re-checks the messageImprint against `data`, so pass the covered data.
+    result.signatureVerified = await parsed.signedData.verify({
+      signer: 0,
+      checkChain: false,
+      data: toArrayBuffer(imprintData),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    result.error = result.error ? `${result.error}; ${message}` : message;
+  }
+  return result;
+}
+
+/** Artifacts extracted from a CMS payload for trust/revocation analysis */
+export interface CmsArtifacts {
+  signerCert: pkijs.Certificate | null;
+  certificates: pkijs.Certificate[];
+  /** CRLs embedded in the CMS RevocationInfoChoices */
+  crls: pkijs.CertificateRevocationList[];
+  /** Signing time from the signed attribute, when present */
+  signingTime: Date | null;
+  /** Raw DER of the signature timestamp token in unsignedAttrs, when present */
+  signatureTimestampToken: Uint8Array | null;
+  /** The signature value bytes (imprint data for the signature timestamp) */
+  signatureValue: Uint8Array;
+}
+
+/** Extract certificates, CRLs and timestamp material from a CMS payload */
+export function extractCmsArtifacts(contents: Uint8Array): CmsArtifacts | null {
+  ensureCryptoEngine();
+  let parsed: ParsedCms;
+  try {
+    parsed = parseCms(contents);
   } catch {
     return null;
   }
+  const { signedData, signerInfo } = parsed;
+
+  const certificates = (signedData.certificates ?? []).filter(
+    (c): c is pkijs.Certificate => c instanceof pkijs.Certificate,
+  );
+  const crls = (signedData.crls ?? []).filter(
+    (c): c is pkijs.CertificateRevocationList => c instanceof pkijs.CertificateRevocationList,
+  );
+
+  const tsAttr = findAttribute(signerInfo.unsignedAttrs, OID.SIGNATURE_TIME_STAMP);
+  let tokenDer: Uint8Array | null = null;
+  if (tsAttr && tsAttr.values.length > 0) {
+    try {
+      tokenDer = new Uint8Array((tsAttr.values[0] as asn1js.Sequence).toBER(false));
+    } catch {
+      tokenDer = null;
+    }
+  }
+
+  const signingTimeIso = extractSigningTime(signerInfo);
+
+  return {
+    signerCert: findSignerCertificate(parsed),
+    certificates,
+    crls,
+    signingTime: signingTimeIso ? new Date(signingTimeIso) : null,
+    signatureTimestampToken: tokenDer,
+    signatureValue: new Uint8Array(signerInfo.signature.valueBlock.valueHexView),
+  };
 }
