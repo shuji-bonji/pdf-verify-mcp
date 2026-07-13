@@ -55,6 +55,7 @@ Args:
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
   - trust_anchors (string[], optional): Paths to trust anchor certificates (PEM/DER). Also reads the PDF_VERIFY_TRUST_ANCHORS env var (directory).
   - check_revocation ('none' | 'embedded' | 'online'): Revocation mode (default: 'embedded'; 'online' queries OCSP/CRL endpoints over HTTP)
+  - password (string, optional): Password for an encrypted PDF (permission-encrypted PDFs are decrypted automatically with the empty user password)
 
 Returns:
   Per-signature verdict ('valid' / 'invalid' / 'indeterminate'), trust status ('trusted' / 'untrusted' / 'not_evaluated' with certificate path), revocation status ('good' / 'revoked' / 'unknown' / 'not_checked'), and signature timestamp verification.

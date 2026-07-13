@@ -7,8 +7,8 @@
  * - Cryptographically verify the signature value with the signer certificate
  * - Summarize embedded certificates
  *
- * NOT in scope (v0.1): trust chain evaluation against trust anchors,
- * OCSP/CRL revocation checking. Results always carry trust: 'not_evaluated'.
+ * Trust chain evaluation against trust anchors and OCSP/CRL revocation
+ * checking live in revocation.ts (wired up by verification-service.ts).
  */
 
 import { createHash, createPublicKey, verify as nodeCryptoVerify, webcrypto } from 'node:crypto';
@@ -17,6 +17,7 @@ import * as pkijs from 'pkijs';
 import { DIGEST_OID_TO_HASH, NODE_HASH_NAMES, OID, WEBCRYPTO_HASHES } from '../constants.js';
 import type { CertificateInfo, CmsVerificationResult, TimestampTokenResult } from '../types.js';
 import { logger } from '../utils/logger.js';
+import { formatRdn } from '../utils/rdn.js';
 
 const CONTEXT = 'cms-verifier';
 
@@ -82,26 +83,6 @@ function verifySignatureLegacy(
   const publicKey = createPublicKey({ key: spkiDer, format: 'der', type: 'spki' });
   const signature = Buffer.from(new Uint8Array(signerInfo.signature.valueBlock.valueHexView));
   return nodeCryptoVerify(nodeName, data, publicKey, signature);
-}
-
-/** Map common attribute type OIDs in an RDN to short names */
-const RDN_OID_NAMES: Readonly<Record<string, string>> = {
-  '2.5.4.3': 'CN',
-  '2.5.4.6': 'C',
-  '2.5.4.7': 'L',
-  '2.5.4.8': 'ST',
-  '2.5.4.10': 'O',
-  '2.5.4.11': 'OU',
-  '1.2.840.113549.1.9.1': 'E',
-};
-
-function formatRdn(rdn: pkijs.RelativeDistinguishedNames): string {
-  return rdn.typesAndValues
-    .map((tv) => {
-      const name = RDN_OID_NAMES[tv.type] ?? tv.type;
-      return `${name}=${tv.value.valueBlock.value}`;
-    })
-    .join(', ');
 }
 
 function summarizeCertificate(cert: pkijs.Certificate): CertificateInfo {

@@ -119,6 +119,29 @@ function computeKeyR234(params: EncryptParams, password: Uint8Array): Uint8Array
 }
 
 /**
+ * Validate the user password for R2–R4 by reproducing /U (Algorithm 4/5)
+ * from the derived file key and comparing against the stored /U.
+ *
+ * R2 (Algorithm 4): U = RC4(fileKey, PAD)
+ * R3/R4 (Algorithm 5): U = RC4-19-rounds(RC4(fileKey, MD5(PAD + ID))),
+ *   compared on the first 16 bytes (the trailing 16 are arbitrary salt).
+ */
+function validateUserPasswordR234(params: EncryptParams, key: Uint8Array): boolean {
+  if (params.u.length < 16) return false;
+  if (params.revision === 2) {
+    return bytesEqual(rc4(key, PAD), params.u.subarray(0, 32));
+  }
+  // R3/R4
+  let u = md5(PAD, params.idBytes);
+  u = rc4(key, u);
+  for (let i = 1; i <= 19; i++) {
+    const k = Uint8Array.from(key, (b) => b ^ i);
+    u = rc4(k, u);
+  }
+  return bytesEqual(u.subarray(0, 16), params.u.subarray(0, 16));
+}
+
+/**
  * Derive the file key for R6 (AES-256) from the empty/user password
  * (ISO 32000-2 Algorithm 2.A + 2.B).
  */
@@ -140,7 +163,11 @@ function computeKeyR6(params: EncryptParams, password: Uint8Array): Uint8Array |
       mod %= 3;
       const algo = mod === 0 ? 'sha256' : mod === 1 ? 'sha384' : 'sha512';
       k = new Uint8Array(createHash(algo).update(e).digest());
-      if (round >= 63 && e[e.length - 1] <= round - 32) break;
+      // ISO 32000-2 Algorithm 2.B: run ≥64 rounds, then stop once the last
+      // byte of E ≤ (round count) − 32. `round` is 0-indexed and this check
+      // runs after the (round+1)-th iteration, so the threshold is round−31
+      // (i.e. iterationCount−32), matching pdf.js / iText / mupdf.
+      if (round >= 63 && e[e.length - 1] <= round - 31) break;
     }
     return k.subarray(0, 32);
   };
@@ -198,9 +225,15 @@ export class PdfDecryptor {
   static create(params: EncryptParams, password = new Uint8Array(0)): PdfDecryptor | null {
     let key: Uint8Array | null;
     if (params.revision >= 5) {
+      // computeKeyR6 already validates /U internally.
       key = computeKeyR6(params, password);
     } else {
       key = computeKeyR234(params, password);
+      // Reject wrong passwords: without this a bad password still derives a
+      // (garbage) key and would silently produce mojibake.
+      if (key && !validateUserPasswordR234(params, key)) {
+        key = null;
+      }
     }
     if (!key) return null;
     return new PdfDecryptor(params, key);
@@ -234,11 +267,18 @@ export class PdfDecryptor {
     }
     // AESV2 / AESV3: first 16 bytes are the IV
     if (data.length < 16) return data;
-    const aes = method === 'AESV3';
-    const key = this.objectKey(objNumber, generation, true);
+    const isAesV3 = method === 'AESV3';
+    // AESV3 (AES-256) always uses the file key directly; AESV2 (AES-128)
+    // uses the per-object key derived with the "sAlT" suffix.
+    const key = isAesV3 ? this.fileKey : this.objectKey(objNumber, generation, true);
+    const algo = isAesV3 ? 'aes-256-cbc' : 'aes-128-cbc';
+    const requiredKeyLength = isAesV3 ? 32 : 16;
+    // Key/algorithm length mismatch (e.g. a malformed AESV3 filter on an
+    // R<5 document) — do not attempt: returning ciphertext-as-plaintext is
+    // handled by the caller's mojibake guard rather than crashing here.
+    if (key.length !== requiredKeyLength) return data;
     const iv = data.subarray(0, 16);
     const body = data.subarray(16);
-    const algo = aes ? 'aes-256-cbc' : 'aes-128-cbc';
     try {
       const decipher = createDecipheriv(algo, key, iv);
       // PKCS#7 padding is used by PDF AES

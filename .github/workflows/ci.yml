@@ -35,6 +35,8 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
+      - name: Install qpdf (encrypted-PDF E2E tests)
+        run: sudo apt-get update && sudo apt-get install -y qpdf
       - name: Install dependencies
         run: npm ci
       - name: Run tests

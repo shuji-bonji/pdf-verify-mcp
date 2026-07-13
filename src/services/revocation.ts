@@ -20,6 +20,7 @@ import {
 } from '../constants.js';
 import type { RevocationResult, TrustResult } from '../types.js';
 import { logger } from '../utils/logger.js';
+import { formatRdn } from '../utils/rdn.js';
 
 const CONTEXT = 'revocation';
 
@@ -109,10 +110,7 @@ export async function evaluateTrust(input: ChainEvaluationInput): Promise<TrustR
       checkDate: input.checkDate,
     });
     const result = await engine.verify();
-    const path =
-      result.certificatePath?.map((c) =>
-        c.subject.typesAndValues.map((tv) => `${tv.type}=${tv.value.valueBlock.value}`).join(','),
-      ) ?? null;
+    const path = result.certificatePath?.map((c) => formatRdn(c.subject)) ?? null;
     return {
       status: result.result ? TrustStatus.TRUSTED : TrustStatus.UNTRUSTED,
       detail: result.result
@@ -328,10 +326,11 @@ async function fetchOcspStatus(
   }
 }
 
-/** Download and check a CRL */
+/** Download and check a CRL against a certificate (issuer used for verification) */
 async function fetchCrlStatus(
   cert: pkijs.Certificate,
   url: string,
+  issuer: pkijs.Certificate | null,
 ): Promise<{ status: RevocationStatus; detail: string } | null> {
   try {
     const response = await fetchWithTimeout(url, { method: 'GET' });
@@ -339,10 +338,12 @@ async function fetchCrlStatus(
     const der = new Uint8Array(await response.arrayBuffer());
     const crl = parseCrls([der])[0];
     if (!crl) return null;
-    return {
-      status: crlStatusFor(cert, crl),
-      detail: `CRL from ${url}`,
-    };
+    // A fetched CRL from an untrusted (usually http) endpoint must match the
+    // certificate's issuer, otherwise an on-path attacker could serve a forged
+    // CRL that reports GOOD. Skip mismatched CRLs entirely.
+    if (issuerName(cert) !== crlIssuerName(crl)) return null;
+    const checked = await evaluateCrl(cert, crl, issuer);
+    return { status: checked.status, detail: `CRL from ${url}${checked.detailSuffix}` };
   } catch (error) {
     logger.debug(CONTEXT, `CRL fetch failed: ${error instanceof Error ? error.message : error}`);
     return null;
@@ -355,6 +356,10 @@ function serialHex(value: asn1js.Integer): string {
   ).join('');
 }
 
+function crlIssuerName(crl: pkijs.CertificateRevocationList): string {
+  return crl.issuer.typesAndValues.map((tv) => `${tv.type}=${tv.value.valueBlock.value}`).join(',');
+}
+
 function crlStatusFor(
   cert: pkijs.Certificate,
   crl: pkijs.CertificateRevocationList,
@@ -362,6 +367,41 @@ function crlStatusFor(
   const target = serialHex(cert.serialNumber);
   const revoked = crl.revokedCertificates?.some((rc) => serialHex(rc.userCertificate) === target);
   return revoked ? RevocationStatus.REVOKED : RevocationStatus.GOOD;
+}
+
+/**
+ * Determine a certificate's status against a CRL, verifying the CRL signature
+ * with the issuer certificate when available. A REVOKED verdict feeds directly
+ * into an INVALID signature verdict, so an unverified CRL is reported with a
+ * caveat rather than trusted blindly.
+ */
+async function evaluateCrl(
+  cert: pkijs.Certificate,
+  crl: pkijs.CertificateRevocationList,
+  issuer: pkijs.Certificate | null,
+): Promise<{ status: RevocationStatus; detailSuffix: string }> {
+  const status = crlStatusFor(cert, crl);
+  if (!issuer) {
+    return {
+      status,
+      detailSuffix: ' (CRL signature NOT verified: issuer certificate unavailable)',
+    };
+  }
+  let verified = false;
+  try {
+    verified = await crl.verify({ issuerCertificate: issuer });
+  } catch {
+    verified = false;
+  }
+  if (!verified) {
+    // Downgrade a signature-unverified REVOKED/GOOD to UNKNOWN: we cannot trust
+    // an unsigned CRL to force an INVALID verdict.
+    return {
+      status: RevocationStatus.UNKNOWN,
+      detailSuffix: ' (CRL signature verification failed — status not trusted)',
+    };
+  }
+  return { status, detailSuffix: ' (CRL signature verified)' };
 }
 
 export interface RevocationCheckInput {
@@ -401,19 +441,14 @@ export async function checkRevocation(input: RevocationCheckInput): Promise<Revo
     }
   }
 
-  // 2. Embedded CRLs (match issuer by name)
+  // 2. Embedded CRLs (issuer name must match; signature verified when possible)
   for (const crl of input.embeddedCrls) {
-    const crlIssuer = crl.issuer.typesAndValues
-      .map((tv) => `${tv.type}=${tv.value.valueBlock.value}`)
-      .join(',');
-    const certIssuer = signerCert.issuer.typesAndValues
-      .map((tv) => `${tv.type}=${tv.value.valueBlock.value}`)
-      .join(',');
-    if (crlIssuer !== certIssuer) continue;
+    if (crlIssuerName(crl) !== issuerName(signerCert)) continue;
+    const checked = await evaluateCrl(signerCert, crl, issuer);
     return {
-      status: crlStatusFor(signerCert, crl),
+      status: checked.status,
       source: 'crl_embedded',
-      detail: 'Embedded CRL (DSS/CMS)',
+      detail: `Embedded CRL (DSS/CMS)${checked.detailSuffix}`,
     };
   }
 
@@ -425,7 +460,7 @@ export async function checkRevocation(input: RevocationCheckInput): Promise<Revo
       if (result) return { ...result, source: 'ocsp_online' };
     }
     for (const url of extractCrlUrls(signerCert)) {
-      const result = await fetchCrlStatus(signerCert, url);
+      const result = await fetchCrlStatus(signerCert, url, issuer);
       if (result) return { ...result, source: 'crl_online' };
     }
     return {

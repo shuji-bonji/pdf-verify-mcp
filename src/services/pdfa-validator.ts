@@ -373,8 +373,8 @@ export function resolveFlavour(parsed: ParsedPdf, requested?: string): PdfaFlavo
     /<pdfaid:part>\s*(\d+)\s*<\/pdfaid:part>/.exec(xmp);
   if (!part) return null;
   const conf =
-    /pdfaid:conformance\s*=\s*["']([A-Ua-u])["']/.exec(xmp) ??
-    /<pdfaid:conformance>\s*([A-Ua-u])\s*<\/pdfaid:conformance>/.exec(xmp);
+    /pdfaid:conformance\s*=\s*["']([ABUabu])["']/.exec(xmp) ??
+    /<pdfaid:conformance>\s*([ABUabu])\s*<\/pdfaid:conformance>/.exec(xmp);
   return { part: Number(part[1]), conformance: conf ? conf[1].toUpperCase() : null };
 }
 

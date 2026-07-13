@@ -24,7 +24,7 @@ Args:
 Returns:
   Declared PDF/A part/conformance level and PDF/UA part, plus the PDF version.
 
-IMPORTANT: This is identification of DECLARED conformance only. Full conformance validation (veraPDF-level rule checking) is out of scope in v0.1 — a declaration does not guarantee actual conformance.
+IMPORTANT: This tool only IDENTIFIES the declared conformance — a declaration does not guarantee actual conformance. For real PDF/A rule checking use the validate_conformance tool (native rule subset, or veraPDF when installed).
 
 Examples:
   - Check whether a document claims PDF/A-2b before archiving

@@ -7,10 +7,10 @@
  * Complements pdf-reader-mcp (structure) and pdf-spec-mcp (specification).
  */
 
-// IMPORTANT: Guard stdout before any imports that might log.
-// stdout is reserved for the stdio JSON-RPC stream.
-console.log = (...args: unknown[]) => console.error('[log]', ...args);
-console.warn = (...args: unknown[]) => console.error('[warn]', ...args);
+// IMPORTANT: Install the stdout guard before ANY other import.
+// ESM hoists imports, so the guard lives in a side-effect module that must
+// be listed first to run before dependency modules are evaluated.
+import './utils/stdout-guard.js';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';

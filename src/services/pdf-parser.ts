@@ -69,6 +69,7 @@ function buildDecryptor(doc: PDFDocument, password: string): PdfDecryptor | null
   const revision = numberOf('R', 0);
   const keyLength = Math.floor(numberOf('Length', 40) / 8);
 
+  // V4/V5 use crypt filters (CF/StmF/StrF); V1/V2 use RC4 directly.
   let streamMethod: CryptMethod = 'RC4';
   let stringMethod: CryptMethod = 'RC4';
   if (version >= 4) {
@@ -83,10 +84,8 @@ function buildDecryptor(doc: PDFDocument, password: string): PdfDecryptor | null
     };
     streamMethod = resolveCfm(lookupName(enc, 'StmF'));
     stringMethod = resolveCfm(lookupName(enc, 'StrF'));
-  } else if (version === 5) {
-    streamMethod = 'AESV3';
-    stringMethod = 'AESV3';
   }
+  // R5/R6 are always AES-256 regardless of the declared filters.
   if (revision >= 5) {
     streamMethod = 'AESV3';
     stringMethod = 'AESV3';

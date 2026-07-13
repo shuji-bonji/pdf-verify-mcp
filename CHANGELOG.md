@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] - Unreleased
+
+Fixes from a consolidated code review (security & correctness).
+
+### Fixed
+
+- **Encrypted PDF password validation (R2–R4)**: `create()` now verifies the
+  user password against /U (Algorithm 4/5). Previously any password derived a
+  key and reported `decrypted: true`, emitting mojibake for wrong passwords.
+- **AES-256 (R6) key derivation off-by-one**: Algorithm 2.B termination is now
+  `round − 31` (iteration count − 32), matching pdf.js / iText / mupdf. Fixes a
+  rare (~1%) boundary case where the correct empty password was rejected.
+- **CRL trust**: fetched (online) CRLs are now matched to the certificate's
+  issuer and their signature is verified with the issuer certificate. An
+  unverified CRL is reported as `unknown` with a caveat instead of being
+  trusted to force an `invalid` verdict. Applies to embedded CRLs too.
+- **AESV3 key-length guard**: AES-256 uses the file key directly and a
+  key/algorithm length mismatch is handled without emitting ciphertext.
+- **stdout guard**: moved to a side-effect module imported first, so it is
+  installed before dependency modules are evaluated (ESM import hoisting).
+- **certificatePath** now renders as `CN=..., O=...` (shared `formatRdn`)
+  instead of raw attribute OIDs.
+- Tool descriptions updated: removed stale "not supported in v0.1" notes for
+  trust evaluation, LTV validation, and conformance validation; documented the
+  `verify_signatures` `password` argument.
+- `pdfaid:conformance` regex corrected from `[A-Ua-u]` (a range that also
+  matched C, K, …) to `[ABUabu]`.
+
+### Added
+
+- qpdf-based end-to-end decryption tests (AES-256/AES-128/RC4 permission
+  encryption + wrong/missing password regression). CI installs qpdf.
+
 ## [0.5.0] - Unreleased
 
 ### Added

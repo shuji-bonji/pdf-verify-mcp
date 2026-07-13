@@ -38,8 +38,8 @@ export function identifyConformance(parsed: ParsedPdf): ConformanceReport {
     /<pdfaid:part>\s*(\d+)\s*<\/pdfaid:part>/,
   ]);
   const pdfaConformance = matchXmp(xmp, [
-    /pdfaid:conformance\s*=\s*["']([A-Ua-u])["']/,
-    /<pdfaid:conformance>\s*([A-Ua-u])\s*<\/pdfaid:conformance>/,
+    /pdfaid:conformance\s*=\s*["']([ABUabu])["']/,
+    /<pdfaid:conformance>\s*([ABUabu])\s*<\/pdfaid:conformance>/,
   ]);
   const pdfuaPart = matchXmp(xmp, [
     /pdfuaid:part\s*=\s*["'](\d+)["']/,

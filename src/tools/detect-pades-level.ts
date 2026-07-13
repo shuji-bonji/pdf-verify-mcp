@@ -26,7 +26,7 @@ Args:
 Returns:
   Per-signature level with evidence (signature timestamp, DSS, VRI, document timestamp presence).
 
-Note: v0.1 performs structural detection. Content-level validation of LTV data (revocation info completeness) is planned for v0.2.
+Note: B-LT / B-LTA additionally require that the DSS revocation data actually covers the signer certificate (content-level LTV validation); otherwise the level is capped at B-T.
 
 Examples:
   - Check if a signature is long-term validation (LTV) enabled
