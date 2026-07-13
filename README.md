@@ -1,5 +1,9 @@
 # pdf-verify-mcp
 
+[![CI](https://github.com/shuji-bonji/pdf-verify-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/shuji-bonji/pdf-verify-mcp/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@shuji-bonji/pdf-verify-mcp.svg)](https://www.npmjs.com/package/@shuji-bonji/pdf-verify-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
 [日本語](./README.ja.md)
 
 MCP server for PDF **authenticity verification** — cryptographic digital signature verification, tamper detection, PAdES baseline level detection, and PDF/A / PDF/UA declaration identification.
@@ -31,6 +35,8 @@ Pass `trust_anchors` (PEM/DER file paths) or set the `PDF_VERIFY_TRUST_ANCHORS` 
 `check_revocation` controls revocation checking: `embedded` (default — OCSP/CRL data inside the PDF's DSS or the CMS payload), `online` (additionally query OCSP responders and CRL distribution points over HTTP), or `none`. A revoked signer certificate forces verdict `invalid`. In online mode, missing issuer certificates are fetched via AIA caIssuers to complete the chain (v0.4). When anchors are provided, TSA certificate chains of RFC 3161 timestamps are evaluated too (`tsaTrust`).
 
 > Without trust anchors, `trust` stays `not_evaluated` and a `valid` verdict asserts cryptographic integrity, not signer identity.
+
+Encrypted PDFs are decrypted automatically when permission-encrypted (empty user password); pass `password` for reader-password PDFs. Supported: RC4 (R2–R4), AES-128, AES-256 (R6). Decryption recovers string metadata (field name, /M, /Reason, /Location) and XMP — a signature's `/Contents` is exempt from encryption, so verification never depends on it.
 
 Supported SubFilters: `ETSI.CAdES.detached` (PAdES), `adbe.pkcs7.detached`, `ETSI.RFC3161` (document timestamps). RFC 3161 signature timestamps are fully verified (imprint + TSA signature). Legacy MD5/SHA-1 signatures are verified via node:crypto and flagged as weak.
 

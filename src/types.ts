@@ -174,8 +174,10 @@ export interface ConformanceReport {
 export interface ParsedPdf {
   bytes: Uint8Array;
   fileSize: number;
-  /** true when the document uses PDF encryption (strings are not decodable) */
+  /** true when the document uses PDF encryption */
   isEncrypted: boolean;
+  /** true when encryption was successfully reversed (v0.5) */
+  decrypted: boolean;
   signatures: SignatureField[];
   revisionCount: number;
   hasDss: boolean;

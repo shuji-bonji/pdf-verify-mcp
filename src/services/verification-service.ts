@@ -45,6 +45,9 @@ export interface VerifyOptions {
   revocationMode?: RevocationMode;
 }
 
+// Note: the `password` option is handled at parse time (see parsePdf),
+// so it is not part of VerifyOptions.
+
 const NOT_EVALUATED_TRUST: TrustResult = {
   status: TrustStatus.NOT_EVALUATED,
   detail: null,
@@ -87,9 +90,11 @@ export async function verifySignatures(
       notes.push(`Trust anchor load error: ${err}`);
     }
 
-    if (parsed.isEncrypted) {
+    if (parsed.isEncrypted && parsed.decrypted) {
+      notes.push('Document is encrypted; decryption succeeded and string metadata was recovered.');
+    } else if (parsed.isEncrypted) {
       notes.push(
-        'Document is encrypted: string metadata (field name, /M, /Reason, /Location) is not decodable without decryption and was omitted. Cryptographic verification is unaffected.',
+        'Document is encrypted and could not be decrypted (wrong password or unsupported handler); string metadata was omitted. Cryptographic verification is unaffected. Pass "password" if this is a reader-password PDF.',
       );
     }
 

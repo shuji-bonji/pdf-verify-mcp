@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - Unreleased
+
+### Added
+
+- Encrypted PDF decryption (ISO 32000-1 §7.6 Standard Security Handler):
+  permission-encrypted PDFs (empty user password) are decrypted automatically,
+  and a `password` parameter handles reader-password PDFs. Supports RC4
+  (R2–R4), AES-128 (AESV2), and AES-256 (AESV3, R6). RC4 is implemented in
+  pure JS since OpenSSL 3 disables it.
+  - String metadata (field name, /M, /Reason, /Location) and the XMP stream
+    are now recovered from encrypted documents instead of being omitted.
+  - `ParsedPdf.decrypted` reports whether decryption succeeded.
+- `verify_signatures` gains a `password` argument.
+
 ## [0.4.0] - Unreleased
 
 ### Added

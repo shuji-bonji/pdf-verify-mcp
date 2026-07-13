@@ -6,9 +6,11 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { inflateSync } from 'node:zlib';
 import {
   decodePDFRawStream,
   PDFArray,
+  PDFBool,
   PDFDict,
   PDFDocument,
   PDFHexString,
@@ -21,8 +23,121 @@ import {
 import type { ParsedPdf, SignatureField } from '../types.js';
 import { assertReadablePdf, PdfVerifyError } from '../utils/error-handler.js';
 import { logger } from '../utils/logger.js';
+import { type CryptMethod, type EncryptParams, PdfDecryptor } from './decryptor.js';
 
 const CONTEXT = 'pdf-parser';
+
+/** Map a crypt filter's CFM to our method enum */
+function cfmToMethod(cfm: string | null): CryptMethod {
+  switch (cfm) {
+    case 'V2':
+      return 'RC4';
+    case 'AESV2':
+      return 'AESV2';
+    case 'AESV3':
+      return 'AESV3';
+    case 'Identity':
+      return 'Identity';
+    default:
+      return 'RC4';
+  }
+}
+
+/** Build a decryptor from the trailer /Encrypt dictionary (v0.5) */
+function buildDecryptor(doc: PDFDocument, password: string): PdfDecryptor | null {
+  const encRef = doc.context.trailerInfo.Encrypt;
+  if (!encRef) return null;
+  const enc = doc.context.lookup(encRef);
+  if (!(enc instanceof PDFDict)) return null;
+  if (lookupName(enc, 'Filter') !== 'Standard') {
+    logger.warn(CONTEXT, 'Non-standard security handler is not supported');
+    return null;
+  }
+
+  const numberOf = (key: string, fallback: number): number => {
+    const v = enc.get(PDFName.of(key));
+    return v instanceof PDFNumber ? v.asNumber() : fallback;
+  };
+  const bytesOf = (key: string): Uint8Array => {
+    const v = enc.lookup(PDFName.of(key));
+    return v instanceof PDFString || v instanceof PDFHexString
+      ? new Uint8Array(v.asBytes())
+      : new Uint8Array(0);
+  };
+
+  const version = numberOf('V', 0);
+  const revision = numberOf('R', 0);
+  const keyLength = Math.floor(numberOf('Length', 40) / 8);
+
+  let streamMethod: CryptMethod = 'RC4';
+  let stringMethod: CryptMethod = 'RC4';
+  if (version >= 4) {
+    const cf = enc.lookup(PDFName.of('CF'));
+    const resolveCfm = (filterName: string | null): CryptMethod => {
+      if (!filterName || filterName === 'Identity') return 'Identity';
+      if (cf instanceof PDFDict) {
+        const entry = cf.lookup(PDFName.of(filterName));
+        if (entry instanceof PDFDict) return cfmToMethod(lookupName(entry, 'CFM'));
+      }
+      return 'RC4';
+    };
+    streamMethod = resolveCfm(lookupName(enc, 'StmF'));
+    stringMethod = resolveCfm(lookupName(enc, 'StrF'));
+  } else if (version === 5) {
+    streamMethod = 'AESV3';
+    stringMethod = 'AESV3';
+  }
+  if (revision >= 5) {
+    streamMethod = 'AESV3';
+    stringMethod = 'AESV3';
+  }
+
+  const idArray = doc.context.trailerInfo.ID;
+  let idBytes = new Uint8Array(0);
+  if (idArray instanceof PDFArray && idArray.size() > 0) {
+    const first = idArray.lookup(0);
+    if (first instanceof PDFString || first instanceof PDFHexString)
+      idBytes = new Uint8Array(first.asBytes());
+  }
+
+  const encryptMetadataVal = enc.get(PDFName.of('EncryptMetadata'));
+  const encryptMetadata =
+    encryptMetadataVal instanceof PDFBool ? encryptMetadataVal.asBoolean() : true;
+
+  const params: EncryptParams = {
+    revision,
+    version,
+    keyLength: keyLength > 0 ? keyLength : 5,
+    o: bytesOf('O'),
+    u: bytesOf('U'),
+    oe: revision >= 5 ? bytesOf('OE') : null,
+    ue: revision >= 5 ? bytesOf('UE') : null,
+    permissions: numberOf('P', 0),
+    idBytes,
+    encryptMetadata,
+    streamMethod,
+    stringMethod,
+  };
+
+  const decryptor = PdfDecryptor.create(params, new TextEncoder().encode(password));
+  if (!decryptor) {
+    logger.warn(CONTEXT, 'Failed to derive decryption key (wrong password or unsupported handler)');
+  }
+  return decryptor;
+}
+
+/** Decode raw PDF string bytes: UTF-16BE (with BOM) or PDFDocEncoding-ish */
+function decodePdfStringBytes(bytes: Uint8Array): string {
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    const body = Buffer.from(bytes.subarray(2));
+    if (body.length % 2 === 0) {
+      const swapped = Buffer.from(body);
+      swapped.swap16(); // UTF-16BE → LE
+      return swapped.toString('utf16le');
+    }
+  }
+  return Buffer.from(bytes).toString('latin1');
+}
 
 function lookupName(dict: PDFDict, key: string): string | null {
   const value = dict.lookup(PDFName.of(key));
@@ -97,11 +212,29 @@ function countPattern(haystack: Uint8Array, pattern: string): number {
 }
 
 /** Extract XMP metadata stream text from the document catalog */
-function extractXmp(doc: PDFDocument): string | null {
+function extractXmp(doc: PDFDocument, decryptor: PdfDecryptor | null): string | null {
   const metadataRef = doc.catalog.get(PDFName.of('Metadata'));
   if (!metadataRef) return null;
   const stream = doc.context.lookup(metadataRef);
   if (!(stream instanceof PDFRawStream)) return null;
+
+  // Encrypted PDFs: decrypt the stream bytes first (metadata object number
+  // comes from the indirect reference), then apply stream filters.
+  if (decryptor && metadataRef instanceof PDFRef) {
+    try {
+      let raw = decryptor.decryptStream(
+        stream.contents,
+        metadataRef.objectNumber,
+        metadataRef.generationNumber,
+      );
+      const filter = lookupName(stream.dict, 'Filter');
+      if (filter === 'FlateDecode') raw = new Uint8Array(inflateSync(raw));
+      return new TextDecoder('utf-8', { fatal: false }).decode(raw);
+    } catch {
+      // fall through to the non-encrypted path
+    }
+  }
+
   try {
     const decoded = decodePDFRawStream(stream).decode();
     return new TextDecoder('utf-8', { fatal: false }).decode(decoded);
@@ -131,16 +264,30 @@ function decodeStreamArray(dict: PDFDict, key: string): Uint8Array[] {
   return results;
 }
 
+/** Decrypt (when needed) and decode a string entry owned by an object */
+function readString(
+  dict: PDFDict,
+  key: string,
+  decryptor: PdfDecryptor | null,
+  objNumber: number,
+  generation: number,
+): string | null {
+  if (!decryptor) return lookupString(dict, key);
+  const raw = lookupBytes(dict, key);
+  if (!raw) return null;
+  return decodePdfStringBytes(decryptor.decryptString(raw, objNumber, generation));
+}
+
 /**
  * Build a map from signature /V dictionaries to their field names,
- * by scanning all AcroForm signature fields.
+ * by scanning all AcroForm signature fields. Decrypts /T when needed.
  */
-function collectFieldNames(doc: PDFDocument): Map<PDFDict, string> {
+function collectFieldNames(doc: PDFDocument, decryptor: PdfDecryptor | null): Map<PDFDict, string> {
   const names = new Map<PDFDict, string>();
-  for (const [, object] of doc.context.enumerateIndirectObjects()) {
+  for (const [ref, object] of doc.context.enumerateIndirectObjects()) {
     if (!(object instanceof PDFDict)) continue;
     if (lookupName(object, 'FT') !== 'Sig') continue;
-    const fieldName = lookupString(object, 'T');
+    const fieldName = readString(object, 'T', decryptor, ref.objectNumber, ref.generationNumber);
     const v = object.get(PDFName.of('V'));
     if (!fieldName || !v) continue;
     const target = v instanceof PDFRef ? doc.context.lookup(v) : v;
@@ -151,18 +298,26 @@ function collectFieldNames(doc: PDFDocument): Map<PDFDict, string> {
   return names;
 }
 
+export interface ParseOptions {
+  /** Password for encrypted PDFs (empty string tries the user/permission key) */
+  password?: string;
+}
+
 /**
  * Parse a PDF file and extract everything the verification tools need.
  */
-export async function parsePdf(filePath: string): Promise<ParsedPdf> {
+export async function parsePdf(filePath: string, options: ParseOptions = {}): Promise<ParsedPdf> {
   await assertReadablePdf(filePath);
   const buffer = await readFile(filePath);
   const bytes = new Uint8Array(buffer);
-  return parsePdfBytes(bytes);
+  return parsePdfBytes(bytes, options);
 }
 
 /** Parse from in-memory bytes (used by tests) */
-export async function parsePdfBytes(bytes: Uint8Array): Promise<ParsedPdf> {
+export async function parsePdfBytes(
+  bytes: Uint8Array,
+  options: ParseOptions = {},
+): Promise<ParsedPdf> {
   let doc: PDFDocument;
   try {
     doc = await PDFDocument.load(bytes, {
@@ -178,19 +333,20 @@ export async function parsePdfBytes(bytes: Uint8Array): Promise<ParsedPdf> {
     );
   }
 
-  // In encrypted PDFs all string objects are encrypted; without decryption
-  // decodeText() would yield mojibake. Suppress string metadata in that case.
-  // (Signature verification itself works on raw bytes and is unaffected —
-  // /Contents is excluded from encryption per ISO 32000-1 §7.6.2.)
+  // In encrypted PDFs all string/stream objects are encrypted. v0.5 attempts
+  // decryption (permission-encrypted PDFs use an empty user password; a
+  // password can be supplied for reader-encrypted PDFs). Signature /Contents
+  // is exempt from encryption (ISO 32000-1 §7.6.2), so verification is
+  // unaffected either way.
   const isEncrypted = doc.isEncrypted;
-  const str = (dict: PDFDict, key: string): string | null =>
-    isEncrypted ? null : lookupString(dict, key);
+  const decryptor = isEncrypted ? buildDecryptor(doc, options.password ?? '') : null;
+  const decrypted = decryptor !== null;
 
-  const fieldNames = collectFieldNames(doc);
+  const fieldNames = collectFieldNames(doc, decryptor);
   const signatures: SignatureField[] = [];
   const seen = new Set<PDFDict>();
 
-  for (const [, object] of doc.context.enumerateIndirectObjects()) {
+  for (const [ref, object] of doc.context.enumerateIndirectObjects()) {
     if (!(object instanceof PDFDict) || seen.has(object)) continue;
     const type = lookupName(object, 'Type');
     const isSig = type === 'Sig';
@@ -202,17 +358,23 @@ export async function parsePdfBytes(bytes: Uint8Array): Promise<ParsedPdf> {
     if (!hasSignatureShape) continue;
     seen.add(object);
 
+    const objNum = ref.objectNumber;
+    const gen = ref.generationNumber;
+    // When encrypted but undecryptable, suppress mojibake by returning null.
+    const str = (key: string): string | null =>
+      isEncrypted && !decryptor ? null : readString(object, key, decryptor, objNum, gen);
+
     const contents = lookupBytes(object, 'Contents');
     signatures.push({
-      fieldName: isEncrypted ? null : (fieldNames.get(object) ?? null),
+      fieldName: isEncrypted && !decryptor ? null : (fieldNames.get(object) ?? null),
       filter: lookupName(object, 'Filter'),
       subFilter: lookupName(object, 'SubFilter'),
       byteRange: lookupNumberArray(object, 'ByteRange'),
       contents: contents ? stripZeroPadding(contents) : null,
-      signingTimeDictionary: str(object, 'M'),
-      name: str(object, 'Name'),
-      reason: str(object, 'Reason'),
-      location: str(object, 'Location'),
+      signingTimeDictionary: str('M'),
+      name: str('Name'),
+      reason: str('Reason'),
+      location: str('Location'),
       isDocumentTimestamp: isDts,
       docMdpPermission: extractDocMdpPermission(object),
     });
@@ -248,12 +410,13 @@ export async function parsePdfBytes(bytes: Uint8Array): Promise<ParsedPdf> {
     bytes,
     fileSize: bytes.length,
     isEncrypted,
+    decrypted,
     signatures,
     revisionCount: countPattern(bytes, 'startxref'),
     hasDss: Boolean(dss),
     hasVri,
     dss: dssStreams,
-    xmpMetadata: extractXmp(doc),
+    xmpMetadata: extractXmp(doc, decryptor),
     pdfVersion: headerMatch ? headerMatch[1] : null,
   };
 

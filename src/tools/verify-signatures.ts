@@ -25,6 +25,12 @@ const VerifySignaturesSchema = {
     .describe(
       'Revocation checking: "none", "embedded" (OCSP/CRL data inside the PDF/CMS, default), or "online" (additionally query OCSP responders and CRL distribution points over HTTP).',
     ),
+  password: z
+    .string()
+    .optional()
+    .describe(
+      'Password for an encrypted PDF. Omit for permission-encrypted PDFs (an empty user password is tried automatically).',
+    ),
 };
 
 type VerifySignaturesInput = {
@@ -32,6 +38,7 @@ type VerifySignaturesInput = {
   response_format: ResponseFormat;
   trust_anchors?: string[];
   check_revocation: RevocationMode;
+  password?: string;
 };
 
 export function registerVerifySignatures(server: McpServer): void {
@@ -71,7 +78,7 @@ Examples:
     },
     async (params: VerifySignaturesInput) => {
       try {
-        const parsed = await parsePdf(params.file_path);
+        const parsed = await parsePdf(params.file_path, { password: params.password });
         const reports = await verifySignatures(parsed, {
           trustAnchorPaths: params.trust_anchors,
           revocationMode: params.check_revocation,
