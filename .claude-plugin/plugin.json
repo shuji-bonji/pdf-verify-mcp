@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/.claude-plugin/plugin.schema.json",
+  "name": "pdf-verify-mcp",
+  "version": "0.5.2",
+  "description": "PDF 真正性検証 MCP server。電子署名の暗号学的検証 (CMS/PKCS#7)・改ざん検知 (ByteRange/インクリメンタル更新解析)・PAdES レベル判定 (B-B/B-T/B-LT/B-LTA)・PDF/A 適合性検証を提供する。npx @shuji-bonji/pdf-verify-mcp で起動。",
+  "author": {
+    "name": "shuji-bonji",
+    "email": "bonji@mikuro.jp",
+    "url": "https://github.com/shuji-bonji"
+  },
+  "homepage": "https://github.com/shuji-bonji/pdf-verify-mcp",
+  "repository": "https://github.com/shuji-bonji/pdf-verify-mcp",
+  "license": "MIT",
+  "keywords": [
+    "pdf",
+    "mcp",
+    "mcp-server",
+    "pdf-verification",
+    "digital-signature",
+    "signature-verification",
+    "tamper-detection",
+    "pades",
+    "cms",
+    "pkcs7"
+  ],
+  "mcpServers": {
+    "pdf-verify": {
+      "command": "npx",
+      "args": ["-y", "@shuji-bonji/pdf-verify-mcp@latest"]
+    }
+  }
+}

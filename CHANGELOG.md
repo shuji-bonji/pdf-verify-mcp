@@ -2,7 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.5.1] - Unreleased
+## [0.5.2] - 2026-07-14
+
+### Added
+
+- **Claude Code plugin manifest** (`.claude-plugin/plugin.json`): the server can
+  now be installed as a plugin from the
+  [shuji-bonji/claude-plugins](https://github.com/shuji-bonji/claude-plugins)
+  marketplace (`/plugin install pdf-verify-mcp@shuji-bonji`) in addition to the
+  manual `mcpServers` config.
+
+### Changed
+
+- READMEs (en/ja) document the plugin installation route.
+
+## [0.5.1] - 2026-07-13
 
 Fixes from a consolidated code review (security & correctness).
 
@@ -35,7 +49,7 @@ Fixes from a consolidated code review (security & correctness).
 - qpdf-based end-to-end decryption tests (AES-256/AES-128/RC4 permission
   encryption + wrong/missing password regression). CI installs qpdf.
 
-## [0.5.0] - Unreleased
+## [0.5.0] - 2026-07-13
 
 ### Added
 

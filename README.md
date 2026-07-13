@@ -48,6 +48,15 @@ Native results are honest about their limits: violations mean definitively non-c
 
 ## Installation
 
+As a plugin (via the [shuji-bonji/claude-plugins](https://github.com/shuji-bonji/claude-plugins) marketplace, recommended):
+
+```bash
+/plugin marketplace add shuji-bonji/claude-plugins
+/plugin install pdf-verify-mcp@shuji-bonji
+```
+
+Or add directly to your MCP config:
+
 ```json
 {
   "mcpServers": {
