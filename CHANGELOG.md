@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- The biome version is pinned to an exact `2.5.4` (was `^2.3.14`, while the
+  installed toolchain had moved to 2.5.4), and `biome.json`'s `$schema` now
+  matches. Biome's formatting output changes between minor releases, so a caret
+  range let a local `npm install` drift ahead of the pinned config and report
+  diffs on files nobody had touched.
+
 ## [0.6.0] - 2026-07-16
 
 ### Added
