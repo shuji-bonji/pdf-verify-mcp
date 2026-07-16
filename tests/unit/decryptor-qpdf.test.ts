@@ -79,16 +79,15 @@ describeQpdf('qpdf-generated encrypted PDFs (permission-encrypted)', () => {
 });
 
 describeQpdf('password validation (review #1: R2–R4 /U check)', () => {
-  it.each([
-    'rc4pw',
-    'aes128pw',
-    'aes256pw',
-  ])('%s: correct password decrypts, wrong/missing password is rejected', async (name) => {
-    const path = join(dir, `${name}.pdf`);
-    expect((await parsePdf(path, { password: 'secret' })).decrypted).toBe(true);
-    // Without the /U validation fix, R2–R4 (rc4pw / aes128pw) would return
-    // decrypted=true here and emit mojibake.
-    expect((await parsePdf(path, { password: 'WRONG' })).decrypted).toBe(false);
-    expect((await parsePdf(path)).decrypted).toBe(false);
-  });
+  it.each(['rc4pw', 'aes128pw', 'aes256pw'])(
+    '%s: correct password decrypts, wrong/missing password is rejected',
+    async (name) => {
+      const path = join(dir, `${name}.pdf`);
+      expect((await parsePdf(path, { password: 'secret' })).decrypted).toBe(true);
+      // Without the /U validation fix, R2–R4 (rc4pw / aes128pw) would return
+      // decrypted=true here and emit mojibake.
+      expect((await parsePdf(path, { password: 'WRONG' })).decrypted).toBe(false);
+      expect((await parsePdf(path)).decrypted).toBe(false);
+    },
+  );
 });

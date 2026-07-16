@@ -6,7 +6,7 @@
 
 [日本語](./README.ja.md)
 
-MCP server for PDF **authenticity verification** — cryptographic digital signature verification, tamper detection, PAdES baseline level detection, and PDF/A / PDF/UA declaration identification.
+MCP server for PDF **authenticity and conformance verification** — cryptographic digital signature verification, tamper detection, PAdES baseline level detection, and PDF/A (ISO 19005) / PDF/UA (ISO 14289) validation.
 
 Part of the PDF family alongside [pdf-reader-mcp](https://github.com/shuji-bonji/pdf-reader-mcp) (structure analysis) and [pdf-spec-mcp](https://github.com/shuji-bonji/pdf-spec-mcp) (specification reference). Where `pdf-reader-mcp` tells you *what is in* a PDF, `pdf-verify-mcp` tells you *whether it is genuine*.
 
@@ -18,7 +18,7 @@ Part of the PDF family alongside [pdf-reader-mcp](https://github.com/shuji-bonji
 | `verify_integrity` | Tamper detection: incremental updates, changes after signing, DocMDP certification violations |
 | `detect_pades_level` | PAdES baseline level (B-B / B-T / B-LT / B-LTA) with content-validated LTV data |
 | `identify_conformance` | Declared PDF/A / PDF/UA conformance from XMP metadata |
-| `validate_conformance` | PDF/A validation (ISO 19005): veraPDF when installed, built-in rule subset otherwise |
+| `validate_conformance` | PDF/A (ISO 19005) and PDF/UA (ISO 14289) validation: veraPDF when installed, built-in rule subset otherwise |
 
 ## Verdicts
 
@@ -44,7 +44,17 @@ Supported SubFilters: `ETSI.CAdES.detached` (PAdES), `adbe.pkcs7.detached`, `ETS
 
 `validate_conformance` uses a hybrid engine. With veraPDF installed (`PDF_VERIFY_VERAPDF` env var or on PATH) validation is delegated for authoritative results. Otherwise a built-in subset of ~15 high-value ISO 19005 rules runs natively (encryption, trailer /ID, LZW, font embedding, JavaScript/prohibited actions, OutputIntent, transparency for A-1, XFA, and more), each reported with its clause reference.
 
-Native results are honest about their limits: violations mean definitively non-compliant; all-passed means "no violations in the checked subset" — never certification. PDF/UA (accessibility) validation belongs to pdf-reader-mcp's `validate_tagged`.
+Native results are honest about their limits: violations mean definitively non-compliant; all-passed means "no violations in the checked subset" — never certification.
+
+## PDF/UA validation (v0.6)
+
+Pass `flavour: "pdfua-1"` (or `"pdfua-2"`) to validate accessibility conformance against ISO 14289. veraPDF is delegated to with `--flavour ua1` when installed; otherwise 12 native rules run: `MarkInfo`/`Marked`, `StructTreeRoot`, `pdfuaid` declaration, `/Lang`, `DisplayDocTitle`, document title, Figure `/Alt`, image tagging, heading hierarchy, table `TH`/`TR`, Link `/Contents`, and encryption barriers. Tags are resolved through `/RoleMap`.
+
+PDF/UA native violations carry a `severity`: only `error` rules can prove non-conformance, while `warning` rules flag what needs human review. Accessibility is not fully machine-decidable — whether alt text is *present* is checkable, whether it is *meaningful* is not.
+
+The native subset stops where pdf-lib does. Rules needing content-stream analysis — 7.1-3 (content marked as artifact or tagged), 7.2-34 (language of page content), 7.18.1-1 (annotations nested in `Annot` tags), 7.18.3-1 (`/Tabs`) — are left to veraPDF rather than approximated. Install veraPDF when accessibility matters.
+
+> Without an explicit flavour, PDF/UA is selected only when the document declares PDF/UA and not PDF/A. Use pdf-reader-mcp's `inspect_tags` to examine the structure tree itself; conformance judgment lives here.
 
 ## Installation
 

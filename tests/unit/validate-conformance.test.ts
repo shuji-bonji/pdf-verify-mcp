@@ -80,12 +80,25 @@ describe('validateConformance (native engine)', () => {
     ).rejects.toThrow(/Invalid flavour/);
   });
 
-  it('points PDF/UA documents to pdf-reader-mcp', async () => {
+  it('auto-selects PDF/UA when the document declares only PDF/UA', async () => {
+    // v0.6: PDF/UA is validated here rather than deferred to pdf-reader-mcp
     const pdf = await createSignedPdf(identity, { xmp: { pdfuaPart: '1' } });
     const parsed = await parsePdfBytes(pdf);
     const report = await validateConformance(parsed, '', { engine: ValidationEngine.NATIVE });
 
-    expect(report.notes.join(' ')).toContain('validate_tagged');
+    expect(report.flavour).toBe('PDF/UA-1');
+    expect(report.notes.join(' ')).not.toContain('validate_tagged');
+  });
+
+  it('prefers PDF/A and mentions PDF/UA when both are declared', async () => {
+    const pdf = await createSignedPdf(identity, {
+      xmp: { pdfaPart: '2', pdfaConformance: 'B', pdfuaPart: '1' },
+    });
+    const parsed = await parsePdfBytes(pdf);
+    const report = await validateConformance(parsed, '', { engine: ValidationEngine.NATIVE });
+
+    expect(report.flavour).toBe('PDF/A-2b');
+    expect(report.notes.join(' ')).toContain('pdfua-1');
   });
 });
 

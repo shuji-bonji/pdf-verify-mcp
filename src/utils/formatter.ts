@@ -147,7 +147,8 @@ export function formatPadesReports(reports: PadesLevelReport[]): string {
 export function formatConformanceValidation(
   report: import('../services/conformance-validation.js').ConformanceValidationReport,
 ): string {
-  const lines: string[] = ['# PDF/A Conformance Validation', ''];
+  const standard = report.flavour.startsWith('PDF/UA') ? 'PDF/UA' : 'PDF/A';
+  const lines: string[] = [`# ${standard} Conformance Validation`, ''];
   lines.push(`- Flavour: ${report.flavour}`);
   lines.push(`- Engine: ${report.engine}`);
   const compliantLabel =
@@ -163,7 +164,8 @@ export function formatConformanceValidation(
   if (report.violations.length > 0) {
     lines.push('', '## Violations');
     for (const v of report.violations) {
-      lines.push(`- **${v.ruleId}** (${v.clause}): ${v.description}`);
+      const sev = v.severity ? `[${v.severity}] ` : '';
+      lines.push(`- ${sev}**${v.ruleId}** (${v.clause}): ${v.description}`);
       if (v.detail) lines.push(`  - ${v.detail}`);
     }
   }

@@ -17,7 +17,7 @@ const ValidateConformanceSchema = {
     .string()
     .optional()
     .describe(
-      'PDF/A flavour to validate against: "pdfa-1b", "pdfa-1a", "pdfa-2b", "pdfa-2u", "pdfa-3b", etc. Omit to use the document\'s XMP declaration (falls back to pdfa-2b).',
+      'Flavour to validate against. PDF/A: "pdfa-1b", "pdfa-1a", "pdfa-2b", "pdfa-2u", "pdfa-3b", etc. PDF/UA: "pdfua-1", "pdfua-2". Omit to use the document\'s XMP declaration (PDF/A takes precedence when both are declared; falls back to pdfa-2b).',
     ),
   engine: z
     .nativeEnum(ValidationEngine)
@@ -38,24 +38,27 @@ export function registerValidateConformance(server: McpServer): void {
   server.registerTool(
     'validate_conformance',
     {
-      title: 'Validate PDF/A Conformance',
-      description: `Validate a PDF against a PDF/A flavour (ISO 19005).
+      title: 'Validate PDF/A and PDF/UA Conformance',
+      description: `Validate a PDF against a PDF/A flavour (ISO 19005, archiving) or a PDF/UA flavour (ISO 14289, accessibility).
 
-Hybrid engine: when veraPDF is installed (PDF_VERIFY_VERAPDF env var or on PATH) validation is delegated to it for an authoritative result. Otherwise a built-in subset of ~15 high-value rules is checked natively (encryption, file ID, LZW, font embedding, JavaScript/prohibited actions, OutputIntent, transparency for A-1, XFA, and more).
+Hybrid engine: when veraPDF is installed (PDF_VERIFY_VERAPDF env var or on PATH) validation is delegated to it for an authoritative result. Otherwise a built-in rule subset is checked natively:
+  - PDF/A (~15 rules): encryption, file ID, LZW, font embedding, JavaScript/prohibited actions, OutputIntent, transparency for A-1, XFA, and more
+  - PDF/UA (~12 rules): MarkInfo/Marked, StructTreeRoot, pdfuaid declaration, /Lang, DisplayDocTitle, document title, Figure /Alt, image tagging, heading hierarchy, table TH/TR, Link /Contents
 
 Args:
   - file_path (string): Absolute path to a local PDF file
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
-  - flavour (string, optional): e.g. "pdfa-2b". Defaults to the XMP declaration (fallback: pdfa-2b)
+  - flavour (string, optional): e.g. "pdfa-2b", "pdfua-1". Defaults to the XMP declaration (PDF/A wins when both are declared; fallback: pdfa-2b)
   - engine ('auto' | 'verapdf' | 'native'): Engine selection (default: 'auto')
 
 Returns:
-  Per-rule results with ISO 19005 clause references. compliant is true/false for veraPDF; for the native engine, false means definitive violations were found and null means "no violations in the checked subset" (NOT certification).
+  Per-rule results with ISO clause references. compliant is true/false for veraPDF; for the native engine, false means definitive violations were found and null means "no violations in the checked subset" (NOT certification). PDF/UA native violations carry a severity: only 'error' rules can prove non-conformance, 'warning' rules need human review.
 
-Note: PDF/UA (accessibility) validation is out of scope — use pdf-reader-mcp's validate_tagged.
+Note: PDF/UA cannot be fully decided by machine — whether alt text is *present* is checkable, whether it is *meaningful* is not. Use pdf-reader-mcp's inspect_tags to examine the structure tree itself.
 
 Examples:
   - Check whether a scanned archive PDF actually meets its declared PDF/A-2b
+  - Verify a generated document is tagged and accessible before publishing (pdfua-1)
   - Find why a document fails PDF/A before submitting it to an archive system`,
       inputSchema: ValidateConformanceSchema,
       annotations: {

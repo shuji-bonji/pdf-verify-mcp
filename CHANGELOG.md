@@ -2,6 +2,53 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-07-16
+
+### Added
+
+- **PDF/UA validation (ISO 14289)** in `validate_conformance` via
+  `flavour: "pdfua-1"` / `"pdfua-2"`. Accessibility conformance was previously
+  out of scope and deferred to pdf-reader-mcp's `validate_tagged`.
+
+  The split now follows the family's boundary rule — reader reports *what is in*
+  a document, verify judges *whether it conforms*. `validate_tagged` inspects the
+  structure tree; conformance judgments belong here alongside PDF/A.
+
+  - **veraPDF** is delegated to with `--flavour ua1` / `ua2` when installed
+    (authoritative).
+  - **Native subset (12 rules)** otherwise: `MarkInfo`/`Marked`, `StructTreeRoot`,
+    `pdfuaid` declaration, `/Lang`, `DisplayDocTitle`, document title, Figure
+    `/Alt`, image tagging, heading hierarchy, table `TH`/`TR`, Link `/Contents`,
+    encryption barrier. Tags are resolved through `/RoleMap`, and the structure
+    tree is walked via `/K` so heading order is preserved.
+
+- **Rule severity** for PDF/UA native violations: `error` (definitive violation)
+  vs `warning` (likely a problem, or only partly machine-checkable). Only `error`
+  rules can set `compliant: false` — accessibility is not fully decidable by
+  machine, and the report says so rather than implying certification.
+
+### Changed
+
+- Flavour resolution: an explicit `pdfua-*` flavour selects PDF/UA. Without one,
+  PDF/UA is auto-selected only when the document declares PDF/UA and *not* PDF/A;
+  when both are declared PDF/A wins (unchanged behaviour) and a note points at
+  `pdfua-1`.
+- `validate_conformance` is retitled "Validate PDF/A and PDF/UA Conformance".
+
+### Notes
+
+Two PDF/UA rules exceed what pdf-reader-mcp's `validate_tagged` can check:
+Figure `/Alt` presence (reader counts Figure tags but never reads the attribute)
+and Link `/Contents`. Heading-order checking is equivalent. This is a migration
+of responsibility, not a copy.
+
+The veraPDF delegation was verified against a real installation: `--flavour ua1`
+returned 106 rule results, and every native finding was corroborated. The native
+subset deliberately stops where pdf-lib does — checks that need content-stream
+analysis (7.1-3 content marked as artifact/tagged, 7.2-34 language of page
+content, 7.18.1-1 annotations nested in Annot tags, 7.18.3-1 `/Tabs`) are left
+to veraPDF rather than approximated.
+
 ## [0.5.2] - 2026-07-14
 
 ### Added
