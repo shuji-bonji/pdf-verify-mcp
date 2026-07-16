@@ -1,8 +1,11 @@
 /**
  * X.500 Relative Distinguished Name formatting.
  *
- * Renders a pkijs RDN sequence as a human/LLM-readable string
- * (`CN=..., O=...`) instead of raw attribute OIDs (`2.5.4.3=...`).
+ * Two renderings with different purposes:
+ * - `formatRdn`    — human/LLM-readable display (`CN=..., O=...`)
+ * - `canonicalName` — raw-OID matching key (`2.5.4.3=...`), used to compare
+ *   subject/issuer names. Never show it to users and never mix the two:
+ *   they use different separators and attribute names by design.
  */
 
 import type * as pkijs from 'pkijs';
@@ -25,4 +28,17 @@ export function formatRdn(rdn: pkijs.RelativeDistinguishedNames): string {
       return `${name}=${tv.value.valueBlock.value}`;
     })
     .join(', ');
+}
+
+/**
+ * Canonical matching key for an RDN sequence (raw OIDs, `,` separated).
+ *
+ * String-based comparison is a pragmatic approximation of RFC 5280 name
+ * matching: it assumes both names decode attribute values identically and
+ * appear in the same order, which holds for the same CA re-encoding its own
+ * name (the case we compare). A future improvement could compare canonical
+ * DER encodings instead.
+ */
+export function canonicalName(rdn: pkijs.RelativeDistinguishedNames): string {
+  return rdn.typesAndValues.map((tv) => `${tv.type}=${tv.value.valueBlock.value}`).join(',');
 }

@@ -16,6 +16,41 @@ function matchXmp(xmp: string, patterns: RegExp[]): string | null {
   return null;
 }
 
+/**
+ * Extract the declared PDF/A identification (pdfaid:part / pdfaid:conformance)
+ * from XMP metadata. Handles both the attribute and the element form. Shared
+ * by conformance identification and PDF/A flavour resolution.
+ */
+export function extractPdfaId(
+  xmp: string | null | undefined,
+): { part: number; conformance: string | null } | null {
+  if (!xmp) return null;
+  const part = matchXmp(xmp, [
+    /pdfaid:part\s*=\s*["'](\d+)["']/,
+    /<pdfaid:part>\s*(\d+)\s*<\/pdfaid:part>/,
+  ]);
+  if (part === null) return null;
+  const conformance = matchXmp(xmp, [
+    /pdfaid:conformance\s*=\s*["']([ABUabu])["']/,
+    /<pdfaid:conformance>\s*([ABUabu])\s*<\/pdfaid:conformance>/,
+  ]);
+  return { part: Number(part), conformance: conformance ? conformance.toUpperCase() : null };
+}
+
+/**
+ * Extract the declared PDF/UA part (pdfuaid:part) from XMP metadata.
+ * Handles both the attribute and the element form. Shared by conformance
+ * identification, PDF/UA flavour resolution, and the native rule engine.
+ */
+export function extractPdfuaPart(xmp: string | null | undefined): number | null {
+  if (!xmp) return null;
+  const part = matchXmp(xmp, [
+    /pdfuaid:part\s*=\s*["'](\d+)["']/,
+    /<pdfuaid:part>\s*(\d+)\s*<\/pdfuaid:part>/,
+  ]);
+  return part !== null ? Number(part) : null;
+}
+
 export function identifyConformance(parsed: ParsedPdf): ConformanceReport {
   const notes: string[] = [
     'This tool identifies declared conformance only; it does not validate actual conformance.',
@@ -33,18 +68,11 @@ export function identifyConformance(parsed: ParsedPdf): ConformanceReport {
   }
 
   // pdfaid:part / pdfaid:conformance — attribute or element form
-  const pdfaPart = matchXmp(xmp, [
-    /pdfaid:part\s*=\s*["'](\d+)["']/,
-    /<pdfaid:part>\s*(\d+)\s*<\/pdfaid:part>/,
-  ]);
-  const pdfaConformance = matchXmp(xmp, [
-    /pdfaid:conformance\s*=\s*["']([ABUabu])["']/,
-    /<pdfaid:conformance>\s*([ABUabu])\s*<\/pdfaid:conformance>/,
-  ]);
-  const pdfuaPart = matchXmp(xmp, [
-    /pdfuaid:part\s*=\s*["'](\d+)["']/,
-    /<pdfuaid:part>\s*(\d+)\s*<\/pdfuaid:part>/,
-  ]);
+  const pdfaId = extractPdfaId(xmp);
+  const pdfaPart = pdfaId !== null ? String(pdfaId.part) : null;
+  const pdfaConformance = pdfaId?.conformance ?? null;
+  const pdfuaPartNum = extractPdfuaPart(xmp);
+  const pdfuaPart = pdfuaPartNum !== null ? String(pdfuaPartNum) : null;
 
   if (pdfaPart) {
     notes.push(

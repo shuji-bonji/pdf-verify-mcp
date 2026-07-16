@@ -68,11 +68,13 @@ Plugin として（[shuji-bonji/claude-plugins](https://github.com/shuji-bonji/c
   "mcpServers": {
     "pdf-verify": {
       "command": "npx",
-      "args": ["-y", "@shuji-bonji/pdf-verify-mcp"]
+      "args": ["-y", "@shuji-bonji/pdf-verify-mcp@latest"]
     }
   }
 }
 ```
+
+> **`@latest` を付ける（またはバージョンを固定する）ことを推奨します。** バージョン指定なしの `npx -y <pkg>` は**最初にキャッシュした版を使い続けます**（`-y` はインストール確認を省くだけで、更新確認はしません）。キャッシュを消すには `rm -rf ~/.npm/_npx`。
 
 ## 使用例
 

@@ -20,6 +20,10 @@ import {
   PDFString,
 } from 'pdf-lib';
 import type { ParsedPdf } from '../types.js';
+import { logger } from '../utils/logger.js';
+import { extractPdfuaPart } from './conformance.js';
+
+const CONTEXT = 'pdfua-validator';
 
 /** PDF/UA flavour under validation */
 export interface PdfuaFlavour {
@@ -54,6 +58,8 @@ interface RuleContext {
   flavour: PdfuaFlavour;
   /** Structure elements collected once, shared across rules */
   structElems: PDFDict[];
+  /** /RoleMap built once, shared across rules */
+  roleMap: Map<string, string>;
   /** Tag name -> count, after /RoleMap resolution */
   roleCounts: Record<string, number>;
 }
@@ -84,7 +90,9 @@ function structTreeRoot(doc: PDFDocument): PDFDict | null {
 
 /**
  * Walk the structure tree from StructTreeRoot, collecting /StructElem dicts.
- * Cycles are guarded; the traversal order follows /K so heading order is preserved.
+ * Cycles are guarded. The walk is iterative (explicit stack) so deeply nested
+ * trees cannot overflow the call stack; kids are pushed in reverse so the
+ * document order of /K is preserved (headings depend on it).
  */
 function collectStructElems(doc: PDFDocument): PDFDict[] {
   const root = structTreeRoot(doc);
@@ -93,28 +101,32 @@ function collectStructElems(doc: PDFDocument): PDFDict[] {
   const out: PDFDict[] = [];
   const seen = new Set<PDFDict>();
 
-  const visitKids = (node: PDFDict): void => {
+  const kidsOf = (node: PDFDict): PDFDict[] => {
     const k = node.lookup(PDFName.of('K'));
-    if (k instanceof PDFDict) visit(k);
-    else if (k instanceof PDFArray) {
+    if (k instanceof PDFDict) return [k];
+    if (k instanceof PDFArray) {
+      const kids: PDFDict[] = [];
       for (let i = 0; i < k.size(); i++) {
         const kid = k.lookup(i);
-        if (kid instanceof PDFDict) visit(kid);
+        if (kid instanceof PDFDict) kids.push(kid);
       }
+      return kids;
     }
+    return [];
   };
 
-  const visit = (node: PDFDict): void => {
-    if (seen.has(node)) return;
+  const stack: PDFDict[] = kidsOf(root).reverse();
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node || seen.has(node)) continue;
     seen.add(node);
     // Marked-content reference dicts (/Type /MCR, /OBJR) are not struct elements
     const type = node.lookup(PDFName.of('Type'));
     const isMcr = type instanceof PDFName && ['MCR', 'OBJR'].includes(type.decodeText());
     if (!isMcr && node.lookup(PDFName.of('S')) instanceof PDFName) out.push(node);
-    visitKids(node);
-  };
-
-  visitKids(root);
+    const kids = kidsOf(node);
+    for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
+  }
   return out;
 }
 
@@ -200,14 +212,14 @@ const RULES: Rule[] = [
     check: (ctx) => {
       const xmp = ctx.parsed.xmpMetadata;
       if (!xmp) return { passed: false, detail: 'No XMP metadata stream' };
-      const m =
-        /pdfuaid:part\s*=\s*["'](\d+)["']/.exec(xmp) ??
-        /<pdfuaid:part>\s*(\d+)\s*<\/pdfuaid:part>/.exec(xmp);
-      if (!m) return { passed: false, detail: 'XMP has no pdfuaid:part declaration' };
-      if (Number(m[1]) !== ctx.flavour.part) {
+      const declared = extractPdfuaPart(xmp);
+      if (declared === null) {
+        return { passed: false, detail: 'XMP has no pdfuaid:part declaration' };
+      }
+      if (declared !== ctx.flavour.part) {
         return {
           passed: false,
-          detail: `XMP declares PDF/UA-${m[1]} but validation requested PDF/UA-${ctx.flavour.part}`,
+          detail: `XMP declares PDF/UA-${declared} but validation requested PDF/UA-${ctx.flavour.part}`,
         };
       }
       return { passed: true, detail: null };
@@ -264,7 +276,7 @@ const RULES: Rule[] = [
     description: 'Every Figure structure element shall have alternate text (/Alt)',
     severity: 'error',
     check: (ctx) => {
-      const figures = ctx.structElems.filter((e) => tagOf(e, buildRoleMapCached(ctx)) === 'Figure');
+      const figures = ctx.structElems.filter((e) => tagOf(e, ctx.roleMap) === 'Figure');
       if (figures.length === 0) return { passed: true, detail: null };
       const missing = figures.filter((f) => {
         const alt = decodeText(f.lookup(PDFName.of('Alt')));
@@ -297,20 +309,17 @@ const RULES: Rule[] = [
   {
     ruleId: 'ua-heading-hierarchy',
     clause: 'ISO 14289-1, 7.4.2',
-    description: 'Headings shall start at H1 and not skip levels',
+    description:
+      'Headings shall start at H1 and not skip levels (checked in document order across the whole tree; branch-local level restarts are not distinguished and may be flagged)',
     severity: 'error',
     check: (ctx) => {
-      const roleMap = buildRoleMapCached(ctx);
       const levels: number[] = [];
       for (const elem of ctx.structElems) {
-        const m = /^H([1-6])$/.exec(tagOf(elem, roleMap));
+        const m = /^H([1-6])$/.exec(tagOf(elem, ctx.roleMap));
         if (m) levels.push(Number(m[1]));
       }
-      if (levels.length === 0) {
-        // Strong structure (H1..H6) is optional if the flat 'H' tag is used
-        if ((ctx.roleCounts.H ?? 0) > 0) return { passed: true, detail: null };
-        return { passed: true, detail: null };
-      }
+      // No numbered headings: the flat 'H' tag (or no headings at all) is fine
+      if (levels.length === 0) return { passed: true, detail: null };
       if (levels[0] !== 1) {
         return { passed: false, detail: `First heading is H${levels[0]}, expected H1` };
       }
@@ -384,20 +393,12 @@ const RULES: Rule[] = [
   },
 ];
 
-// RoleMap is derived per document; cache it on the context object.
-const roleMapCache = new WeakMap<PDFDocument, Map<string, string>>();
-function buildRoleMapCached(ctx: RuleContext): Map<string, string> {
-  let map = roleMapCache.get(ctx.doc);
-  if (!map) {
-    map = buildRoleMap(ctx.doc);
-    roleMapCache.set(ctx.doc, map);
-  }
-  return map;
-}
-
 // ---------------------------------------------------------------------------
 // Entry points
 // ---------------------------------------------------------------------------
+
+/** Number of rules in the native PDF/UA subset (keeps tool descriptions accurate) */
+export const PDFUA_NATIVE_RULE_COUNT = RULES.length;
 
 /** Parse an explicit PDF/UA flavour string, or read it from XMP */
 export function resolvePdfuaFlavour(parsed: ParsedPdf, requested?: string): PdfuaFlavour | null {
@@ -405,12 +406,8 @@ export function resolvePdfuaFlavour(parsed: ParsedPdf, requested?: string): Pdfu
     const match = /^pdfua-([12])$/i.exec(requested);
     return match ? { part: Number(match[1]) } : null;
   }
-  const xmp = parsed.xmpMetadata;
-  if (!xmp) return null;
-  const part =
-    /pdfuaid:part\s*=\s*["'](\d+)["']/.exec(xmp) ??
-    /<pdfuaid:part>\s*(\d+)\s*<\/pdfuaid:part>/.exec(xmp);
-  return part ? { part: Number(part[1]) } : null;
+  const part = extractPdfuaPart(parsed.xmpMetadata);
+  return part !== null ? { part } : null;
 }
 
 export function validatePdfuaNative(
@@ -426,7 +423,7 @@ export function validatePdfuaNative(
     if (tag) roleCounts[tag] = (roleCounts[tag] ?? 0) + 1;
   }
 
-  const ctx: RuleContext = { parsed, doc, flavour, structElems, roleCounts };
+  const ctx: RuleContext = { parsed, doc, flavour, structElems, roleMap, roleCounts };
   const results: PdfuaRuleResult[] = [];
 
   for (const rule of RULES) {
@@ -435,9 +432,11 @@ export function validatePdfuaNative(
     try {
       outcome = rule.check(ctx);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.debug(CONTEXT, `rule ${rule.ruleId} threw: ${message}`);
       outcome = {
         passed: false,
-        detail: `Rule check errored: ${error instanceof Error ? error.message : String(error)}`,
+        detail: `Rule check errored: ${message}`,
       };
     }
     results.push({

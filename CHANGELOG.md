@@ -4,13 +4,45 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-07-16
+
+Maintainability release addressing the refactoring suggestions from the 16 July
+code review ([#2](https://github.com/shuji-bonji/pdf-verify-mcp/issues/2)).
+No behaviour changes to verification results.
+
 ### Changed
 
+- **Certificate/CRL name matching** goes through a single `canonicalName()` in
+  `src/utils/rdn.ts`. Four copies of the same raw-OID `type=value` join
+  (`subjectName`, `issuerName`, `crlIssuerName`, and the inline rebuild in
+  `findIssuerCert`) are gone. `formatRdn` (display) and `canonicalName`
+  (matching) are documented as intentionally separate — they use different
+  separators and attribute names.
+- **PDF/UA rule engine**: the `/RoleMap` is built once in `validatePdfuaNative`
+  and passed to rules via the context (the `WeakMap` cache is no longer needed).
+  The structure-tree walk is now iterative with an explicit stack, so deeply
+  nested trees cannot overflow the call stack; `/K` document order is preserved.
+- **XMP identification helpers**: `extractPdfaId()` / `extractPdfuaPart()` in
+  `conformance.ts` are now the single home of the `pdfaid`/`pdfuaid` regexes,
+  shared by `identify_conformance`, flavour resolution, PDF/UA auto-selection,
+  and the `ua-xmp-declaration` rule (three duplicated copies removed).
+- **`PDFDocument.load` options centralised** in `loadPdfDocument()`
+  (`pdf-parser.ts`), shared by parsing and both native conformance paths.
+- **`validate_conformance` tool description** derives the native rule counts
+  from the rule sets (was hard-coded "~15"/"~12"), so the numbers stay accurate
+  as rules are added.
+- **Heading-hierarchy rule** documents its known limitation: levels are checked
+  in document order across the whole tree, so branch-local level restarts are
+  not distinguished. A redundant branch in the no-headings path was removed.
+- Rule-check exceptions in both native engines are now also logged at debug
+  level (`DEBUG` env var); the failure was already surfaced in the rule detail.
 - The biome version is pinned to an exact `2.5.4` (was `^2.3.14`, while the
   installed toolchain had moved to 2.5.4), and `biome.json`'s `$schema` now
   matches. Biome's formatting output changes between minor releases, so a caret
   range let a local `npm install` drift ahead of the pinned config and report
   diffs on files nobody had touched.
+- Claude plugin manifest (`.claude-plugin/plugin.json`) version synchronised;
+  its description now mentions PDF/UA (ISO 14289) alongside PDF/A.
 
 ## [0.6.0] - 2026-07-16
 

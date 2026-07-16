@@ -303,6 +303,19 @@ export interface ParseOptions {
 }
 
 /**
+ * Load a PDFDocument with the options shared across the verify tools:
+ * metadata untouched, encryption tolerated, damaged objects skipped.
+ * Centralised so parsing and native conformance validation stay consistent.
+ */
+export async function loadPdfDocument(bytes: Uint8Array): Promise<PDFDocument> {
+  return PDFDocument.load(bytes, {
+    updateMetadata: false,
+    ignoreEncryption: true,
+    throwOnInvalidObject: false,
+  });
+}
+
+/**
  * Parse a PDF file and extract everything the verification tools need.
  */
 export async function parsePdf(filePath: string, options: ParseOptions = {}): Promise<ParsedPdf> {
@@ -319,11 +332,7 @@ export async function parsePdfBytes(
 ): Promise<ParsedPdf> {
   let doc: PDFDocument;
   try {
-    doc = await PDFDocument.load(bytes, {
-      updateMetadata: false,
-      ignoreEncryption: true,
-      throwOnInvalidObject: false,
-    });
+    doc = await loadPdfDocument(bytes);
   } catch (error) {
     throw new PdfVerifyError(
       `Failed to parse PDF: ${error instanceof Error ? error.message : String(error)}`,

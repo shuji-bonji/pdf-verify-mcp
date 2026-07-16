@@ -72,11 +72,13 @@ Or add directly to your MCP config:
   "mcpServers": {
     "pdf-verify": {
       "command": "npx",
-      "args": ["-y", "@shuji-bonji/pdf-verify-mcp"]
+      "args": ["-y", "@shuji-bonji/pdf-verify-mcp@latest"]
     }
   }
 }
 ```
+
+> **Use `@latest` (or pin a version).** `npx -y <pkg>` without a version keeps running whatever it cached the first time — `-y` only skips the install prompt, it does not check for updates. To clear a stale cache: `rm -rf ~/.npm/_npx`.
 
 ## Usage examples
 

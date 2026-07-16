@@ -13,10 +13,11 @@
  * - 'native': always use the native rule subset
  */
 
-import { PDFDocument } from 'pdf-lib';
 import { ValidationEngine } from '../constants.js';
 import type { ParsedPdf } from '../types.js';
 import { PdfVerifyError } from '../utils/error-handler.js';
+import { extractPdfaId, extractPdfuaPart } from './conformance.js';
+import { loadPdfDocument } from './pdf-parser.js';
 import { type PdfaFlavour, resolveFlavour, validatePdfaNative } from './pdfa-validator.js';
 import { type PdfuaFlavour, resolvePdfuaFlavour, validatePdfuaNative } from './pdfua-validator.js';
 import { findVeraPdf, runVeraPdf } from './verapdf.js';
@@ -64,10 +65,8 @@ function isPdfuaRequest(parsed: ParsedPdf, requested?: string): boolean {
   if (requested) return /^pdfua-/i.test(requested);
   // No explicit flavour: only auto-select PDF/UA when the document declares it
   // AND does not declare PDF/A (PDF/A takes precedence for backwards compatibility).
-  const xmp = parsed.xmpMetadata;
-  if (!xmp) return false;
-  const declaresUa = /pdfuaid:part/.test(xmp);
-  const declaresA = /pdfaid:part/.test(xmp);
+  const declaresUa = extractPdfuaPart(parsed.xmpMetadata) !== null;
+  const declaresA = extractPdfaId(parsed.xmpMetadata) !== null;
   return declaresUa && !declaresA;
 }
 
@@ -100,7 +99,7 @@ export async function validateConformance(
   }
 
   // A PDF/A validation was requested but the document also declares PDF/UA
-  if (!options.flavour && parsed.xmpMetadata?.includes('pdfuaid:part')) {
+  if (!options.flavour && extractPdfuaPart(parsed.xmpMetadata) !== null) {
     notes.push(
       'Document also declares PDF/UA. Pass flavour: "pdfua-1" (or "pdfua-2") to validate accessibility conformance.',
     );
@@ -140,11 +139,7 @@ export async function validateConformance(
   }
 
   // Native subset
-  const doc = await PDFDocument.load(parsed.bytes, {
-    updateMetadata: false,
-    ignoreEncryption: true,
-    throwOnInvalidObject: false,
-  });
+  const doc = await loadPdfDocument(parsed.bytes);
   const native = validatePdfaNative(parsed, doc, flavour);
   const failed = native.results.filter((r) => !r.passed);
 
@@ -216,11 +211,7 @@ async function validatePdfua(
     };
   }
 
-  const doc = await PDFDocument.load(parsed.bytes, {
-    updateMetadata: false,
-    ignoreEncryption: true,
-    throwOnInvalidObject: false,
-  });
+  const doc = await loadPdfDocument(parsed.bytes);
   const native = validatePdfuaNative(parsed, doc, flavour);
   const failed = native.results.filter((r) => !r.passed);
   const errors = failed.filter((r) => r.severity === 'error');

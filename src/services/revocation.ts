@@ -20,7 +20,7 @@ import {
 } from '../constants.js';
 import type { RevocationResult, TrustResult } from '../types.js';
 import { logger } from '../utils/logger.js';
-import { formatRdn } from '../utils/rdn.js';
+import { canonicalName, formatRdn } from '../utils/rdn.js';
 
 const CONTEXT = 'revocation';
 
@@ -133,17 +133,8 @@ function findIssuerCert(
   cert: pkijs.Certificate,
   candidates: pkijs.Certificate[],
 ): pkijs.Certificate | null {
-  const issuerName = cert.issuer.typesAndValues
-    .map((tv) => `${tv.type}=${tv.value.valueBlock.value}`)
-    .join(',');
-  return (
-    candidates.find(
-      (c) =>
-        c.subject.typesAndValues
-          .map((tv) => `${tv.type}=${tv.value.valueBlock.value}`)
-          .join(',') === issuerName,
-    ) ?? null
-  );
+  const issuer = canonicalName(cert.issuer);
+  return candidates.find((c) => canonicalName(c.subject) === issuer) ?? null;
 }
 
 /** Extract the OCSP responder URL from the AIA extension */
@@ -178,18 +169,6 @@ export function extractCrlUrls(cert: pkijs.Certificate): string[] {
 
 async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
   return fetch(url, { ...init, signal: AbortSignal.timeout(REVOCATION_FETCH_TIMEOUT) });
-}
-
-function subjectName(cert: pkijs.Certificate): string {
-  return cert.subject.typesAndValues
-    .map((tv) => `${tv.type}=${tv.value.valueBlock.value}`)
-    .join(',');
-}
-
-function issuerName(cert: pkijs.Certificate): string {
-  return cert.issuer.typesAndValues
-    .map((tv) => `${tv.type}=${tv.value.valueBlock.value}`)
-    .join(',');
 }
 
 /** Extract caIssuers URLs from the AIA extension (v0.4) */
@@ -243,9 +222,10 @@ export async function fetchMissingIssuers(
 
   for (let depth = 0; depth < maxDepth; depth++) {
     // Self-signed: top of the chain
-    if (subjectName(current) === issuerName(current)) break;
+    if (canonicalName(current.subject) === canonicalName(current.issuer)) break;
     // Issuer already available (embedded or previously fetched)
-    const existing = known.find((c) => subjectName(c) === issuerName(current));
+    const issuerOfCurrent = canonicalName(current.issuer);
+    const existing = known.find((c) => canonicalName(c.subject) === issuerOfCurrent);
     if (existing) {
       current = existing;
       continue;
@@ -261,12 +241,12 @@ export async function fetchMissingIssuers(
         if (!response.ok) continue;
         const der = new Uint8Array(await response.arrayBuffer());
         const certs = parseCaIssuersPayload(der);
-        const issuer = certs.find((c) => subjectName(c) === issuerName(current));
+        const issuer = certs.find((c) => canonicalName(c.subject) === issuerOfCurrent);
         if (issuer) {
           found = issuer;
           // Keep any extra chain certificates from a PKCS#7 bundle too
           for (const cert of certs) {
-            if (!known.some((k) => subjectName(k) === subjectName(cert))) {
+            if (!known.some((k) => canonicalName(k.subject) === canonicalName(cert.subject))) {
               known.push(cert);
               fetched.push(cert);
             }
@@ -341,7 +321,7 @@ async function fetchCrlStatus(
     // A fetched CRL from an untrusted (usually http) endpoint must match the
     // certificate's issuer, otherwise an on-path attacker could serve a forged
     // CRL that reports GOOD. Skip mismatched CRLs entirely.
-    if (issuerName(cert) !== crlIssuerName(crl)) return null;
+    if (canonicalName(cert.issuer) !== canonicalName(crl.issuer)) return null;
     const checked = await evaluateCrl(cert, crl, issuer);
     return { status: checked.status, detail: `CRL from ${url}${checked.detailSuffix}` };
   } catch (error) {
@@ -354,10 +334,6 @@ function serialHex(value: asn1js.Integer): string {
   return Array.from(new Uint8Array(value.valueBlock.valueHexView), (b) =>
     b.toString(16).padStart(2, '0'),
   ).join('');
-}
-
-function crlIssuerName(crl: pkijs.CertificateRevocationList): string {
-  return crl.issuer.typesAndValues.map((tv) => `${tv.type}=${tv.value.valueBlock.value}`).join(',');
 }
 
 function crlStatusFor(
@@ -443,7 +419,7 @@ export async function checkRevocation(input: RevocationCheckInput): Promise<Revo
 
   // 2. Embedded CRLs (issuer name must match; signature verified when possible)
   for (const crl of input.embeddedCrls) {
-    if (crlIssuerName(crl) !== issuerName(signerCert)) continue;
+    if (canonicalName(crl.issuer) !== canonicalName(signerCert.issuer)) continue;
     const checked = await evaluateCrl(signerCert, crl, issuer);
     return {
       status: checked.status,

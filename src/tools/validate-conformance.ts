@@ -8,6 +8,8 @@ import { ResponseFormat, ValidationEngine } from '../constants.js';
 import { PdfToolInputSchema } from '../schemas/common.js';
 import { validateConformance } from '../services/conformance-validation.js';
 import { parsePdf } from '../services/pdf-parser.js';
+import { PDFA_NATIVE_RULE_COUNT } from '../services/pdfa-validator.js';
+import { PDFUA_NATIVE_RULE_COUNT } from '../services/pdfua-validator.js';
 import { handleStructuredError } from '../utils/error-handler.js';
 import { formatConformanceValidation, truncateIfNeeded } from '../utils/formatter.js';
 
@@ -42,8 +44,8 @@ export function registerValidateConformance(server: McpServer): void {
       description: `Validate a PDF against a PDF/A flavour (ISO 19005, archiving) or a PDF/UA flavour (ISO 14289, accessibility).
 
 Hybrid engine: when veraPDF is installed (PDF_VERIFY_VERAPDF env var or on PATH) validation is delegated to it for an authoritative result. Otherwise a built-in rule subset is checked natively:
-  - PDF/A (~15 rules): encryption, file ID, LZW, font embedding, JavaScript/prohibited actions, OutputIntent, transparency for A-1, XFA, and more
-  - PDF/UA (~12 rules): MarkInfo/Marked, StructTreeRoot, pdfuaid declaration, /Lang, DisplayDocTitle, document title, Figure /Alt, image tagging, heading hierarchy, table TH/TR, Link /Contents
+  - PDF/A (${PDFA_NATIVE_RULE_COUNT} rules): encryption, file ID, LZW, font embedding, JavaScript/prohibited actions, OutputIntent, transparency for A-1, XFA, and more
+  - PDF/UA (${PDFUA_NATIVE_RULE_COUNT} rules): MarkInfo/Marked, StructTreeRoot, pdfuaid declaration, /Lang, DisplayDocTitle, document title, Figure /Alt, image tagging, heading hierarchy, table TH/TR, Link /Contents
 
 Args:
   - file_path (string): Absolute path to a local PDF file

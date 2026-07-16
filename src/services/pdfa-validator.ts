@@ -10,6 +10,10 @@
 
 import { PDFArray, PDFBool, PDFDict, type PDFDocument, PDFName, PDFRef } from 'pdf-lib';
 import type { ParsedPdf } from '../types.js';
+import { logger } from '../utils/logger.js';
+import { extractPdfaId } from './conformance.js';
+
+const CONTEXT = 'pdfa-validator';
 
 /** PDF/A flavour under validation */
 export interface PdfaFlavour {
@@ -357,6 +361,9 @@ const RULES: Rule[] = [
   },
 ];
 
+/** Number of rules in the native PDF/A subset (keeps tool descriptions accurate) */
+export const PDFA_NATIVE_RULE_COUNT = RULES.length;
+
 /** Determine the flavour to validate: explicit request or the XMP declaration */
 export function resolveFlavour(parsed: ParsedPdf, requested?: string): PdfaFlavour | null {
   if (requested) {
@@ -366,16 +373,7 @@ export function resolveFlavour(parsed: ParsedPdf, requested?: string): PdfaFlavo
     }
     return null;
   }
-  const xmp = parsed.xmpMetadata;
-  if (!xmp) return null;
-  const part =
-    /pdfaid:part\s*=\s*["'](\d+)["']/.exec(xmp) ??
-    /<pdfaid:part>\s*(\d+)\s*<\/pdfaid:part>/.exec(xmp);
-  if (!part) return null;
-  const conf =
-    /pdfaid:conformance\s*=\s*["']([ABUabu])["']/.exec(xmp) ??
-    /<pdfaid:conformance>\s*([ABUabu])\s*<\/pdfaid:conformance>/.exec(xmp);
-  return { part: Number(part[1]), conformance: conf ? conf[1].toUpperCase() : null };
+  return extractPdfaId(parsed.xmpMetadata);
 }
 
 /** Run the native rule subset against a parsed document */
@@ -393,9 +391,11 @@ export function validatePdfaNative(
     try {
       outcome = rule.check(ctx);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.debug(CONTEXT, `rule ${rule.ruleId} threw: ${message}`);
       outcome = {
         passed: false,
-        detail: `Rule check errored: ${error instanceof Error ? error.message : String(error)}`,
+        detail: `Rule check errored: ${message}`,
       };
     }
     results.push({
