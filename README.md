@@ -19,6 +19,7 @@ Part of the PDF family alongside [pdf-reader-mcp](https://github.com/shuji-bonji
 | `detect_pades_level` | PAdES baseline level (B-B / B-T / B-LT / B-LTA) with content-validated LTV data |
 | `identify_conformance` | Declared PDF/A / PDF/UA conformance from XMP metadata |
 | `validate_conformance` | PDF/A (ISO 19005) and PDF/UA (ISO 14289) validation: veraPDF when installed, built-in rule subset otherwise |
+| `evaluate_policy` | Deterministic 4-value trust verdict (trust_and_use / use_with_caution / human_review_required / reject) from a fixed rule table over the verification facts, with domain profiles (contract, financial, legal, medical, government). The judge is code; the narrative is the LLM |
 
 ## Verdicts
 

@@ -2,9 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.7.0] - 2026-07-19
 
-### Added (v0.7.0 candidate — Issue [#4](https://github.com/shuji-bonji/pdf-verify-mcp/issues/4))
+### Added (Issue [#4](https://github.com/shuji-bonji/pdf-verify-mcp/issues/4))
 
 - **`evaluate_policy` — deterministic 4-value trust verdict.** "The judge is
   code, the narrative is the LLM": the pdf-trust skill's judgment table
@@ -15,7 +15,10 @@ All notable changes to this project will be documented in this file.
   - Runs `verify_signatures` / `verify_integrity` / `detect_pades_level`
     internally (plus `validate_conformance` for long-term-preservation
     profiles) from a `file_path` — the LLM never sits between the facts and
-    the verdict.
+    the verdict. The long-term check always targets PDF/A: when the document
+    declares no PDF/A flavour, `pdfa-2b` is forced so that a PDF/UA-only
+    declaration cannot re-route preservation checking to accessibility
+    (found in live trialling).
   - Profiles: `general`, `contract` (signature required, B-T recommended),
     `financial` (long-term checks, B-LT recommended), `legal`, `medical`
     (most conservative — use_with_caution escalates to
