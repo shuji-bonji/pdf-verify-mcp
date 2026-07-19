@@ -2,7 +2,85 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.6.2] - 2026-07-1９
+## [Unreleased]
+
+### Added (v0.7.0 candidate — Issue [#4](https://github.com/shuji-bonji/pdf-verify-mcp/issues/4))
+
+- **`evaluate_policy` — deterministic 4-value trust verdict.** "The judge is
+  code, the narrative is the LLM": the pdf-trust skill's judgment table
+  (SKILL.md + profile references) is now a fixed rule engine
+  (`services/policy-engine.ts`) over the facts produced by the existing tools.
+  Same facts + same profile = same verdict, immune to LLM interpretation
+  drift, content over-fitting, and silent model updates.
+  - Runs `verify_signatures` / `verify_integrity` / `detect_pades_level`
+    internally (plus `validate_conformance` for long-term-preservation
+    profiles) from a `file_path` — the LLM never sits between the facts and
+    the verdict.
+  - Profiles: `general`, `contract` (signature required, B-T recommended),
+    `financial` (long-term checks, B-LT recommended), `legal`, `medical`
+    (most conservative — use_with_caution escalates to
+    human_review_required), `government` (long-term checks, B-LTA
+    recommended).
+  - Returns `verdict`, `firedRules` (rule IDs with per-rule verdict and
+    reason), `advisories` (recommendations that never change the verdict,
+    e.g. LTV augmentation), and a compact facts summary.
+  - Verdict severity: reject > human_review_required > use_with_caution >
+    trust_and_use. `trust_and_use` requires all signatures valid + trusted +
+    revocation confirmed good and no rule fired.
+  - Rules: POL-REJECT-INVALID / POL-REJECT-REVOKED /
+    POL-REVIEW-INDETERMINATE / POL-REVIEW-DOCMDP-VIOLATION /
+    POL-REVIEW-UNSIGNED-REQUIRED / POL-CAUTION-UNSIGNED /
+    POL-CAUTION-TRUST-NOT-EVALUATED / POL-CAUTION-TRUST-UNTRUSTED /
+    POL-CAUTION-REVOCATION-UNKNOWN / POL-CAUTION-WEAK-DIGEST /
+    POL-ESCALATE-CAUTION.
+
+## [0.6.3] - 2026-07-19
+
+Encrypted-document handling for PDF/UA validation
+([#7](https://github.com/shuji-bonji/pdf-verify-mcp/issues/7)).
+
+### Fixed
+
+- **Encrypted documents no longer produce false PDF/UA violations.**
+  Previously `validate_conformance` read an encrypted document's ciphertext
+  structures as-is, so a tagged document failed `ua-struct-tree`
+  ("No /StructTreeRoot") and two rules crashed with raw pdf-lib exceptions.
+  Now:
+  - The document is **decrypted first** (new `services/decrypt-document.ts`,
+    built on the v0.5 decryptor): every raw stream/string in the xref is
+    decrypted — including encrypted object streams recovered from pdf-lib's
+    `PDFInvalidObject` — /Encrypt is dropped, and the plaintext rebuild is
+    validated. The empty user password is tried automatically, so
+    permission-encrypted PDFs validate fully with no parameters. Decrypted
+    object streams are **expanded into plain indirect objects** before
+    serialization: pdf-lib tolerates xref entries missing for ObjStm-contained
+    objects, but qpdf/veraPDF correctly reject them (found because veraPDF
+    returned no validation result on the rebuild; after expansion the rebuild
+    passes veraPDF 106/106 on the reference fixture).
+  - `ua-no-encryption-barrier` is still judged against the **original**
+    /Encrypt dictionary (ISO 14289-1, 7.16) — decryption does not hide a
+    cleared accessibility bit.
+  - When decryption is impossible (unknown password), structure-dependent
+    rules are reported as **`checked: false` / `skippedRules`** instead of
+    failed — a skipped rule is neither a pass nor a violation. Only
+    `ua-no-encryption-barrier` still runs (the /Encrypt dictionary is
+    plaintext). `engine: "verapdf"` raises `ENCRYPTED_PDF` instead, since
+    veraPDF cannot read the file either.
+  - Signature `/Contents`, XRef streams, and (when `/EncryptMetadata` is
+    false) Metadata streams are never decrypted, per ISO 32000-2 §7.6.2 /
+    §7.5.8.2.
+  - Rule-check exceptions now say "Rule check could not complete (the
+    document structure may be malformed or unreadable)" instead of leaking
+    raw pdf-lib messages.
+  - PDF/A is intentionally unchanged: ISO 19005 forbids encryption outright,
+    so an encrypted file is judged as-is.
+
+### Added
+
+- `validate_conformance` gains a **`password`** parameter (same semantics as
+  `verify_signatures`).
+
+## [0.6.2] - 2026-07-19
 
 Spec-conformance fixes from the pdf-spec-mcp audit
 ([#5](https://github.com/shuji-bonji/pdf-verify-mcp/issues/5)), each traced to

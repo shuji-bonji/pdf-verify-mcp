@@ -39,6 +39,11 @@ export interface PdfuaRuleResult {
   description: string;
   passed: boolean;
   /**
+   * false when the rule could not be evaluated (encrypted document that could
+   * not be decrypted). A skipped rule is neither a pass nor a violation.
+   */
+  checked: boolean;
+  /**
    * 'error'   — a definitive PDF/UA violation
    * 'warning' — likely a problem, or a requirement only partly machine-checkable
    */
@@ -63,6 +68,13 @@ interface RuleContext {
   roleMap: Map<string, string>;
   /** Tag name -> count, after /RoleMap resolution */
   roleCounts: Record<string, number>;
+  /**
+   * Whether the ORIGINAL document is encrypted, and its /Encrypt dictionary.
+   * When validation runs on decrypted bytes, `doc` has no /Encrypt anymore —
+   * ua-no-encryption-barrier must still judge the original (§7.16).
+   */
+  wasEncrypted: boolean;
+  encryptDict: PDFDict | null;
 }
 
 interface Rule {
@@ -71,6 +83,12 @@ interface Rule {
   description: string;
   severity: 'error' | 'warning';
   appliesToParts?: number[];
+  /**
+   * true when the rule can be evaluated on an encrypted document that could
+   * not be decrypted (only the /Encrypt dictionary is guaranteed readable —
+   * everything else is ciphertext and would produce false findings).
+   */
+  worksOnEncrypted?: boolean;
   check: (ctx: RuleContext) => { passed: boolean; detail: string | null };
 }
 
@@ -390,9 +408,10 @@ const RULES: Rule[] = [
     description:
       'An encrypted file shall contain a P key whose 10th bit position (assistive-technology access) is true',
     severity: 'error',
+    worksOnEncrypted: true,
     check: (ctx) => {
-      if (!ctx.parsed.isEncrypted) return { passed: true, detail: null };
-      const enc = ctx.doc.context.lookup(ctx.doc.context.trailerInfo.Encrypt);
+      if (!ctx.wasEncrypted) return { passed: true, detail: null };
+      const enc = ctx.encryptDict;
       if (!(enc instanceof PDFDict)) {
         return {
           passed: false,
@@ -435,10 +454,24 @@ export function resolvePdfuaFlavour(parsed: ParsedPdf, requested?: string): Pdfu
   return part !== null ? { part } : null;
 }
 
+export interface PdfuaValidationOptions {
+  /**
+   * The document is encrypted and could not be decrypted: only rules marked
+   * worksOnEncrypted run; the rest are reported as checked: false (a skipped
+   * rule is neither a pass nor a violation).
+   */
+  undecrypted?: boolean;
+  /** Whether the ORIGINAL document is encrypted (defaults to parsed.isEncrypted) */
+  wasEncrypted?: boolean;
+  /** /Encrypt dictionary of the ORIGINAL document (defaults to doc's trailer) */
+  encryptDict?: PDFDict | null;
+}
+
 export function validatePdfuaNative(
   parsed: ParsedPdf,
   doc: PDFDocument,
   flavour: PdfuaFlavour,
+  options: PdfuaValidationOptions = {},
 ): PdfuaValidationReport {
   const structElems = collectStructElems(doc);
   const roleMap = buildRoleMap(doc);
@@ -448,11 +481,41 @@ export function validatePdfuaNative(
     if (tag) roleCounts[tag] = (roleCounts[tag] ?? 0) + 1;
   }
 
-  const ctx: RuleContext = { parsed, doc, flavour, structElems, roleMap, roleCounts };
+  let encryptDict = options.encryptDict ?? null;
+  if (encryptDict === null && options.encryptDict === undefined) {
+    const enc = doc.context.lookup(doc.context.trailerInfo.Encrypt);
+    encryptDict = enc instanceof PDFDict ? enc : null;
+  }
+
+  const ctx: RuleContext = {
+    parsed,
+    doc,
+    flavour,
+    structElems,
+    roleMap,
+    roleCounts,
+    wasEncrypted: options.wasEncrypted ?? parsed.isEncrypted,
+    encryptDict,
+  };
   const results: PdfuaRuleResult[] = [];
 
   for (const rule of RULES) {
     if (rule.appliesToParts && !rule.appliesToParts.includes(flavour.part)) continue;
+
+    if (options.undecrypted && !rule.worksOnEncrypted) {
+      results.push({
+        ruleId: rule.ruleId,
+        clause: rule.clause,
+        description: rule.description,
+        severity: rule.severity,
+        passed: false,
+        checked: false,
+        detail:
+          'Not checked: the document is encrypted and could not be decrypted, so the required structures are not readable. Supply the password to enable this check.',
+      });
+      continue;
+    }
+
     let outcome: { passed: boolean; detail: string | null };
     try {
       outcome = rule.check(ctx);
@@ -461,7 +524,7 @@ export function validatePdfuaNative(
       logger.debug(CONTEXT, `rule ${rule.ruleId} threw: ${message}`);
       outcome = {
         passed: false,
-        detail: `Rule check errored: ${message}`,
+        detail: `Rule check could not complete (the document structure may be malformed or unreadable): ${message}`,
       };
     }
     results.push({
@@ -470,17 +533,27 @@ export function validatePdfuaNative(
       description: rule.description,
       severity: rule.severity,
       passed: outcome.passed,
+      checked: true,
       detail: outcome.detail,
     });
   }
 
+  const checked = results.filter((r) => r.checked);
+  const skipped = results.length - checked.length;
+  const notes = [
+    `Native engine checks a SUBSET of ISO 14289 (${results.length} rules) — passing does not certify accessibility. Install veraPDF for authoritative validation.`,
+    'Machine checks cannot judge whether alt text, reading order, or heading structure are semantically appropriate; human review remains necessary.',
+  ];
+  if (skipped > 0) {
+    notes.push(
+      `${skipped} rule(s) were NOT checked because the document is encrypted and could not be decrypted. Their absence from the violations is not evidence of conformance.`,
+    );
+  }
+
   return {
     flavour,
-    allCheckedRulesPassed: results.every((r) => r.passed),
+    allCheckedRulesPassed: checked.every((r) => r.passed),
     results,
-    notes: [
-      `Native engine checks a SUBSET of ISO 14289 (${results.length} rules) — passing does not certify accessibility. Install veraPDF for authoritative validation.`,
-      'Machine checks cannot judge whether alt text, reading order, or heading structure are semantically appropriate; human review remains necessary.',
-    ],
+    notes,
   };
 }

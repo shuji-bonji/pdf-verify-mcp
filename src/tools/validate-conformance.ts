@@ -27,6 +27,12 @@ const ValidateConformanceSchema = {
     .describe(
       'Validation engine: "auto" (veraPDF when installed, else native subset), "verapdf" (require veraPDF), "native" (built-in rule subset).',
     ),
+  password: z
+    .string()
+    .optional()
+    .describe(
+      'Password for an encrypted PDF (PDF/UA validation only — the document is decrypted before checking structure-dependent rules). Omit for permission-encrypted PDFs (an empty user password is tried automatically).',
+    ),
 };
 
 type ValidateConformanceInput = {
@@ -34,6 +40,7 @@ type ValidateConformanceInput = {
   response_format: ResponseFormat;
   flavour?: string;
   engine: ValidationEngine;
+  password?: string;
 };
 
 export function registerValidateConformance(server: McpServer): void {
@@ -52,9 +59,10 @@ Args:
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
   - flavour (string, optional): e.g. "pdfa-2b", "pdfua-1". Defaults to the XMP declaration (PDF/A wins when both are declared; fallback: pdfa-2b)
   - engine ('auto' | 'verapdf' | 'native'): Engine selection (default: 'auto')
+  - password (string, optional): Password for an encrypted PDF. PDF/UA validation decrypts the document first so structure rules see real structures; permission-encrypted PDFs (empty user password) are decrypted automatically
 
 Returns:
-  Per-rule results with ISO clause references. compliant is true/false for veraPDF; for the native engine, false means definitive violations were found and null means "no violations in the checked subset" (NOT certification). PDF/UA native violations carry a severity: only 'error' rules can prove non-conformance, 'warning' rules need human review.
+  Per-rule results with ISO clause references. compliant is true/false for veraPDF; for the native engine, false means definitive violations were found and null means "no violations in the checked subset" (NOT certification). PDF/UA native violations carry a severity: only 'error' rules can prove non-conformance, 'warning' rules need human review. For an encrypted PDF that cannot be decrypted, structure-dependent PDF/UA rules are reported in skippedRules (not checked) rather than as violations.
 
 Note: PDF/UA cannot be fully decided by machine — whether alt text is *present* is checkable, whether it is *meaningful* is not. Use pdf-reader-mcp's inspect_tags to examine the structure tree itself.
 
@@ -72,10 +80,11 @@ Examples:
     },
     async (params: ValidateConformanceInput) => {
       try {
-        const parsed = await parsePdf(params.file_path);
+        const parsed = await parsePdf(params.file_path, { password: params.password });
         const report = await validateConformance(parsed, params.file_path, {
           flavour: params.flavour,
           engine: params.engine,
+          password: params.password,
         });
         const raw =
           params.response_format === ResponseFormat.JSON

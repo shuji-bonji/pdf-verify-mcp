@@ -13,11 +13,17 @@
  * - 'native': always use the native rule subset
  */
 
+import { randomBytes } from 'node:crypto';
+import { unlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PDFDict } from 'pdf-lib';
 import { ValidationEngine } from '../constants.js';
 import type { ParsedPdf } from '../types.js';
 import { PdfVerifyError } from '../utils/error-handler.js';
 import { extractPdfaId, extractPdfuaPart } from './conformance.js';
-import { loadPdfDocument } from './pdf-parser.js';
+import { decryptDocumentBytes } from './decrypt-document.js';
+import { loadPdfDocument, parsePdfBytes } from './pdf-parser.js';
 import { type PdfaFlavour, resolveFlavour, validatePdfaNative } from './pdfa-validator.js';
 import { type PdfuaFlavour, resolvePdfuaFlavour, validatePdfuaNative } from './pdfua-validator.js';
 import { findVeraPdf, runVeraPdf } from './verapdf.js';
@@ -43,6 +49,11 @@ export interface ConformanceValidationReport {
   checkedRules: number;
   passedRules: number;
   failedRules: number;
+  /**
+   * Rules that could NOT be evaluated (encrypted document without a usable
+   * password). Skipped rules are neither passes nor violations (Issue #7).
+   */
+  skippedRules?: number;
   violations: ConformanceViolation[];
   notes: string[];
 }
@@ -74,6 +85,13 @@ export interface ValidateConformanceOptions {
   /** e.g. 'pdfa-1b', 'pdfa-2b', 'pdfa-3b', 'pdfua-1', 'pdfua-2'. Omit to use the XMP declaration. */
   flavour?: string;
   engine?: ValidationEngine;
+  /**
+   * Password for encrypted documents (PDF/UA validation only — PDF/A forbids
+   * encryption outright, so an encrypted file is judged as-is). The empty
+   * user password is always tried first, so permission-encrypted PDFs
+   * validate fully without this option.
+   */
+  password?: string;
 }
 
 export async function validateConformance(
@@ -95,7 +113,7 @@ export async function validateConformance(
   }
 
   if (isPdfuaRequest(parsed, options.flavour)) {
-    return validatePdfua(parsed, filePath, options, veraPath, notes);
+    return validatePdfua(parsed, filePath, options, engineChoice, veraPath, notes);
   }
 
   // A PDF/A validation was requested but the document also declares PDF/UA
@@ -171,10 +189,60 @@ async function validatePdfua(
   parsed: ParsedPdf,
   filePath: string,
   options: ValidateConformanceOptions,
+  engineChoice: ValidationEngine,
   veraPath: string | null,
   notes: string[],
 ): Promise<ConformanceValidationReport> {
-  let flavour = resolvePdfuaFlavour(parsed, options.flavour);
+  // Issue #7: an encrypted document's structures (object streams, strings)
+  // are ciphertext — validating them as-is produces false findings. Rebuild a
+  // plaintext document first (the empty user password covers
+  // permission-encrypted PDFs); when that fails, structure-dependent rules
+  // are reported as "not checked" instead of failed.
+  let target = parsed;
+  let validationPath = filePath;
+  let tempFile: string | null = null;
+  let undecrypted = false;
+  let encryptDict: PDFDict | null = null;
+
+  if (parsed.isEncrypted) {
+    const originalDoc = await loadPdfDocument(parsed.bytes);
+    const enc = originalDoc.context.lookup(originalDoc.context.trailerInfo.Encrypt);
+    encryptDict = enc instanceof PDFDict ? enc : null;
+
+    const plain = await decryptDocumentBytes(parsed.bytes, options.password ?? '');
+    if (plain && plain !== parsed.bytes) {
+      target = await parsePdfBytes(plain);
+      notes.push(
+        'Encrypted document was decrypted before validation. ua-no-encryption-barrier is evaluated against the original encryption dictionary (ISO 14289-1, 7.16).',
+      );
+      if (veraPath) {
+        tempFile = join(tmpdir(), `pdf-verify-decrypted-${randomBytes(8).toString('hex')}.pdf`);
+        await writeFile(tempFile, plain);
+        validationPath = tempFile;
+      }
+    } else if (!plain && options.password !== undefined) {
+      throw new PdfVerifyError(
+        'The supplied password is wrong, or the security handler is unsupported',
+        'WRONG_PASSWORD',
+        'Check the password; only the Standard security handler is supported',
+      );
+    } else if (!plain) {
+      if (engineChoice === ValidationEngine.VERAPDF) {
+        throw new PdfVerifyError(
+          'Document is password-protected; veraPDF cannot validate it without decryption',
+          'ENCRYPTED_PDF',
+          'Supply the password parameter to enable full validation',
+        );
+      }
+      undecrypted = true;
+      veraPath = null; // veraPDF cannot read it either — fall back to native skip-mode
+      notes.push(
+        'Document is password-protected and could not be decrypted with the empty user password. Structure-dependent rules were NOT checked (reported as checked: false) — supply the password parameter to enable them.',
+      );
+    }
+  }
+
+  let flavour = resolvePdfuaFlavour(target, options.flavour);
   if (options.flavour && !flavour) {
     throw new PdfVerifyError(
       `Invalid flavour "${options.flavour}" (expected "pdfua-1" or "pdfua-2")`,
@@ -189,7 +257,12 @@ async function validatePdfua(
   }
 
   if (veraPath) {
-    const report = await runVeraPdf(veraPath, filePath, veraPdfuaFlavourId(flavour));
+    let report: Awaited<ReturnType<typeof runVeraPdf>>;
+    try {
+      report = await runVeraPdf(veraPath, validationPath, veraPdfuaFlavourId(flavour));
+    } finally {
+      if (tempFile) await unlink(tempFile).catch(() => {});
+    }
     return {
       engine: 'verapdf',
       flavour: `PDF/UA-${flavour.part}`,
@@ -211,9 +284,15 @@ async function validatePdfua(
     };
   }
 
-  const doc = await loadPdfDocument(parsed.bytes);
-  const native = validatePdfuaNative(parsed, doc, flavour);
-  const failed = native.results.filter((r) => !r.passed);
+  const doc = await loadPdfDocument(target.bytes);
+  const native = validatePdfuaNative(target, doc, flavour, {
+    undecrypted,
+    wasEncrypted: parsed.isEncrypted,
+    encryptDict,
+  });
+  const checked = native.results.filter((r) => r.checked);
+  const skipped = native.results.length - checked.length;
+  const failed = checked.filter((r) => !r.passed);
   const errors = failed.filter((r) => r.severity === 'error');
 
   return {
@@ -221,9 +300,10 @@ async function validatePdfua(
     flavour: `PDF/UA-${flavour.part}`,
     // Only definitive violations (severity 'error') can prove non-conformance
     compliant: errors.length > 0 ? false : null,
-    checkedRules: native.results.length,
-    passedRules: native.results.length - failed.length,
+    checkedRules: checked.length,
+    passedRules: checked.length - failed.length,
     failedRules: failed.length,
+    ...(skipped > 0 ? { skippedRules: skipped } : {}),
     violations: failed.map((r) => ({
       ruleId: r.ruleId,
       clause: r.clause,

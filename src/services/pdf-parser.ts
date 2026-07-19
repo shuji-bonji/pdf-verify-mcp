@@ -44,7 +44,7 @@ function cfmToMethod(cfm: string | null): CryptMethod {
 }
 
 /** Build a decryptor from the trailer /Encrypt dictionary (v0.5) */
-function buildDecryptor(doc: PDFDocument, password: string): PdfDecryptor | null {
+export function buildDecryptor(doc: PDFDocument, password: string): PdfDecryptor | null {
   const encRef = doc.context.trailerInfo.Encrypt;
   if (!encRef) return null;
   const enc = doc.context.lookup(encRef);

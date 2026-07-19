@@ -288,6 +288,11 @@ export class PdfDecryptor {
     }
   }
 
+  /** Whether the document's Metadata stream is encrypted (/EncryptMetadata) */
+  get encryptsMetadata(): boolean {
+    return this.params.encryptMetadata;
+  }
+
   /** Decrypt a string value belonging to object (objNumber, generation) */
   decryptString(data: Uint8Array, objNumber: number, generation: number): Uint8Array {
     return this.decryptWith(this.params.stringMethod, data, objNumber, generation);

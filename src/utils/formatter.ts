@@ -125,6 +125,78 @@ export function formatIntegrityReport(report: IntegrityReport): string {
   return lines.join('\n');
 }
 
+interface PolicyReportForFormat {
+  profile: string;
+  verdict: string;
+  firedRules: { ruleId: string; verdict: string; reason: string }[];
+  advisories: string[];
+  notes: string[];
+  facts: {
+    signatureCount: number;
+    signatures: {
+      fieldName: string | null;
+      verdict: string;
+      trust: string;
+      revocation: string | null;
+      isDocumentTimestamp: boolean;
+    }[];
+    revisionCount: number;
+    certification: { permission: number; violatedByLaterChanges: boolean } | null;
+    hasDss: boolean;
+    padesLevels: { fieldName: string | null; level: string | null }[];
+    conformance: { flavour: string; engine: string; compliant: boolean | null } | null;
+  };
+}
+
+export function formatPolicyReport(report: PolicyReportForFormat): string {
+  const lines: string[] = ['# Trust Policy Evaluation', ''];
+  lines.push(`- Profile: ${report.profile}`);
+  lines.push(`- Verdict: **${report.verdict}**`);
+  lines.push(
+    `- Signatures: ${report.facts.signatureCount} (revisions: ${report.facts.revisionCount}, DSS: ${yesNo(report.facts.hasDss)})`,
+  );
+  if (report.firedRules.length > 0) {
+    lines.push('', '## Fired rules');
+    for (const r of report.firedRules) {
+      lines.push(`- **${r.ruleId}** → ${r.verdict}`);
+      lines.push(`  - ${r.reason}`);
+    }
+  } else {
+    lines.push('', 'No rules fired — every positive condition for trust_and_use is satisfied.');
+  }
+  if (report.facts.signatures.length > 0) {
+    lines.push('', '## Signature facts');
+    for (const s of report.facts.signatures) {
+      const kind = s.isDocumentTimestamp ? ' (document timestamp)' : '';
+      lines.push(
+        `- ${s.fieldName ?? '(unnamed)'}${kind}: verdict=${s.verdict}, trust=${s.trust}, revocation=${s.revocation ?? 'n/a'}`,
+      );
+    }
+  }
+  if (report.facts.padesLevels.some((p) => p.level)) {
+    lines.push('', '## PAdES levels');
+    for (const p of report.facts.padesLevels) {
+      if (p.level) lines.push(`- ${p.fieldName ?? '(unnamed)'}: ${p.level}`);
+    }
+  }
+  if (report.facts.conformance) {
+    const c = report.facts.conformance;
+    lines.push('', '## Long-term preservation');
+    lines.push(
+      `- ${c.flavour} (engine: ${c.engine}): ${c.compliant === true ? 'COMPLIANT' : c.compliant === false ? 'NOT COMPLIANT' : 'no violations in checked subset (not a certification)'}`,
+    );
+  }
+  if (report.advisories.length > 0) {
+    lines.push('', '## Advisories (do not affect the verdict)');
+    for (const a of report.advisories) lines.push(`- ${a}`);
+  }
+  if (report.notes.length > 0) {
+    lines.push('', '## Notes');
+    for (const note of report.notes) lines.push(`- ${note}`);
+  }
+  return lines.join('\n');
+}
+
 export function formatPadesReports(reports: PadesLevelReport[]): string {
   if (reports.length === 0) {
     return '# PAdES Level Detection\n\nNo (non-timestamp) signatures found in this document.';
@@ -163,8 +235,11 @@ export function formatConformanceValidation(
         ? '**NOT COMPLIANT**'
         : '**NO VIOLATIONS DETECTED** (subset check — not a certification)';
   lines.push(`- Result: ${compliantLabel}`);
+  const skipped = report.skippedRules
+    ? `, ${report.skippedRules} NOT checked (encrypted — supply password)`
+    : '';
   lines.push(
-    `- Rules: ${report.checkedRules} checked, ${report.passedRules} passed, ${report.failedRules} failed`,
+    `- Rules: ${report.checkedRules} checked, ${report.passedRules} passed, ${report.failedRules} failed${skipped}`,
   );
   if (report.violations.length > 0) {
     lines.push('', '## Violations');
