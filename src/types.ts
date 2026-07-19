@@ -132,6 +132,13 @@ export interface IntegrityReport {
     permission: number;
     permissionDescription: string;
     violatedByLaterChanges: boolean;
+    /**
+     * true when bytes were added after the certified range but a DSS and/or
+     * document timestamp is present — the ISO 32000-2 §12.8.2.2 exception
+     * that permits such incremental updates even when P=1 (structural
+     * detection only; the updates' object-level content is not verified)
+     */
+    laterChangesAppearLtvOnly: boolean;
   } | null;
   /** Whether the last signature covers the entire file */
   lastSignatureCoversFile: boolean | null;

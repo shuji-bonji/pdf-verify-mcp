@@ -299,15 +299,41 @@ export function analyzeIntegrity(parsed: ParsedPdf): IntegrityReport {
   if (certificationSig?.docMdpPermission != null) {
     const permission = certificationSig.docMdpPermission;
     const laterChanges = (bytesAfterRange(parsed.fileSize, certificationSig.byteRange) ?? 0) > 0;
+    // ISO 32000-2 §12.8.2.2: P=1 means the document shall be final, "with the
+    // exception of subsequent DSS (12.8.4.3) and/or document timestamp (12.8.5)
+    // incremental updates". Detect that exception structurally: a DSS is
+    // present and/or a document timestamp signature covers bytes beyond the
+    // certified range (i.e., was added after certification).
+    const certRangeEnd =
+      certificationSig.byteRange?.length === 4
+        ? certificationSig.byteRange[2] + certificationSig.byteRange[3]
+        : null;
+    const laterDts = parsed.signatures.some(
+      (s) =>
+        (s.isDocumentTimestamp || s.subFilter === SUB_FILTER.ETSI_RFC3161) &&
+        certRangeEnd !== null &&
+        s.byteRange?.length === 4 &&
+        s.byteRange[2] + s.byteRange[3] > certRangeEnd,
+    );
+    const laterChangesAppearLtvOnly = laterChanges && (parsed.hasDss || laterDts);
     certification = {
       fieldName: certificationSig.fieldName,
       permission,
       permissionDescription: DOCMDP_PERMISSIONS[permission] ?? `Unknown permission ${permission}`,
-      violatedByLaterChanges: permission === 1 && laterChanges,
+      violatedByLaterChanges: permission === 1 && laterChanges && !laterChangesAppearLtvOnly,
+      laterChangesAppearLtvOnly,
     };
     if (certification.violatedByLaterChanges) {
       notes.push(
-        'DocMDP permission is 1 (no changes permitted) but the file was modified after certification.',
+        'DocMDP permission is 1 (no changes permitted) but the file was modified after certification. ' +
+          'No DSS or document timestamp was found in the later updates, so the ISO 32000-2 §12.8.2.2 ' +
+          'exception (DSS/document-timestamp incremental updates) does not apply.',
+      );
+    } else if (permission === 1 && laterChanges) {
+      notes.push(
+        'The file was modified after certification (P=1), but a DSS and/or document timestamp is present — ' +
+          'ISO 32000-2 §12.8.2.2 permits DSS/document-timestamp incremental updates even when P=1. ' +
+          'Object-level confirmation that the later updates contain nothing else is not performed here.',
       );
     }
   }

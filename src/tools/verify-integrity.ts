@@ -17,7 +17,7 @@ export function registerVerifyIntegrity(server: McpServer): void {
       title: 'Verify PDF Integrity (tamper detection)',
       description: `Analyze a PDF for modifications after signing.
 
-Reports: number of revisions (incremental updates), whether bytes were added after each signature's signed range, whether the last signature covers the entire file, DocMDP certification permissions and violations, and DSS presence.
+Reports: number of revisions (incremental updates), whether bytes were added after each signature's signed range, whether the last signature covers the entire file, DocMDP certification permissions and violations, and DSS presence. Per ISO 32000-2 §12.8.2.2, DSS/document-timestamp incremental updates after a P=1 certification are NOT reported as violations (structural detection; flagged as laterChangesAppearLtvOnly).
 
 Args:
   - file_path (string): Absolute path to a local PDF file

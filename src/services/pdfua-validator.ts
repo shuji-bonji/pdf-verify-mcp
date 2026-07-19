@@ -17,6 +17,7 @@ import {
   type PDFDocument,
   PDFHexString,
   PDFName,
+  PDFNumber,
   PDFString,
 } from 'pdf-lib';
 import type { ParsedPdf } from '../types.js';
@@ -255,19 +256,25 @@ const RULES: Rule[] = [
   },
   {
     ruleId: 'ua-title',
-    clause: 'ISO 14289-1, 7.1 (8)',
-    description: 'The document shall have a title (XMP dc:title or Info /Title)',
+    clause: 'ISO 14289-1, 7.1',
+    description:
+      'The Metadata stream shall contain a dc:title entry (Info /Title alone does not conform — conforming readers ignore the document information dictionary)',
     severity: 'error',
     check: (ctx) => {
       const xmp = ctx.parsed.xmpMetadata ?? '';
       const hasXmpTitle = /<dc:title>[\s\S]*?<rdf:li[^>]*>\s*\S/.test(xmp);
+      if (hasXmpTitle) return { passed: true, detail: null };
       const info = ctx.doc.context.lookup(ctx.doc.context.trailerInfo.Info);
       const infoTitle =
         info instanceof PDFDict ? decodeText(info.lookup(PDFName.of('Title'))) : null;
-      if (hasXmpTitle || (infoTitle && infoTitle.trim() !== '')) {
-        return { passed: true, detail: null };
+      if (infoTitle && infoTitle.trim() !== '') {
+        return {
+          passed: false,
+          detail:
+            'Info /Title is set but XMP has no dc:title — ISO 14289-1, 7.1 requires dc:title in the Metadata stream, and an ISO 14289-1 conforming reader shall ignore the document information dictionary',
+        };
       }
-      return { passed: false, detail: 'Neither XMP dc:title nor Info /Title is set' };
+      return { passed: false, detail: 'XMP metadata has no dc:title entry' };
     },
   },
   {
@@ -379,15 +386,33 @@ const RULES: Rule[] = [
   },
   {
     ruleId: 'ua-no-encryption-barrier',
-    clause: 'ISO 14289-1, 7.1 (10)',
-    description: 'Encryption shall not prevent assistive technology from extracting text',
-    severity: 'warning',
+    clause: 'ISO 14289-1, 7.16',
+    description:
+      'An encrypted file shall contain a P key whose 10th bit position (assistive-technology access) is true',
+    severity: 'error',
     check: (ctx) => {
       if (!ctx.parsed.isEncrypted) return { passed: true, detail: null };
+      const enc = ctx.doc.context.lookup(ctx.doc.context.trailerInfo.Encrypt);
+      if (!(enc instanceof PDFDict)) {
+        return {
+          passed: false,
+          detail: 'Document is encrypted but the /Encrypt dictionary could not be read',
+        };
+      }
+      const p = enc.lookup(PDFName.of('P'));
+      const pValue = p instanceof PDFNumber ? p.asNumber() : null;
+      if (pValue === null) {
+        return {
+          passed: false,
+          detail:
+            'Encryption dictionary has no numeric /P key — ISO 14289-1, 7.16 requires a P key with bit 10 true',
+        };
+      }
+      // Bit positions are 1-based (LSB = bit 1); bit 10 => mask 1 << 9
+      if ((pValue & 0x200) !== 0) return { passed: true, detail: null };
       return {
         passed: false,
-        detail:
-          'Document is encrypted — the accessibility permission bit could not be verified here',
+        detail: `/Encrypt /P bit 10 (copy for accessibility) is not set (P = ${pValue})`,
       };
     },
   },

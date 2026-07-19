@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import { ValidationEngine } from '../../src/constants.js';
 import { validateConformance } from '../../src/services/conformance-validation.js';
 import { parsePdfBytes } from '../../src/services/pdf-parser.js';
+import { validatePdfuaNative } from '../../src/services/pdfua-validator.js';
 
 interface FixtureOptions {
   marked?: boolean;
@@ -25,6 +26,8 @@ interface FixtureOptions {
   lang?: string | null;
   displayDocTitle?: boolean;
   title?: string | null;
+  /** Set Info /Title but omit dc:title from XMP (ua-title must still fail) */
+  omitXmpTitle?: boolean;
   pdfuaPart?: string | null;
   /** Structure elements: tag name plus optional /Alt */
   elements?: Array<{ tag: string; alt?: string }>;
@@ -57,6 +60,7 @@ async function buildUaPdf(options: FixtureOptions = {}): Promise<Uint8Array> {
     lang = 'ja-JP',
     displayDocTitle = true,
     title = 'Accessible Document',
+    omitXmpTitle = false,
     pdfuaPart = '1',
     elements = [{ tag: 'H1' }, { tag: 'P' }],
     link,
@@ -109,7 +113,7 @@ async function buildUaPdf(options: FixtureOptions = {}): Promise<Uint8Array> {
   }
 
   // XMP metadata stream (pdf-lib has no public API for this)
-  const xmpStream = context.stream(xmpPacket(pdfuaPart, title), {
+  const xmpStream = context.stream(xmpPacket(pdfuaPart, omitXmpTitle ? null : title), {
     Type: 'Metadata',
     Subtype: 'XML',
   });
@@ -162,6 +166,14 @@ describe('PDF/UA native validation', () => {
   it('catches a missing document title', async () => {
     const report = await validate({ title: null });
     expect(ruleIds(report)).toContain('ua-title');
+  });
+
+  it('fails ua-title when only Info /Title is set (7.1 requires XMP dc:title)', async () => {
+    // Info /Title present, XMP dc:title absent — conforming readers ignore Info
+    const report = await validate({ omitXmpTitle: true });
+    const v = report.violations.find((x) => x.ruleId === 'ua-title');
+    expect(v).toBeDefined();
+    expect(v?.detail).toMatch(/Info \/Title is set but XMP has no dc:title/);
   });
 
   it('catches a missing pdfuaid declaration', async () => {
@@ -242,6 +254,35 @@ describe('PDF/UA native validation', () => {
     await expect(
       validateConformance(parsed, '', { engine: ValidationEngine.NATIVE, flavour: 'pdfua-9' }),
     ).rejects.toThrow(/Invalid flavour/);
+  });
+
+  it('checks /Encrypt /P bit 10 on encrypted documents (ISO 14289-1, 7.16)', async () => {
+    const bytes = await buildUaPdf();
+    const parsed = await parsePdfBytes(bytes);
+
+    const check = async (p?: number) => {
+      const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+      doc.context.trailerInfo.Encrypt = doc.context.register(
+        doc.context.obj(p === undefined ? {} : { P: p }),
+      );
+      const report = validatePdfuaNative({ ...parsed, isEncrypted: true }, doc, { part: 1 });
+      return report.results.find((r) => r.ruleId === 'ua-no-encryption-barrier');
+    };
+
+    // All permission bits set (bit 10 included) — passes
+    const allowed = await check(-1);
+    expect(allowed?.passed).toBe(true);
+
+    // 3904 = 0b1111_0100_0000 has bit 10 (0x200) set, so -3904 clears it
+    const denied = await check(-3904);
+    expect(denied?.passed).toBe(false);
+    expect(denied?.severity).toBe('error');
+    expect(denied?.detail).toMatch(/bit 10/);
+
+    // §7.16: an encrypted conforming file SHALL contain a P key
+    const noP = await check(undefined);
+    expect(noP?.passed).toBe(false);
+    expect(noP?.detail).toMatch(/no numeric \/P key/);
   });
 
   it('flags a mismatch between the declared and requested part', async () => {

@@ -2,7 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.6.2] - 2026-07-1９
+
+Spec-conformance fixes from the pdf-spec-mcp audit
+([#5](https://github.com/shuji-bonji/pdf-verify-mcp/issues/5)), each traced to
+the ISO originals via pdf-spec-mcp.
+
+### Fixed
+
+- **`ua-title` now requires XMP `dc:title`** (ISO 14289-1, 7.1). The rule
+  previously accepted Info `/Title` as an alternative, but the spec requires
+  the Metadata stream to contain `dc:title` and states that a conforming
+  reader shall ignore the document information dictionary. A document with
+  only Info `/Title` now fails, with a detail explaining the difference.
+- **DocMDP P=1 no longer flags DSS/document-timestamp updates as violations**
+  (ISO 32000-2 §12.8.2.2). The spec permits "subsequent DSS (12.8.4.3) and/or
+  document timestamp (12.8.5) incremental updates" even when P=1. When bytes
+  were added after a P=1 certification but a DSS and/or a later document
+  timestamp is present, `verify_integrity` reports
+  `violatedByLaterChanges: false` with the new
+  `certification.laterChangesAppearLtvOnly: true` and an explanatory note.
+  Detection is structural — object-level confirmation that the updates
+  contain nothing else is not performed, and the note says so. This removes
+  the false "violated" verdict on legitimate B-LT/B-LTA documents that
+  pdf-trust audits depend on.
+- **`ua-no-encryption-barrier` now actually inspects `/Encrypt /P` bit 10**
+  (clause corrected from "7.1 (10)" to ISO 14289-1, 7.16). Previously the rule
+  failed every encrypted document with "could not be verified here". It now
+  reads the encryption dictionary: bit 10 set passes, bit 10 clear (or a
+  missing `/P` key, which 7.16 also forbids) fails. Severity raised from
+  `warning` to `error` accordingly.
 
 ## [0.6.1] - 2026-07-16
 
@@ -52,10 +81,9 @@ No behaviour changes to verification results.
   `flavour: "pdfua-1"` / `"pdfua-2"`. Accessibility conformance was previously
   out of scope and deferred to pdf-reader-mcp's `validate_tagged`.
 
-  The split now follows the family's boundary rule — reader reports *what is in*
-  a document, verify judges *whether it conforms*. `validate_tagged` inspects the
+  The split now follows the family's boundary rule — reader reports _what is in_
+  a document, verify judges _whether it conforms_. `validate_tagged` inspects the
   structure tree; conformance judgments belong here alongside PDF/A.
-
   - **veraPDF** is delegated to with `--flavour ua1` / `ua2` when installed
     (authoritative).
   - **Native subset (12 rules)** otherwise: `MarkInfo`/`Marked`, `StructTreeRoot`,
@@ -72,7 +100,7 @@ No behaviour changes to verification results.
 ### Changed
 
 - Flavour resolution: an explicit `pdfua-*` flavour selects PDF/UA. Without one,
-  PDF/UA is auto-selected only when the document declares PDF/UA and *not* PDF/A;
+  PDF/UA is auto-selected only when the document declares PDF/UA and _not_ PDF/A;
   when both are declared PDF/A wins (unchanged behaviour) and a note points at
   `pdfua-1`.
 - `validate_conformance` is retitled "Validate PDF/A and PDF/UA Conformance".

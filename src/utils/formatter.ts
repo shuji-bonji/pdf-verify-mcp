@@ -112,6 +112,11 @@ export function formatIntegrityReport(report: IntegrityReport): string {
     lines.push(`- Field: ${c.fieldName ?? '(unnamed)'}`);
     lines.push(`- Permission: ${c.permission} — ${c.permissionDescription}`);
     lines.push(`- Violated by later changes: **${yesNo(c.violatedByLaterChanges)}**`);
+    if (c.laterChangesAppearLtvOnly) {
+      lines.push(
+        '- Later changes appear to be DSS/document-timestamp updates (permitted by ISO 32000-2 §12.8.2.2)',
+      );
+    }
   }
   if (report.notes.length > 0) {
     lines.push('', '## Notes');
