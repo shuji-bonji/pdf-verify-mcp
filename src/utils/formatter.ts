@@ -141,6 +141,9 @@ interface PolicyReportForFormat {
       isDocumentTimestamp: boolean;
     }[];
     revisionCount: number;
+    incrementalUpdateCount: number;
+    lastSignatureCoversFile: boolean | null;
+    signaturesWithLaterChanges: { fieldName: string | null; bytesAfterSignedRange: number }[];
     certification: { permission: number; violatedByLaterChanges: boolean } | null;
     hasDss: boolean;
     padesLevels: { fieldName: string | null; level: string | null }[];
@@ -153,7 +156,7 @@ export function formatPolicyReport(report: PolicyReportForFormat): string {
   lines.push(`- Profile: ${report.profile}`);
   lines.push(`- Verdict: **${report.verdict}**`);
   lines.push(
-    `- Signatures: ${report.facts.signatureCount} (revisions: ${report.facts.revisionCount}, DSS: ${yesNo(report.facts.hasDss)})`,
+    `- Signatures: ${report.facts.signatureCount} (revisions: ${report.facts.revisionCount}, incremental updates: ${report.facts.incrementalUpdateCount}, DSS: ${yesNo(report.facts.hasDss)})`,
   );
   if (report.firedRules.length > 0) {
     lines.push('', '## Fired rules');
@@ -177,6 +180,17 @@ export function formatPolicyReport(report: PolicyReportForFormat): string {
     lines.push('', '## PAdES levels');
     for (const p of report.facts.padesLevels) {
       if (p.level) lines.push(`- ${p.fieldName ?? '(unnamed)'}: ${p.level}`);
+    }
+  }
+  if (report.facts.signaturesWithLaterChanges.length > 0) {
+    lines.push('', '## Post-signing changes');
+    lines.push(
+      `- Last signature covers entire file: ${yesNo(report.facts.lastSignatureCoversFile)}`,
+    );
+    for (const c of report.facts.signaturesWithLaterChanges) {
+      lines.push(
+        `- ${c.fieldName ?? '(unnamed)'}: ${c.bytesAfterSignedRange} byte(s) added after signed range`,
+      );
     }
   }
   if (report.facts.conformance) {

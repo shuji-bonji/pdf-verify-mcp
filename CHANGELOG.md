@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1] - 2026-07-23
+
+### Fixed (`evaluate_policy` advisory gaps — [FINDINGS-2026-07-20](docs/FINDINGS-2026-07-20.md))
+
+Two cases where a fact that should reach the caller was silently dropped. Both
+are **advisory-only — the verdict never changes**; the deterministic rule engine
+is untouched. Found during live pdf-trust Skill trialling (PDF family ④).
+
+- **V-A1 — post-signing changes on non-certified signatures are now surfaced.**
+  Previously the "bytes were added after the signed range" fact only reached
+  `facts`/`advisories` through the DocMDP (`certification?.`) path, so an
+  ordinary (non-certified) signature followed by an incremental update produced
+  no facts entry and no advisory at all. `evaluate_policy` now (a) exposes
+  `incrementalUpdateCount`, `lastSignatureCoversFile` and
+  `signaturesWithLaterChanges` in the returned `facts`, and (b) adds a
+  non-certified advisory when content was added after signing. Incremental
+  updates are legal in PDF (counter-signatures, DSS/LTV, annotations), so the
+  verdict is deliberately unchanged; the certified path already reports its own
+  case, so the new advisory stays silent there to avoid double-reporting.
+
+- **V-A2 — non-PAdES (`level === null`) signatures no longer slip past the
+  PAdES advisory.** The `p.level !== null` guard (added to stop
+  `order.indexOf(null) === -1` mis-sorting) excluded legacy
+  `adbe.pkcs7.detached` / ISO 32000-1 signatures from the PAdES-level check —
+  even though they have weaker long-term verifiability than B-B (no signature
+  timestamp, no DSS). They now get a distinct advisory that does not presuppose
+  a PAdES baseline (the B-B "consider LTV augmentation" wording only applies to
+  actual PAdES signatures). Verdict unchanged.
+
 ## [0.7.0] - 2026-07-19
 
 ### Added (Issue [#4](https://github.com/shuji-bonji/pdf-verify-mcp/issues/4))

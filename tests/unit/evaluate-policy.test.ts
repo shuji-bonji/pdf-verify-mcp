@@ -8,15 +8,24 @@
 
 import { PDFDocument } from 'pdf-lib';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { RevocationStatus, TrustStatus, Verdict } from '../../src/constants.js';
+import { PadesLevel, RevocationStatus, TrustStatus, Verdict } from '../../src/constants.js';
 import { parsePdfBytes } from '../../src/services/pdf-parser.js';
-import { evaluatePolicy, type PolicyFacts } from '../../src/services/policy-engine.js';
+import {
+  evaluatePolicy,
+  POLICY_PROFILES,
+  type PolicyFacts,
+  type PolicyProfileId,
+} from '../../src/services/policy-engine.js';
 import {
   analyzeIntegrity,
   detectPadesLevels,
   verifySignatures,
 } from '../../src/services/verification-service.js';
-import type { IntegrityReport, SignatureVerificationReport } from '../../src/types.js';
+import type {
+  IntegrityReport,
+  PadesLevelReport,
+  SignatureVerificationReport,
+} from '../../src/types.js';
 import {
   createSignedPdf,
   createTestIdentity,
@@ -62,6 +71,24 @@ function integrity(over: Partial<IntegrityReport> = {}): IntegrityReport {
   };
 }
 
+function pades(over: Partial<PadesLevelReport> = {}): PadesLevelReport {
+  return {
+    fieldName: 'Sig1',
+    subFilter: 'ETSI.CAdES.detached',
+    isPades: true,
+    level: PadesLevel.B_T,
+    evidence: {
+      hasSignatureTimestamp: true,
+      hasDss: false,
+      hasVri: false,
+      hasDocumentTimestamp: false,
+    },
+    ltv: null,
+    notes: [],
+    ...over,
+  };
+}
+
 function facts(over: Partial<PolicyFacts> = {}): PolicyFacts {
   return {
     signatures: [sig()],
@@ -73,6 +100,9 @@ function facts(over: Partial<PolicyFacts> = {}): PolicyFacts {
 }
 
 const ids = (e: ReturnType<typeof evaluatePolicy>) => e.firedRules.map((r) => r.ruleId);
+const hasAdvisory = (e: ReturnType<typeof evaluatePolicy>, needle: string) =>
+  e.advisories.some((a) => a.includes(needle));
+const PROFILE_IDS = Object.keys(POLICY_PROFILES) as PolicyProfileId[];
 
 describe('policy engine (synthetic facts)', () => {
   it('fully positive facts → trust_and_use with no fired rules', () => {
@@ -208,6 +238,119 @@ describe('policy engine (synthetic facts)', () => {
     const a = JSON.stringify(evaluatePolicy(f, 'contract'));
     const b = JSON.stringify(evaluatePolicy(f, 'contract'));
     expect(a).toBe(b);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Advisories (never change the verdict) — FINDINGS-2026-07-20 V-A1 / V-A2
+// ---------------------------------------------------------------------------
+
+describe('V-A1: post-signing changes on non-certified signatures', () => {
+  // signed-then-annotated.pdf shape: a valid (trust-not-evaluated) signature
+  // followed by a 574-byte incremental update, no DocMDP certification.
+  const withLaterChanges = facts({
+    signatures: [
+      sig({ trust: { status: TrustStatus.NOT_EVALUATED, detail: null, certificatePath: null } }),
+    ],
+    integrity: integrity({
+      incrementalUpdateCount: 2,
+      lastSignatureCoversFile: false,
+      signaturesWithLaterChanges: [{ fieldName: 'Sig1', bytesAfterSignedRange: 574 }],
+    }),
+  });
+
+  it('surfaces an advisory for content added after signing', () => {
+    const e = evaluatePolicy(withLaterChanges, 'contract');
+    expect(hasAdvisory(e, 'Content was added after signing')).toBe(true);
+    expect(hasAdvisory(e, '+574B')).toBe(true);
+  });
+
+  it('never changes the verdict (incremental update is legal in PDF)', () => {
+    for (const p of PROFILE_IDS) {
+      const withChanges = evaluatePolicy(withLaterChanges, p).verdict;
+      const withoutChanges = evaluatePolicy(
+        facts({
+          signatures: [
+            sig({
+              trust: { status: TrustStatus.NOT_EVALUATED, detail: null, certificatePath: null },
+            }),
+          ],
+        }),
+        p,
+      ).verdict;
+      expect(withChanges).toBe(withoutChanges);
+    }
+  });
+
+  it('does not double-report when DocMDP certification already covers it', () => {
+    // Negative control: certified-p1-modified.pdf — the DocMDP rule/advisory
+    // path owns this case, so the non-certified advisory must stay silent.
+    const certified = facts({
+      integrity: integrity({
+        incrementalUpdateCount: 1,
+        signaturesWithLaterChanges: [{ fieldName: 'Sig1', bytesAfterSignedRange: 120 }],
+        certification: {
+          fieldName: 'Sig1',
+          permission: 1,
+          permissionDescription: 'No changes permitted',
+          violatedByLaterChanges: true,
+          laterChangesAppearLtvOnly: false,
+        },
+      }),
+    });
+    const e = evaluatePolicy(certified, 'contract');
+    expect(hasAdvisory(e, 'Content was added after signing')).toBe(false);
+    expect(ids(e)).toContain('POL-REVIEW-DOCMDP-VIOLATION');
+  });
+});
+
+describe('V-A2: non-PAdES (level === null) signatures', () => {
+  // A legacy adbe.pkcs7.detached signature — not a PAdES baseline at all.
+  const legacy = facts({
+    signatures: [
+      sig({ trust: { status: TrustStatus.NOT_EVALUATED, detail: null, certificatePath: null } }),
+    ],
+    pades: [pades({ isPades: false, level: null, subFilter: 'adbe.pkcs7.detached' })],
+  });
+
+  it('emits a distinct non-PAdES advisory for every PAdES-caring profile', () => {
+    for (const p of PROFILE_IDS) {
+      const e = evaluatePolicy(legacy, p);
+      if (POLICY_PROFILES[p].recommendedMinPadesLevel) {
+        expect(hasAdvisory(e, 'not a PAdES baseline')).toBe(true);
+        // The B-B "consider LTV augmentation" wording presupposes a PAdES
+        // baseline and must NOT be reused for a non-PAdES signature.
+        expect(hasAdvisory(e, 'consider LTV augmentation')).toBe(false);
+      } else {
+        // general: no recommendedMinPadesLevel → stays quiet.
+        expect(hasAdvisory(e, 'not a PAdES baseline')).toBe(false);
+      }
+    }
+  });
+
+  it('negative control: a real B-B signature keeps the LTV-augmentation wording', () => {
+    const bb = facts({ pades: [pades({ level: PadesLevel.B_B })] });
+    const e = evaluatePolicy(bb, 'contract'); // recommends B-T
+    expect(hasAdvisory(e, 'consider LTV augmentation')).toBe(true);
+    expect(hasAdvisory(e, 'not a PAdES baseline')).toBe(false);
+  });
+
+  it('never changes the verdict', () => {
+    for (const p of PROFILE_IDS) {
+      const withLegacy = evaluatePolicy(legacy, p).verdict;
+      const baseline = evaluatePolicy(
+        facts({
+          signatures: [
+            sig({
+              trust: { status: TrustStatus.NOT_EVALUATED, detail: null, certificatePath: null },
+            }),
+          ],
+          pades: [pades()],
+        }),
+        p,
+      ).verdict;
+      expect(withLegacy).toBe(baseline);
+    }
   });
 });
 

@@ -296,6 +296,21 @@ export function evaluatePolicy(facts: PolicyFacts, profileId: PolicyProfileId): 
           'the signature may become unverifiable after certificate expiry/revocation; consider LTV augmentation',
       );
     }
+    // A signature that is not even a PAdES baseline (level === null, e.g. a
+    // legacy ISO 32000-1 adbe.pkcs7.detached signature) has weaker long-term
+    // verifiability than B-B — no signature timestamp, no DSS. The `below`
+    // filter deliberately excludes null so that order.indexOf(null) === -1
+    // cannot mis-sort it; surface these separately with a message that does not
+    // presuppose a PAdES baseline (LTV augmentation only makes sense on one).
+    const nonPades = facts.pades.filter((p) => p.level === null);
+    if (nonPades.length > 0) {
+      advisories.push(
+        'Signature is not a PAdES baseline (legacy adbe.pkcs7.detached / ISO 32000-1): ' +
+          `${nonPades.map((p) => p.fieldName ?? '(unnamed)').join(', ')} — ` +
+          'weaker long-term verifiability than B-B (no signature timestamp or DSS); ' +
+          `if long-term preservation is required, migrate to a PAdES baseline (min ${profile.recommendedMinPadesLevel})`,
+      );
+    }
   }
   if (facts.conformance && facts.conformance.compliant === false) {
     advisories.push(
@@ -305,6 +320,22 @@ export function evaluatePolicy(facts: PolicyFacts, profileId: PolicyProfileId): 
   if (facts.integrity.certification?.laterChangesAppearLtvOnly) {
     advisories.push(
       'Changes after certification appear to be DSS/document-timestamp updates (permitted by ISO 32000-2 §12.8.2.2); object-level confirmation was not performed',
+    );
+  }
+  // Non-certified signatures: bytes were added after a signature's signed
+  // range. This is legal in PDF (counter-signatures, DSS/LTV augmentation,
+  // incremental annotations) so it never changes the verdict. For certified
+  // (DocMDP) documents the dedicated rule/advisory above already reports it,
+  // so only surface the otherwise-silent non-certified path here — closing the
+  // gap where "something was added after signing" reached neither facts nor
+  // advisories for ordinary signatures.
+  if (!facts.integrity.certification && facts.integrity.signaturesWithLaterChanges.length > 0) {
+    advisories.push(
+      'Content was added after signing (incremental update): ' +
+        `${facts.integrity.signaturesWithLaterChanges
+          .map((c) => `${c.fieldName ?? '(unnamed)'}=+${c.bytesAfterSignedRange}B`)
+          .join(', ')} — ` +
+        'incremental updates are permitted in PDF, but the added content is not covered by that signature; review what was added',
     );
   }
   const expired = signed.filter((s) => s.cms?.signerCertificate?.isExpiredNow);
