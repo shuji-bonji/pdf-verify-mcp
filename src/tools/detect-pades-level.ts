@@ -15,7 +15,9 @@ export function registerDetectPadesLevel(server: McpServer): void {
     'detect_pades_level',
     {
       title: 'Detect PAdES Baseline Level',
-      description: `Determine the PAdES baseline level (ETSI EN 319 142) of each signature in a PDF.
+      description: `Observe which PAdES baseline level (ETSI EN 319 142) the structure of each signature matches.
+
+**This is an observation, not a conformance verdict.** ETSI EN 319 142 is not in this family's spec corpus, and unlike PDF/A there is no third-party validator to delegate to — so the result says "the structure matches B-LT", never "conforms to PAdES B-LT". Every report carries normativeBasis: "T3" to make that explicit.
 
 Detection is structural: B-B (CAdES signature), B-T (+ RFC 3161 signature timestamp), B-LT (+ DSS with validation data), B-LTA (+ document timestamp). Legacy adbe.pkcs7.detached signatures are reported as non-PAdES.
 

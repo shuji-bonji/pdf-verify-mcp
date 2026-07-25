@@ -7,6 +7,7 @@ import { PadesLevel } from '../../src/constants.js';
 import { identifyConformance } from '../../src/services/conformance.js';
 import { parsePdfBytes } from '../../src/services/pdf-parser.js';
 import { detectPadesLevels } from '../../src/services/verification-service.js';
+import { formatPadesReports } from '../../src/utils/formatter.js';
 import { createSignedPdf, createTestIdentity, type TestIdentity } from '../helpers/signed-pdf.js';
 
 let identity: TestIdentity;
@@ -36,6 +37,60 @@ describe('detectPadesLevels', () => {
     expect(reports).toHaveLength(1);
     expect(reports[0].isPades).toBe(false);
     expect(reports[0].level).toBeNull();
+  });
+
+  // --- V-F3 / Issue #9: T3（規範なし）であることを出力自体が持つ ---
+  //
+  // level だけを抜き出して「PAdES B-T 準拠」と書かれるのを防ぐのが目的。
+  // `if` の中に expect を置かない — 消えたら落ちる形にしておく。
+  it('reports T3 as the normative basis, on every signature', async () => {
+    const pdf = await createSignedPdf(identity);
+    const parsed = await parsePdfBytes(pdf);
+    const reports = await detectPadesLevels(parsed);
+
+    expect(reports.length).toBeGreaterThan(0);
+    for (const r of reports) {
+      expect(r.normativeBasis).toBe('T3');
+    }
+  });
+
+  it('states in the notes that the level is an observation, not conformance', async () => {
+    const pdf = await createSignedPdf(identity);
+    const parsed = await parsePdfBytes(pdf);
+    const reports = await detectPadesLevels(parsed);
+    const notes = reports[0].notes.join(' ');
+
+    // 「構造が一致する」であって「検出した」ではない
+    expect(notes).toContain('The structure matches PAdES');
+    expect(notes).toContain('not a conformance verdict');
+    // 断定形（旧文言）に戻っていないこと
+    expect(notes).not.toContain('Detected level:');
+  });
+
+  it('carries the caveat into the markdown, above the levels', async () => {
+    const pdf = await createSignedPdf(identity);
+    const parsed = await parsePdfBytes(pdf);
+    const md = formatPadesReports(await detectPadesLevels(parsed));
+
+    expect(md).toContain('Observation, not a conformance verdict');
+    expect(md).toContain('Normative basis: **T3**');
+    expect(md).toContain('structure matches');
+    // 見出しより後ろに注記が埋もれていないか（level 行より前に出ること）
+    expect(md.indexOf('Observation, not a conformance verdict')).toBeLessThan(
+      md.indexOf('structure matches'),
+    );
+  });
+
+  it('says nothing about a normative basis when there are no signatures', async () => {
+    // 署名ゼロの経路では注記ブロックごと出ない（言うべき対象が無いのに免責だけ出さない）
+    const { PDFDocument } = await import('pdf-lib');
+    const doc = await PDFDocument.create();
+    doc.addPage([200, 200]);
+    const parsed = await parsePdfBytes(await doc.save());
+    const md = formatPadesReports(await detectPadesLevels(parsed));
+
+    expect(md).toContain('No (non-timestamp) signatures found');
+    expect(md).not.toContain('Normative basis');
   });
 });
 

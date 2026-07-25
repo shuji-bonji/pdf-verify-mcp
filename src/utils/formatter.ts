@@ -146,7 +146,7 @@ interface PolicyReportForFormat {
     signaturesWithLaterChanges: { fieldName: string | null; bytesAfterSignedRange: number }[];
     certification: { permission: number; violatedByLaterChanges: boolean } | null;
     hasDss: boolean;
-    padesLevels: { fieldName: string | null; level: string | null }[];
+    padesLevels: { fieldName: string | null; level: string | null; normativeBasis?: string }[];
     conformance: { flavour: string; engine: string; compliant: boolean | null } | null;
   };
 }
@@ -177,7 +177,7 @@ export function formatPolicyReport(report: PolicyReportForFormat): string {
     }
   }
   if (report.facts.padesLevels.some((p) => p.level)) {
-    lines.push('', '## PAdES levels');
+    lines.push('', '## PAdES levels (observed from structure — not a conformance verdict)');
     for (const p of report.facts.padesLevels) {
       if (p.level) lines.push(`- ${p.fieldName ?? '(unnamed)'}: ${p.level}`);
     }
@@ -215,11 +215,23 @@ export function formatPadesReports(reports: PadesLevelReport[]): string {
   if (reports.length === 0) {
     return '# PAdES Level Detection\n\nNo (non-timestamp) signatures found in this document.';
   }
-  const lines: string[] = ['# PAdES Level Detection', ''];
+  // T3（規範なし）であることを表の外・冒頭で述べる。level だけを抜き出して
+  // 「PAdES 準拠」と書かれるのを防ぐのが目的（Issue #9 / `specs/09 §2`）。
+  const lines: string[] = [
+    '# PAdES Level Detection',
+    '',
+    '> **Observation, not a conformance verdict.** ETSI EN 319 142 is not in this corpus and there is',
+    '> no third-party validator for it, so what follows is which baseline the *structure* matches —',
+    '> read as evidence, and do not restate it as "conforms to PAdES".',
+    '',
+  ];
   reports.forEach((r, i) => {
     lines.push(`## ${i + 1}. ${r.fieldName ?? '(unnamed field)'}`);
     lines.push('');
-    lines.push(`- PAdES: ${yesNo(r.isPades)}${r.level ? ` — level **${r.level}**` : ''}`);
+    lines.push(
+      `- PAdES: ${yesNo(r.isPades)}${r.level ? ` — structure matches **${r.level}**` : ''}`,
+    );
+    lines.push(`- Normative basis: **${r.normativeBasis}** (no normative text available)`);
     lines.push(`- SubFilter: ${r.subFilter ?? '(none)'}`);
     lines.push(
       `- Evidence: signature timestamp=${yesNo(r.evidence.hasSignatureTimestamp)}, DSS=${yesNo(r.evidence.hasDss)}, VRI=${yesNo(r.evidence.hasVri)}, document timestamp=${yesNo(r.evidence.hasDocumentTimestamp)}`,

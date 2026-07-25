@@ -437,7 +437,14 @@ export async function detectPadesLevels(parsed: ParsedPdf): Promise<PadesLevelRe
       } else {
         level = PadesLevel.B_B;
       }
-      notes.push(`Detected level: ${level} (content-validated LTV data).`);
+      // T3: 規範（ETSI EN 319 142）を手元に持たないので、断定形で書かない。
+      // 「構造がこの形に一致する」という観測であることを出力自体に持たせる
+      // （`specs/09 §2`「T3 における観測と判定の分界」/ Issue #9）。
+      notes.push(
+        `The structure matches PAdES ${level} (signature timestamp and DSS coverage were checked in the file). ` +
+          'This is an observation of structure, not a conformance verdict — ETSI EN 319 142 is not in this ' +
+          'family\'s corpus, so "conforms to PAdES" cannot be claimed from this result.',
+      );
     } else if (sig.subFilter === SUB_FILTER.ADBE_PKCS7_DETACHED) {
       notes.push(
         'Legacy ISO 32000-1 signature (adbe.pkcs7.detached) — not a PAdES baseline signature.',
@@ -451,6 +458,8 @@ export async function detectPadesLevels(parsed: ParsedPdf): Promise<PadesLevelRe
       subFilter: sig.subFilter,
       isPades,
       level,
+      // PAdES は常に T3（規範なし・第三者検証器なし = 構造の観測にとどまる）
+      normativeBasis: 'T3',
       evidence: {
         hasSignatureTimestamp,
         hasDss: parsed.hasDss,

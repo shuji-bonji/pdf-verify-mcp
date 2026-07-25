@@ -293,7 +293,8 @@ export function evaluatePolicy(facts: PolicyFacts, profileId: PolicyProfileId): 
       advisories.push(
         `PAdES level below the profile's recommendation (${profile.recommendedMinPadesLevel}): ` +
           `${below.map((p) => `${p.fieldName ?? '(unnamed)'}=${p.level}`).join(', ')} — ` +
-          'the signature may become unverifiable after certificate expiry/revocation; consider LTV augmentation',
+          'the signature may become unverifiable after certificate expiry/revocation; consider LTV augmentation' +
+          ' (level is inferred from structure — ETSI EN 319 142 is not in this corpus, so this is not a conformance finding)',
       );
     }
     // A signature that is not even a PAdES baseline (level === null, e.g. a
@@ -308,7 +309,8 @@ export function evaluatePolicy(facts: PolicyFacts, profileId: PolicyProfileId): 
         'Signature is not a PAdES baseline (legacy adbe.pkcs7.detached / ISO 32000-1): ' +
           `${nonPades.map((p) => p.fieldName ?? '(unnamed)').join(', ')} — ` +
           'weaker long-term verifiability than B-B (no signature timestamp or DSS); ' +
-          `if long-term preservation is required, migrate to a PAdES baseline (min ${profile.recommendedMinPadesLevel})`,
+          `if long-term preservation is required, migrate to a PAdES baseline (min ${profile.recommendedMinPadesLevel})` +
+          ' (inferred from the SubFilter and structure, not from ETSI text)',
       );
     }
   }
@@ -353,6 +355,13 @@ export function evaluatePolicy(facts: PolicyFacts, profileId: PolicyProfileId): 
     notes: [
       'This verdict is produced by a deterministic rule engine over the verification facts — same facts, same profile, same verdict. It judges authenticity/integrity only, never the truth of the content.',
       'trust_and_use requires: all signatures valid, all chains trusted, revocation confirmed good, and no profile rule fired.',
+      // T3: PAdES レベルは観測であって適合判定ではない（specs/09 §2 / Issue #9）。
+      // facts.padesLevels だけを抜き出して「PAdES 準拠」と書かれるのを防ぐ
+      ...(facts.pades.length > 0
+        ? [
+            'PAdES levels in the facts are inferred from document structure, not from ETSI EN 319 142 (which is outside this corpus). Report them as observations; do not restate them as conformance.',
+          ]
+        : []),
     ],
   };
 }

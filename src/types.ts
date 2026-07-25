@@ -146,12 +146,41 @@ export interface IntegrityReport {
   notes: string[];
 }
 
-/** PAdES level detection result for one signature */
+/**
+ * どの規範を手元に持っているかで、結果をどの強さで述べられるかが変わる（PDFfamily `specs/09 §2`）。
+ *
+ * - `T1` — ISO 32000-1/-2・ISO 14289: 条文を引用して断定できる
+ * - `T2` — ISO 19005（PDF/A）: コーパス外。**判定は veraPDF が下す**ので
+ *   「veraPDF はこう判定した」までしか言えない
+ * - `T3` — ETSI EN 319 142（PAdES）: 規範も第三者検証器も無い。**構造の観測を報告するだけ**で
+ *   適合判定ではない
+ *
+ * **`clause` とは独立の軸**である。`clause` は「どの規範か」、こちらは「その規範を条文で引けるか」。
+ */
+export type NormativeBasis = 'T1' | 'T2' | 'T3';
+
+/**
+ * PAdES level detection result for one signature.
+ *
+ * **これは観測であって適合判定ではない**（`normativeBasis: 'T3'`）。
+ * ETSI EN 319 142 の原文は family のコーパスに無く、PDF/A のような第三者検証器（veraPDF）も無い。
+ * したがって `level` が意味するのは「**構造がこのレベルの形に一致する**」であり、
+ * 「このレベルに適合している」ではない（`specs/09 §2`「T3 における観測と判定の分界」）。
+ */
 export interface PadesLevelReport {
   fieldName: string | null;
   subFilter: string | null;
   isPades: boolean;
+  /**
+   * 構造が一致した PAdES ベースラインレベル。**適合の主張ではない** — 上のコメントと
+   * `normativeBasis` を参照。判定できなかった場合は null。
+   */
   level: PadesLevel | null;
+  /**
+   * この結果を述べられる強さ。PAdES は常に **`'T3'`**（規範根拠なし・構造の観測）。
+   * レポートを書くときは、この値を見て文言を選ぶ。
+   */
+  normativeBasis: NormativeBasis;
   evidence: {
     hasSignatureTimestamp: boolean;
     hasDss: boolean;

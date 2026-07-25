@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2026-07-25
+
+### Added
+
+- **PAdES results now say what they are: an observation, not a conformance verdict
+  ([#9](https://github.com/shuji-bonji/pdf-verify-mcp/issues/9)).**
+
+  `detect_pades_level` has always been structural — the tool description said so — but the
+  *output* did not. It read `Detected level: B-T`, which is indistinguishable from a verdict. So
+  the level was being lifted into reports as "conforms to PAdES B-T", which this server has no
+  standing to claim: ETSI EN 319 142 is not in the family's corpus, and unlike PDF/A there is no
+  third-party validator to delegate the judgement to.
+
+  - **`normativeBasis: 'T3'`** on every `PadesLevelReport`, and carried through
+    `evaluate_policy`'s `facts.padesLevels`. Machine-readable, so a caller can branch on it
+    instead of parsing prose.
+  - The note is now *"The structure matches PAdES B-T … This is an observation of structure, not a
+    conformance verdict"*. The markdown puts that caveat **above** the levels, because a caveat
+    printed after the number is read after the number.
+  - The two PAdES advisories keep their existing wording (callers match on it) and gain a clause
+    saying the level is inferred from structure, not from ETSI text.
+  - `evaluate_policy`'s notes gain one line, only when the document has signatures — no
+    disclaimer where there is nothing to disclaim. Its `## PAdES levels` heading carries the
+    caveat too: a note in the trailing Notes section is read *after* the number it qualifies.
+
+- **The server now sends `instructions` on `initialize`.** This server is read as *proving*
+  conformance and trust; it can only disprove. The instructions state that, then set out the
+  three tiers (T1 quotable / T2 veraPDF decides / T3 observation only) so that a caller knows
+  which vocabulary a given result licenses. They also restate the two limits that get forgotten
+  most: a `valid` verdict without trust anchors is cryptography, not identity; and if revocation
+  could not be checked, "not revoked" cannot be claimed either.
+
+### Changed
+
+- `specs/09 §2` (family scope) previously defined T3 as *"hold; issue no verdict"*, which
+  contradicted a tool that returns four levels. The boundary has been redrawn: **T3 forbids a
+  conformance verdict, not an observation of structure.** "This signature has an RFC 3161
+  timestamp and a DSS covering the signer" is a fact in the file; "this conforms to B-LT" needs
+  the standard. The same distinction `pdf-reader-mcp` makes about itself — and `detect_pades_level`
+  was already named for it (`detect`, not `validate`).
+
 ## [0.7.1] - 2026-07-23
 
 ### Fixed (`evaluate_policy` advisory gaps — [FINDINGS-2026-07-20](docs/FINDINGS-2026-07-20.md))

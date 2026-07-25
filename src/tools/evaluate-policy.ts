@@ -160,7 +160,13 @@ Examples:
             signaturesWithLaterChanges: integrity.signaturesWithLaterChanges,
             certification: integrity.certification,
             hasDss: integrity.hasDss,
-            padesLevels: pades.map((p) => ({ fieldName: p.fieldName, level: p.level })),
+            // normativeBasis も落とさず伝える。facts だけを読んで
+            // 「PAdES B-LT 準拠」と書かれるのを防ぐため（Issue #9）
+            padesLevels: pades.map((p) => ({
+              fieldName: p.fieldName,
+              level: p.level,
+              normativeBasis: p.normativeBasis,
+            })),
             conformance: conformance
               ? {
                   flavour: conformance.flavour,
