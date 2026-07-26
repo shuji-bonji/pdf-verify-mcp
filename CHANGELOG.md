@@ -2,6 +2,55 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2026-07-26
+
+### Fixed
+
+- **Roughly one signature in 256 was reported as unparseable (V-P1).** `/Contents` holds the CMS
+  in a fixed-size slot padded with zero bytes, and the parser removed *every* trailing zero to
+  get the CMS back. But a DER blob may legitimately end with `0x00` — measured at 0.7% of
+  signatures here — and cutting that byte truncates the structure. `fromBER` then rejects it,
+  so a valid signature came back as "CMS payload is not valid BER/DER": a false alarm in the
+  one direction that matters for a tool whose job is deciding whether to trust a document.
+
+  The parser now takes the length from the DER header and cuts where the structure says it
+  ends, falling back to the old behaviour only when the header is not a definite-length
+  SEQUENCE. Measured over 600 generated signatures: 4 ended in `0x00` — every one of which the
+  previous code broke — and all 600 now verify.
+
+  It surfaced as a test that failed once every few hundred runs (`aia-tsa`, TSA trust
+  evaluation), which is exactly what a 1/256 chance looks like from the outside. The regression
+  test does not wait for that luck: it generates signatures until it draws one ending in
+  `0x00`, then asserts both that the naive trim breaks it and that the current code does not.
+
+### Added
+
+- **`validate_clauses` — constraints mapped from ISO 32000-1/-2 clauses (T1).** This is ground
+  the other tools do not cover: `validate_conformance` judges the PDF/A and PDF/UA *profiles*
+  (and delegates to veraPDF for the authoritative answer), but a file can satisfy those and
+  still violate the specification body. Embedding a CFF font program under `/FontFile2` —
+  forbidden by Table 124 — is a real case that surfaced only as a viewer warning and was
+  filed under "harmless" for two days.
+
+  The mapping from clause to structural condition, and its evaluation, live in
+  [@shuji-bonji/pdf-constraints](https://www.npmjs.com/package/@shuji-bonji/pdf-constraints);
+  this server calls it and translates the result. The dependency is **pinned exactly**, and
+  every report names the version that decided it — npx caches a server's dependency tree until
+  the server's own version changes, so a range would neither deliver table updates nor keep the
+  rules reproducible across environments.
+
+  Results keep four states rather than collapsing into pass/fail. `needs_external_fact` exists
+  because some clauses depend on facts the file does not contain — whether a font is a *subset*
+  is known only to whoever made it — and defaulting those into a pass would manufacture silent
+  approval. Failures carrying `traceOnly` are worded as *traces*: those clauses address the PDF
+  processor, and §14.3.4 explicitly permits leaving an existing inconsistency alone, so the file
+  shows that someone broke the rule, not that the last writer did.
+
+  Since these are T1 clauses, a failure can be stated plainly with its clause ID — the wording
+  comes from pdf-spec-mcp's `get_requirements`. The tool description, the `instructions` and
+  both READMEs say the same thing about its limit: no failures means nothing in the *bundled*
+  constraints could be disproved, never that the document conforms.
+
 ## [0.8.0] - 2026-07-25
 
 ### Added

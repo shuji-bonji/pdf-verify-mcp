@@ -171,11 +171,51 @@ function lookupNumberArray(dict: PDFDict, key: string): number[] | null {
   return numbers;
 }
 
-/** Strip trailing zero-byte padding from /Contents */
-function stripZeroPadding(bytes: Uint8Array): Uint8Array {
+/**
+ * Trim the zero padding a signer leaves in /Contents, **without cutting into the CMS itself**.
+ *
+ * The signature dictionary reserves a fixed-size /Contents and the producer pads whatever it
+ * did not use with zero bytes, so the padding has to go. Removing every trailing zero is the
+ * obvious way to do that and it is wrong: **a DER blob is allowed to end with 0x00**, and
+ * roughly one signature in 256 does. Cutting that byte truncates the structure, `fromBER`
+ * rejects it, and a perfectly valid signature is reported as unparseable — a false alarm in
+ * exactly the direction that matters. (It first showed up as a test that failed once every
+ * few hundred runs; the rate matches 1/256.)
+ *
+ * So take the length from the DER header instead of guessing from the tail: read the outer
+ * SEQUENCE's tag and length, and cut where the structure says it ends. If the header does not
+ * look like a CMS SEQUENCE (damaged input, or a form this parser does not know), fall back to
+ * stripping zeros — a best-effort result beats refusing to look.
+ */
+function trimSignatureContents(bytes: Uint8Array): Uint8Array {
+  const derLength = derTotalLength(bytes);
+  if (derLength !== null) return bytes.subarray(0, derLength);
+
   let end = bytes.length;
   while (end > 0 && bytes[end - 1] === 0) end--;
   return bytes.subarray(0, end);
+}
+
+/**
+ * Total encoded length (header + content) of the DER object at the start of `bytes`,
+ * or null when it is not a definite-length SEQUENCE that fits inside the buffer.
+ */
+function derTotalLength(bytes: Uint8Array): number | null {
+  if (bytes.length < 2) return null;
+  if (bytes[0] !== 0x30) return null; // CMS ContentInfo is a SEQUENCE
+
+  const first = bytes[1];
+  if (first < 0x80) return 2 + first; // short form
+  if (first === 0x80) return null; // indefinite length — not valid DER
+  const lengthBytes = first & 0x7f;
+  if (lengthBytes > 4 || bytes.length < 2 + lengthBytes) return null;
+
+  let contentLength = 0;
+  for (let i = 0; i < lengthBytes; i++) {
+    contentLength = contentLength * 256 + bytes[2 + i];
+  }
+  const total = 2 + lengthBytes + contentLength;
+  return total <= bytes.length ? total : null;
 }
 
 /** Extract DocMDP permission from a signature dictionary's /Reference array */
@@ -378,7 +418,7 @@ export async function parsePdfBytes(
       filter: lookupName(object, 'Filter'),
       subFilter: lookupName(object, 'SubFilter'),
       byteRange: lookupNumberArray(object, 'ByteRange'),
-      contents: contents ? stripZeroPadding(contents) : null,
+      contents: contents ? trimSignatureContents(contents) : null,
       signingTimeDictionary: str('M'),
       name: str('Name'),
       reason: str('Reason'),

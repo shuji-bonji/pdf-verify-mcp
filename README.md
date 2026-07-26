@@ -19,6 +19,7 @@ Part of the PDF family alongside [pdf-reader-mcp](https://github.com/shuji-bonji
 | `detect_pades_level` | PAdES baseline level (B-B / B-T / B-LT / B-LTA) with content-validated LTV data |
 | `identify_conformance` | Declared PDF/A / PDF/UA conformance from XMP metadata |
 | `validate_conformance` | PDF/A (ISO 19005) and PDF/UA (ISO 14289) validation: veraPDF when installed, built-in rule subset otherwise |
+| `validate_clauses` | Constraints mapped from ISO 32000-1/-2 clauses — the specification body itself, which the PDF/A and PDF/UA profiles do not cover |
 | `evaluate_policy` | Deterministic 4-value trust verdict (trust_and_use / use_with_caution / human_review_required / reject) from a fixed rule table over the verification facts, with domain profiles (contract, financial, legal, medical, government). The judge is code; the narrative is the LLM |
 
 ## Verdicts
@@ -46,6 +47,28 @@ Supported SubFilters: `ETSI.CAdES.detached` (PAdES), `adbe.pkcs7.detached`, `ETS
 `validate_conformance` uses a hybrid engine. With veraPDF installed (`PDF_VERIFY_VERAPDF` env var or on PATH) validation is delegated for authoritative results. Otherwise a built-in subset of ~15 high-value ISO 19005 rules runs natively (encryption, trailer /ID, LZW, font embedding, JavaScript/prohibited actions, OutputIntent, transparency for A-1, XFA, and more), each reported with its clause reference.
 
 Native results are honest about their limits: violations mean definitively non-compliant; all-passed means "no violations in the checked subset" — never certification.
+
+## ISO 32000 clause constraints (v0.9)
+
+`validate_clauses` covers different ground: the **body of the PDF specification**, not the PDF/A or PDF/UA profiles. A file can be judged COMPLIANT by veraPDF and still violate ISO 32000 — embedding a CFF font program under `/FontFile2` (Table 124) is a real example that surfaced only as a viewer warning.
+
+The mapping from clauses to structural conditions, and its evaluation, live in [@shuji-bonji/pdf-constraints](https://www.npmjs.com/package/@shuji-bonji/pdf-constraints). Every report names the version that decided it, because the rules move as constraints are added.
+
+Each constraint resolves to one of four states:
+
+| State | Meaning |
+|---|---|
+| `pass` | Nothing in this constraint could be disproved |
+| `fail` | Disproved, with the fact and its measured value as evidence |
+| `not_applicable` | The clause does not apply to this document |
+| `needs_external_fact` | A fact outside the file was not supplied, so the constraint was **not decided** |
+
+Two things the report distinguishes deliberately:
+
+- **`needs_external_fact` is not a pass.** Whether a font is a *subset* is known only to whoever made it — the PDF does not say. Supply it with `given: { isSubset: true }`; without it the constraint degrades rather than defaulting into silent approval.
+- **Some failures are traces, not violations.** Where a clause addresses the PDF *processor* (the act of writing), a file can only show that someone broke it — §14.3.4 explicitly allows leaving an existing inconsistency alone, so the last writer is not necessarily at fault.
+
+Because these are T1 clauses, a failure can be stated plainly and its clause ID quoted — retrieve the wording with pdf-spec-mcp's `get_requirements`.
 
 ## PDF/UA validation (v0.6)
 

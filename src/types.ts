@@ -46,7 +46,10 @@ export interface SignatureField {
   subFilter: string | null;
   /** /ByteRange [offset1, length1, offset2, length2] */
   byteRange: number[] | null;
-  /** Raw CMS bytes from /Contents (trailing zero padding stripped) */
+  /**
+   * Raw CMS bytes from /Contents, cut at the length the DER header declares.
+   * (Not "trailing zeros removed" — a DER blob may legitimately end with 0x00.)
+   */
   contents: Uint8Array | null;
   /** /M signing time string (PDF date) */
   signingTimeDictionary: string | null;

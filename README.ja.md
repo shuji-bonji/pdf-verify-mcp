@@ -15,6 +15,7 @@ PDF の**真正性・準拠性検証**に特化した MCP サーバ — 電子�
 | `detect_pades_level` | PAdES ベースラインレベル（B-B / B-T / B-LT / B-LTA）判定（LTV データの内容検証付き） |
 | `identify_conformance` | XMP メタデータ上の PDF/A・PDF/UA 準拠宣言の識別 |
 | `validate_conformance` | PDF/A（ISO 19005）・PDF/UA（ISO 14289）の準拠検証: veraPDF があれば委譲、なければ内蔵ルールサブセット |
+| `validate_clauses` | ISO 32000-1/-2 の条文から写像した制約の検査 — PDF/A・PDF/UA のプロファイルが見ない「仕様本体」の領域 |
 | `evaluate_policy` | 検証ファクトを固定ルール表に通す決定論的 4 値判定（trust_and_use / use_with_caution / human_review_required / reject）。ドメインプロファイル（contract・financial・legal・medical・government）対応。ジャッジはコード、ナラティブは LLM |
 
 ## 判定（verdict）
@@ -42,6 +43,28 @@ PDF の**真正性・準拠性検証**に特化した MCP サーバ — 電子�
 `validate_conformance` はハイブリッドエンジンです。veraPDF がインストール済み（`PDF_VERIFY_VERAPDF` 環境変数 or PATH）なら委譲して正式な判定を得ます。未導入なら内蔵の主要ルールサブセット（約15ルール: 暗号化・trailer /ID・LZW・フォント埋め込み・JavaScript/禁止アクション・OutputIntent・A-1 の透明性・XFA 等）をネイティブ実行し、各違反に ISO 19005 の条項参照を付けて報告します。
 
 ネイティブ判定の限界は明示します: 違反検出=確定的な不適合、全ルール通過=「チェック範囲内で違反なし」であり適合証明ではありません。
+
+## ISO 32000 条文制約の検査（v0.9）
+
+`validate_clauses` が見るのは別の領域 — PDF/A や PDF/UA のプロファイルではなく、**PDF 仕様そのものの本体**です。veraPDF が COMPLIANT と判定したファイルが ISO 32000 に違反していることは実際にあります（CFF フォントプログラムを `/FontFile2` で埋め込む Table 124 違反が、ビューアの警告としてしか表に出ていなかった実例があります）。
+
+条文 → 構造上の条件への写像と、その評価は [@shuji-bonji/pdf-constraints](https://www.npmjs.com/package/@shuji-bonji/pdf-constraints) が持ちます。制約が増えれば規則も変わるため、**どの版が判定したか**を毎回レポートに明記します。
+
+各制約は 4 状態のどれかになります。
+
+| 状態 | 意味 |
+|---|---|
+| `pass` | この制約では反証できなかった |
+| `fail` | 反証できた（根拠として fact 名と実測値を返す） |
+| `not_applicable` | この文書には適用されない条文 |
+| `needs_external_fact` | ファイル外の事実が供給されず、**判定に到達しなかった** |
+
+レポートが意図的に区別している点が 2 つあります。
+
+- **`needs_external_fact` は pass ではありません。** 「サブセットか否か」は作った側だけが知っており PDF には書かれていません。`given: { isSubset: true }` で供給してください。渡さなければ既定値で埋めずに縮退します（沈黙合格を作らないため）。
+- **一部の失敗は「違反」ではなく「痕跡」です。** 条文の主語が PDF processor（書き込み行為）である場合、ファイルから分かるのは誰かが破ったことまでです — §14.3.4 は既存の不整合をそのまま残すことを明示的に許しているので、直近の書き手が悪いとは限りません。
+
+これらは T1 の条文なので、失敗は条文 ID を引用して断定できます（原文は pdf-spec-mcp の `get_requirements` で取得してください）。
 
 ## PDF/UA 検証（v0.6）
 

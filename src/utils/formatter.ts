@@ -282,6 +282,59 @@ export function formatConformanceValidation(
   return lines.join('\n');
 }
 
+/**
+ * validate_clauses の markdown。
+ *
+ * **判定の由来（どの版のテーブルか）を見出し直下に置く。** 収録制約が増えれば結果も変わりうるので、
+ * 版が分からないレポートは再現できない。PAdES の注記で学んだとおり、読み手が数字を見る**前**に
+ * 前提が目に入る位置に置くこと。
+ */
+export function formatClauseValidation(
+  report: import('../services/clause-validation.js').ClauseValidationReport,
+): string {
+  const lines: string[] = ['# ISO 32000 Clause Constraints', ''];
+  lines.push(
+    `- Decided by: @shuji-bonji/pdf-constraints ${report.constraintsVersion} ` +
+      `(${report.tables.map((t) => `${t.name} v${t.version}`).join(', ')})`,
+  );
+  lines.push(`- Subjects examined: ${report.subjects}`);
+  lines.push(
+    `- Result: ${report.violations > 0 ? `**${report.violations} failure(s)**` : '**no failures in the constraints checked**'}` +
+      (report.notDecided > 0 ? `, ${report.notDecided} not decided` : ''),
+  );
+
+  const failed = report.results.filter((r) => r.status === 'fail');
+  if (failed.length > 0) {
+    lines.push('', '## Failures');
+    for (const result of failed) {
+      for (const failure of result.failures ?? []) {
+        // 主語が processor の条文は「違反」と断定しない（specs/18 §1）
+        const kind = failure.traceOnly ? 'Trace of a violation' : 'Violation';
+        lines.push(
+          `- **${result.constraintId}** [${failure.clauses.join(', ')}] — ${result.target}`,
+          `  - ${kind}: ${failure.message}`,
+          `  - Evidence: \`${failure.fact}\` = ${JSON.stringify(failure.actual)}`,
+        );
+      }
+    }
+  }
+
+  const undecided = report.results.filter((r) => r.status === 'needs_external_fact');
+  if (undecided.length > 0) {
+    lines.push('', '## Not decided');
+    for (const result of undecided) {
+      lines.push(
+        `- **${result.constraintId}** — ${result.target}: needs \`${result.missing}\` ` +
+          '(neither passed nor failed)',
+      );
+    }
+  }
+
+  lines.push('', '## Notes');
+  for (const note of report.notes) lines.push(`- ${note}`);
+  return lines.join('\n');
+}
+
 export function formatConformanceReport(report: ConformanceReport): string {
   const lines: string[] = ['# Conformance Declaration', ''];
   lines.push(`- PDF version: ${report.pdfVersion ?? 'unknown'}`);

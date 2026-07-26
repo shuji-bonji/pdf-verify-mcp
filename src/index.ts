@@ -39,6 +39,14 @@ How strongly a result can be stated depends on whether the normative text is at 
        signer) and reports which level that structure matches. That is an observation, not a
        conformance verdict — do not write "conforms to PAdES B-LT".
 
+validate_clauses works in T1: it checks constraints mapped from ISO 32000-1/-2 clauses, which is
+the ground veraPDF does not cover — a file can satisfy PDF/A and still violate the specification
+body. It reports only what the bundled constraints cover, so no failures means "nothing here
+could be disproved", never "conforms". A constraint that depends on a fact outside the file
+(whether a font is a subset, say) is returned as needs_external_fact rather than defaulted into
+a pass. Some failures are marked as traces: those clauses address the PDF *processor*, so the
+file shows that someone broke the rule, not that the last writer did.
+
 Two more limits that get forgotten:
   - Trust. A "valid" verdict without trust_anchors means the cryptography checks out, NOT that
     the signer is who they claim. trust: not_evaluated is reported for exactly this reason.
