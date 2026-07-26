@@ -66,6 +66,8 @@ function integrity(over: Partial<IntegrityReport> = {}): IntegrityReport {
     certification: null,
     lastSignatureCoversFile: true,
     hasDss: false,
+    revisions: null,
+    objectChangesAfterLastSignature: [],
     notes: [],
     ...over,
   };

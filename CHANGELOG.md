@@ -2,6 +2,58 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0] - 2026-07-27
+
+### Added
+
+- **`verify_integrity` now says *which objects* an incremental update wrote (V-F2 / Issue #8).**
+  The tool could say "574 bytes were added after this signature" but not whether those bytes
+  were an annotation, a form field value, or a page's content — which is the difference between
+  a countersignature and a rewritten payment amount. It now walks the cross-reference chain in
+  the raw bytes (`startxref` → `/Prev`, classic tables, cross-reference streams and
+  hybrid-reference files) and reports, per revision, the objects added / rewritten / freed, each
+  with the `/Type` written *in that revision* and a plain-language role. Objects written after
+  the last signed range are also collected into `objectChangesAfterLastSignature`, the shortlist
+  UC-10 hands on for locating.
+
+  **No verdict moves.** Incremental updates are legal (ISO 32000-2 §7.5.6), so this is facts,
+  not judgement — `evaluate_policy` reads the same fields it always did and its rule table is
+  untouched. The diff is deliberately not built on pdf-lib: pdf-lib merges the whole chain into
+  one view of the document, which is precisely the information that has to be kept apart here.
+
+  Three ways the naive version would have lied, and what was done about each:
+
+  - **A linearised file** (ISO 32000-1 Annex F) carries two cross-reference sections for a
+    single save. Following the chain turns that into "revision 2 added every object". The
+    giveaway is that the newer section sits at a *lower* offset; the two are merged back into
+    the one revision they belong to. Measured on the reader's `linearized.pdf`: 2 revisions and
+    10 phantom additions before, 1 revision after.
+  - **A full save** ("Save As" rather than an incremental update) can rewrite six figures of
+    objects — 224,065 in one 30 MB specimen. The listing is capped, `changeCount` keeps the
+    true total, and the cut drops cross-reference/object-stream bookkeeping before content.
+  - **A chain that cannot be walked returns `null`, never an empty list.** The two are
+    indistinguishable to a reader otherwise, and "no diff" must not be readable as "nothing
+    changed". A file whose last `startxref` points nowhere is reported explicitly as such: the
+    bytes appended last are then not represented by any listed revision.
+
+  Verified against 128 PDFs on hand (ISO specifications, generated fixtures, encrypted and
+  linearised files, and a real sign-then-annotate specimen): 0 errors, 1 refusal — the
+  deliberately corrupted one. On the sign-then-annotate specimen the diff separates the signing
+  revision (signature dictionary, widget, AcroForm) from what followed it (a `Highlight`
+  annotation and the page that now references it), which is the UC-10 question stated exactly.
+
+  Object types are read from the raw bytes rather than from a parsed document, so they stay
+  revision-accurate and keep working on encrypted files — dictionary keys and name values are
+  not encrypted (ISO 32000-1 §7.6.2). Objects stored inside an object stream are the exception:
+  they are flagged `inObjectStream` with no type rather than guessed at.
+
+  A trial run against ISO 32000-2 itself set the last two numbers: at a cap of 200 the JSON
+  response overran the 25,000-character limit and was cut mid-structure, and most of what filled
+  it was object-stream members carrying nothing but their number. The cap is 25 per revision, and
+  what survives the cut is ranked by how much it tells a reviewer — objects whose type could be
+  read first, then object-stream members, then bookkeeping. Measured across the same 128 files,
+  the largest `revisions` payload is now 11 KB.
+
 ## [0.9.0] - 2026-07-26
 
 ### Fixed

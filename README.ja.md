@@ -11,7 +11,7 @@ PDF の**真正性・準拠性検証**に特化した MCP サーバ — 電子�
 | ツール | 役割 |
 |--------|------|
 | `verify_signatures` | 暗号学的検証＋トラストアンカーによるチェーン信頼評価＋失効確認（埋め込み OCSP/CRL またはオンライン照会）＋RFC 3161 タイムスタンプ検証 |
-| `verify_integrity` | 改ざん検知: 増分更新、署名後の変更、DocMDP（証明署名）の権限違反 |
+| `verify_integrity` | 改ざん検知: 増分更新、署名後の変更、DocMDP（証明署名）の権限違反、および**リビジョン間のオブジェクト単位差分**（各更新が何を追加・書き換え・削除したか）。増分更新は PDF で合法なので、差分は「何を見るべきか」を示すだけで **verdict は動かさない**。そのオブジェクトがページのどこにあるかは [pdf-reader-mcp](https://github.com/shuji-bonji/pdf-reader-mcp) の `locate_objects` |
 | `detect_pades_level` | PAdES ベースラインレベル（B-B / B-T / B-LT / B-LTA）判定（LTV データの内容検証付き） |
 | `identify_conformance` | XMP メタデータ上の PDF/A・PDF/UA 準拠宣言の識別 |
 | `validate_conformance` | PDF/A（ISO 19005）・PDF/UA（ISO 14289）の準拠検証: veraPDF があれば委譲、なければ内蔵ルールサブセット |

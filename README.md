@@ -15,7 +15,7 @@ Part of the PDF family alongside [pdf-reader-mcp](https://github.com/shuji-bonji
 | Tool | Purpose |
 |------|---------|
 | `verify_signatures` | Cryptographic verification, trust chain evaluation against trust anchors, revocation checking (embedded OCSP/CRL or online), RFC 3161 timestamp verification |
-| `verify_integrity` | Tamper detection: incremental updates, changes after signing, DocMDP certification violations |
+| `verify_integrity` | Tamper detection: incremental updates, changes after signing, DocMDP certification violations, and an object-level diff of the revision chain (which objects each update added, rewrote or freed). Incremental updates are legal, so the diff says what to review — no verdict rests on it. Where those objects sit on the page is [pdf-reader-mcp](https://github.com/shuji-bonji/pdf-reader-mcp) `locate_objects` |
 | `detect_pades_level` | PAdES baseline level (B-B / B-T / B-LT / B-LTA) with content-validated LTV data |
 | `identify_conformance` | Declared PDF/A / PDF/UA conformance from XMP metadata |
 | `validate_conformance` | PDF/A (ISO 19005) and PDF/UA (ISO 14289) validation: veraPDF when installed, built-in rule subset otherwise |

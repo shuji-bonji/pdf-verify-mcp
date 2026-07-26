@@ -19,6 +19,14 @@ export function registerVerifyIntegrity(server: McpServer): void {
 
 Reports: number of revisions (incremental updates), whether bytes were added after each signature's signed range, whether the last signature covers the entire file, DocMDP certification permissions and violations, and DSS presence. Per ISO 32000-2 §12.8.2.2, DSS/document-timestamp incremental updates after a P=1 certification are NOT reported as violations (structural detection; flagged as laterChangesAppearLtvOnly).
 
+Also reports an object-level diff of the incremental-update chain: for each revision, which objects were added, rewritten or freed, with the object's /Type and a plain-language role (annotation, form field widget, page object, content stream, …), plus the shortlist of objects written after the last signed range (objectChangesAfterLastSignature). Cross-reference and object streams are flagged as bookkeeping. Where the objects sit on the page is pdf-reader-mcp's answer, not this server's.
+
+Limits of the diff — it is an observation, never a verdict:
+  - Incremental updates are legal in PDF (ISO 32000-2 §7.5.6). A rewritten object says what to review, not that the file was tampered with. No verdict moves because of it.
+  - revisions: null means the cross-reference chain could not be walked — "not determined", NOT "nothing changed".
+  - Objects stored inside an object stream are listed with inObjectStream: true and no type.
+  - Linearised files (ISO 32000-1 Annex F) carry two cross-reference sections for one save; they are merged back into one revision rather than reported as an update.
+
 Args:
   - file_path (string): Absolute path to a local PDF file
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
@@ -28,7 +36,8 @@ Returns:
 
 Examples:
   - Check whether a signed document was modified after signing
-  - Verify a certified (DocMDP) document respects its declared permissions`,
+  - Verify a certified (DocMDP) document respects its declared permissions
+  - Find out which objects an incremental update touched after a signature was made`,
       inputSchema: PdfToolInputSchema,
       annotations: {
         readOnlyHint: true,

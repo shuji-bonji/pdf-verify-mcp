@@ -501,6 +501,83 @@ export function tamperSignedPdf(signedPdf: Uint8Array): Uint8Array {
   return copy;
 }
 
+/** One object written by {@link appendObjectRevision} */
+export interface AppendedObject {
+  objectNumber: number;
+  generation?: number;
+  /** Body between `N G obj` and `endobj`, e.g. `<< /Type /Annot >>` */
+  body: string;
+}
+
+/**
+ * Append a *real* incremental update: the given objects, followed by a
+ * cross-reference table that chains to the previous section through `/Prev`.
+ *
+ * `appendIncrementalUpdate` above appends a stub whose `startxref` is 0, which
+ * exercises the "unparseable newest section" path. This one produces a
+ * well-formed revision so the object-level diff has something to diff.
+ */
+export function appendObjectRevision(
+  pdf: Uint8Array,
+  options: { objects?: AppendedObject[]; freed?: number[] } = {},
+): Uint8Array {
+  const text = Buffer.from(pdf).toString('latin1');
+  const prevStartxrefIndex = text.lastIndexOf('startxref');
+  if (prevStartxrefIndex === -1) throw new Error('no startxref in source PDF');
+  const prevStartxref = Number.parseInt(
+    /startxref\s+(\d+)/.exec(text.slice(prevStartxrefIndex))?.[1] ?? '',
+    10,
+  );
+  if (Number.isNaN(prevStartxref)) throw new Error('unreadable startxref in source PDF');
+  const rootMatch = /\/Root\s+(\d+)\s+(\d+)\s*R/.exec(text.slice(prevStartxrefIndex - 400));
+  const root = rootMatch ? rootMatch[1] : '1';
+
+  const objects = options.objects ?? [];
+  const freed = options.freed ?? [];
+
+  let chunk = '\n';
+  const entries = new Map<number, { offset: number; generation: number; free: boolean }>();
+  for (const object of objects) {
+    const generation = object.generation ?? 0;
+    entries.set(object.objectNumber, {
+      offset: pdf.length + chunk.length,
+      generation,
+      free: false,
+    });
+    chunk += `${object.objectNumber} ${generation} obj\n${object.body}\nendobj\n`;
+  }
+  for (const objectNumber of freed) {
+    entries.set(objectNumber, { offset: 0, generation: 65535, free: true });
+  }
+
+  const xrefOffset = pdf.length + chunk.length;
+  const numbers = [...entries.keys()].sort((a, b) => a - b);
+  let table = 'xref\n';
+  let cursor = 0;
+  while (cursor < numbers.length) {
+    let end = cursor;
+    while (end + 1 < numbers.length && numbers[end + 1] === numbers[end] + 1) end += 1;
+    const start = numbers[cursor];
+    table += `${start} ${end - cursor + 1}\n`;
+    for (let i = cursor; i <= end; i += 1) {
+      const entry = entries.get(numbers[i]);
+      if (!entry) continue;
+      const offset = String(entry.offset).padStart(10, '0');
+      const generation = String(entry.generation).padStart(5, '0');
+      table += `${offset} ${generation} ${entry.free ? 'f' : 'n'} \n`;
+    }
+    cursor = end + 1;
+  }
+  const size = (numbers[numbers.length - 1] ?? 0) + 1;
+  chunk += `${table}trailer\n<< /Size ${size} /Root ${root} 0 R /Prev ${prevStartxref} >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+
+  const extra = Buffer.from(chunk, 'latin1');
+  const result = new Uint8Array(pdf.length + extra.length);
+  result.set(pdf, 0);
+  result.set(extra, pdf.length);
+  return result;
+}
+
 /** Append an extra (empty) incremental revision after the signature */
 export function appendIncrementalUpdate(signedPdf: Uint8Array): Uint8Array {
   const extra = Buffer.from(

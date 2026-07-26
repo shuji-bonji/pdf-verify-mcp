@@ -146,7 +146,83 @@ export interface IntegrityReport {
   /** Whether the last signature covers the entire file */
   lastSignatureCoversFile: boolean | null;
   hasDss: boolean;
+  /**
+   * Object-level view of the incremental-update chain (v0.10+, Issue #8).
+   *
+   * `null` when the cross-reference chain could not be walked — which is not
+   * the same as "nothing changed" and must never be reported as such.
+   *
+   * **This does not move the verdict.** Incremental updates are legal in PDF
+   * (ISO 32000-2 §7.5.6); the list says what to look at, not what is wrong.
+   */
+  revisions: RevisionSummary[] | null;
+  /**
+   * Objects written by revisions that were appended after the last signed
+   * range ended — the shortlist UC-10 hands to a reader for locating.
+   * Empty when there is no signature or nothing followed it.
+   */
+  objectChangesAfterLastSignature: RevisionObjectChange[];
   notes: string[];
+}
+
+/** Which form of cross-reference section a revision used */
+export type XrefKind = 'table' | 'stream' | 'hybrid';
+
+/** One object written by a revision, relative to every older revision */
+export interface RevisionObjectChange {
+  objectNumber: number;
+  generation: number;
+  /**
+   * - `added` — the object number was unused (or free) before this revision
+   * - `modified` — an existing object was rewritten at a new offset
+   * - `freed` — the object was marked free (deleted)
+   */
+  change: 'added' | 'modified' | 'freed';
+  /** `/Type` as written in this revision, when it could be read */
+  type: string | null;
+  /** `/Subtype` as written in this revision, when present */
+  subtype: string | null;
+  /** Plain-language role, e.g. `annotation (Widget)`. `null` when unknown */
+  role: string | null;
+  /**
+   * true for cross-reference streams and object streams: file bookkeeping that
+   * every incremental update rewrites, not a change to document content
+   */
+  bookkeeping: boolean;
+  /**
+   * true when the object lives inside an object stream. Its type is not read
+   * (that would require inflating the container, which an encrypted file does
+   * not permit here), so `type` / `role` stay null
+   */
+  inObjectStream: boolean;
+}
+
+/** One revision of the incremental-update chain, oldest first */
+export interface RevisionSummary {
+  /** 1-based; revision 1 is the original document */
+  index: number;
+  /** Byte offset of this revision's cross-reference section */
+  xrefOffset: number;
+  /** Byte offset just past this revision's `%%EOF`, when it was found */
+  endOffset: number | null;
+  xrefKind: XrefKind;
+  /** Number of cross-reference entries this revision declares */
+  objectCount: number;
+  /** Total number of changed objects, before `changes` is capped */
+  changeCount: number;
+  /**
+   * true when `changes` lists fewer than `changeCount` objects. A full rewrite
+   * ("Save As" rather than an incremental update) can touch six figures of
+   * objects; the listing keeps content objects and drops bookkeeping first.
+   */
+  changesTruncated: boolean;
+  /** `null` for revision 1 — there is nothing older to diff against */
+  changes: RevisionObjectChange[] | null;
+  /**
+   * Field names of the signatures whose signed range already ended when this
+   * revision was appended. An observation about ordering, not a violation.
+   */
+  afterSignatures: (string | null)[];
 }
 
 /**

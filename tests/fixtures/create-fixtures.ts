@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   appendIncrementalUpdate,
+  appendObjectRevision,
   createSignedPdf,
   createTestIdentity,
   tamperSignedPdf,
@@ -23,6 +24,30 @@ async function main(): Promise<void> {
   await writeFile(join(outDir, 'signed.pdf'), signed);
   await writeFile(join(outDir, 'tampered.pdf'), tamperSignedPdf(signed));
   await writeFile(join(outDir, 'appended.pdf'), appendIncrementalUpdate(signed));
+
+  // Three well-formed incremental updates after signing, one per change kind:
+  // an object added, then rewritten, then freed (Issue #8 / UC-10).
+  const addedAfterSigning = appendObjectRevision(signed, {
+    objects: [
+      {
+        objectNumber: 8,
+        body: '<< /Type /Annot /Subtype /Widget /FT /Tx /T (Amount) /Rect [ 100 700 200 720 ] /V (1,000) >>',
+      },
+    ],
+  });
+  const rewrittenAfterSigning = appendObjectRevision(addedAfterSigning, {
+    objects: [
+      {
+        objectNumber: 8,
+        body: '<< /Type /Annot /Subtype /Widget /FT /Tx /T (Amount) /Rect [ 100 700 200 720 ] /V (9,000,000) >>',
+      },
+      { objectNumber: 9, body: '<< /Length 10 >>\nstream\nBT /F1 ET\nendstream' },
+    ],
+  });
+  await writeFile(
+    join(outDir, 'appended-objects.pdf'),
+    appendObjectRevision(rewrittenAfterSigning, { freed: [9] }),
+  );
 
   const certified = await createSignedPdf(identity, { docMdpPermission: 1 });
   await writeFile(join(outDir, 'certified-p1.pdf'), certified);

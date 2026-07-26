@@ -17,12 +17,14 @@ import type {
   IntegrityReport,
   PadesLevelReport,
   ParsedPdf,
+  RevisionObjectChange,
   SignatureField,
   SignatureVerificationReport,
   TrustResult,
 } from '../types.js';
 import { extractCmsArtifacts, verifyCms, verifyTimestampImprint } from './cms-verifier.js';
 import { coversEntireFile, extractSignedBytes } from './pdf-parser.js';
+import { diffRevisions } from './revision-diff.js';
 import {
   checkRevocation,
   evaluateTrust,
@@ -351,6 +353,77 @@ export function analyzeIntegrity(parsed: ParsedPdf): IntegrityReport {
     );
   }
 
+  // Issue #8 — which objects each incremental update wrote. Observation only:
+  // it refines "N bytes were appended" into "these objects were written", and
+  // deliberately leaves every verdict above untouched.
+  const diff = diffRevisions({
+    bytes: parsed.bytes,
+    signedRanges: signed.flatMap((sig) => {
+      const range = sig.byteRange;
+      return range?.length === 4
+        ? [{ fieldName: sig.fieldName, endOffset: range[2] + range[3] }]
+        : [];
+    }),
+  });
+
+  const lastSignedEnd =
+    last?.byteRange?.length === 4 ? last.byteRange[2] + last.byteRange[3] : null;
+  const objectChangesAfterLastSignature: RevisionObjectChange[] = [];
+  if (diff && lastSignedEnd !== null) {
+    for (const revision of diff.revisions) {
+      if (revision.xrefOffset < lastSignedEnd || !revision.changes) continue;
+      objectChangesAfterLastSignature.push(...revision.changes);
+    }
+  }
+
+  if (diff === null && parsed.revisionCount > 1) {
+    notes.push(
+      'The cross-reference chain could not be walked, so no object-level revision diff is ' +
+        'reported. Absence of a diff here means "not determined", not "nothing changed".',
+    );
+  } else if (diff?.truncated) {
+    notes.push(
+      'The cross-reference chain ended before reaching the original revision (damaged or ' +
+        'cyclic /Prev). The revisions listed are the ones that could be followed.',
+    );
+  }
+  if (diff?.newestSectionUnreadable) {
+    notes.push(
+      'The last "startxref" does not point at a parseable cross-reference section, so the chain ' +
+        'was entered from an older one. Whatever was appended last is therefore NOT represented ' +
+        'in the revision list below.',
+    );
+  }
+  if (diff?.linearized) {
+    notes.push(
+      'The file is linearised (ISO 32000-1 Annex F): its first-page and main cross-reference ' +
+        'sections belong to one save and were counted as one revision, not as an incremental update.',
+    );
+  }
+  if (diff && diff.revisions.length !== parsed.revisionCount) {
+    notes.push(
+      `The cross-reference chain yields ${diff.revisions.length} revision(s) while ${parsed.revisionCount} ` +
+        '"startxref" keyword(s) are present. The two counts differ legitimately in linearised files ' +
+        'and in files carrying a cross-reference section no chain points at.',
+    );
+  }
+  const truncatedRevisions = diff?.revisions.filter((r) => r.changesTruncated) ?? [];
+  if (truncatedRevisions.length > 0) {
+    notes.push(
+      `Revision(s) ${truncatedRevisions.map((r) => r.index).join(', ')} changed more objects than are ` +
+        'listed (see changeCount). A revision that rewrites nearly every object is a full save rather ' +
+        'than an incremental update.',
+    );
+  }
+  const contentChangesAfterSigning = objectChangesAfterLastSignature.filter((c) => !c.bookkeeping);
+  if (contentChangesAfterSigning.length > 0) {
+    notes.push(
+      `${contentChangesAfterSigning.length} object(s) other than cross-reference/object-stream ` +
+        'bookkeeping were written after the last signed range. Incremental updates are legal in PDF; ' +
+        'this identifies what to review, not that the document was tampered with.',
+    );
+  }
+
   return {
     fileSize: parsed.fileSize,
     revisionCount: parsed.revisionCount,
@@ -360,6 +433,8 @@ export function analyzeIntegrity(parsed: ParsedPdf): IntegrityReport {
     certification,
     lastSignatureCoversFile: lastCovers,
     hasDss: parsed.hasDss,
+    revisions: diff?.revisions ?? null,
+    objectChangesAfterLastSignature,
     notes,
   };
 }

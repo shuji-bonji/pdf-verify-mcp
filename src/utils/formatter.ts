@@ -8,6 +8,7 @@ import type {
   ConformanceReport,
   IntegrityReport,
   PadesLevelReport,
+  RevisionObjectChange,
   SignatureVerificationReport,
 } from '../types.js';
 
@@ -118,11 +119,57 @@ export function formatIntegrityReport(report: IntegrityReport): string {
       );
     }
   }
+  if (report.revisions && report.revisions.length > 1) {
+    lines.push('', '## Revisions (object-level)');
+    lines.push(
+      'Incremental updates are legal in PDF (ISO 32000-2 §7.5.6). The objects below say **what to review**, not that anything is wrong.',
+    );
+    for (const revision of report.revisions) {
+      const after =
+        revision.afterSignatures.length > 0
+          ? ` — appended after ${revision.afterSignatures
+              .map((name) => name ?? '(unnamed)')
+              .join(', ')}`
+          : '';
+      lines.push(
+        '',
+        `### Revision ${revision.index} (xref at ${revision.xrefOffset}, ${revision.xrefKind})${after}`,
+      );
+      if (revision.changes === null) {
+        lines.push('- Original revision — nothing older to compare against');
+        continue;
+      }
+      if (revision.changes.length === 0) {
+        lines.push('- No object changes declared');
+        continue;
+      }
+      for (const change of revision.changes) {
+        lines.push(`- ${formatObjectChange(change)}`);
+      }
+    }
+  }
+  if (report.objectChangesAfterLastSignature.length > 0) {
+    const content = report.objectChangesAfterLastSignature.filter((c) => !c.bookkeeping);
+    lines.push('', '## Objects written after the last signed range');
+    lines.push(
+      `- ${report.objectChangesAfterLastSignature.length} object(s), of which ${content.length} are not cross-reference/object-stream bookkeeping`,
+    );
+    for (const change of content) lines.push(`- ${formatObjectChange(change)}`);
+  }
   if (report.notes.length > 0) {
     lines.push('', '## Notes');
     for (const note of report.notes) lines.push(`- ${note}`);
   }
   return lines.join('\n');
+}
+
+function formatObjectChange(change: RevisionObjectChange): string {
+  const parts = [`obj ${change.objectNumber} ${change.generation}: ${change.change}`];
+  if (change.role) parts.push(change.role);
+  else if (change.inObjectStream) parts.push('inside an object stream (type not read)');
+  else parts.push('type not determined');
+  if (change.bookkeeping) parts.push('bookkeeping');
+  return parts.join(' — ');
 }
 
 interface PolicyReportForFormat {

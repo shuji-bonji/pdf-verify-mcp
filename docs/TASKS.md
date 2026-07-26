@@ -3,8 +3,8 @@
 | 項目 | 内容 |
 | --- | --- |
 | 作成日 | 2026-07-25 |
-| 最終更新 | 2026-07-25（**v0.8.0 = V-F3（#9）+ instructions**。V-F1 / V-D1 / V-F2 は未着手） |
-| 現状 | **v0.9.0**（2026-07-26・リリース待ち）= **V-P1 修正**（/Contents の padding 除去が DER 末尾の 0x00 を削り、約 1/256 の署名を「解析不能」と誤報告していた。DER ヘッダの長さで切り出すよう是正・600 検体中 4 件が該当し全て通過）+ **`validate_clauses` 追加**（ISO 32000 本体条文 = T1。判定は `@shuji-bonji/pdf-constraints@0.1.0` に委譲・exact pin・レポートに版を明記）。**7 ツール**。v0.8.0（2026-07-25）= V-F3（#9）で PAdES を観測として明示（`normativeBasis: 'T3'`）＋ **`instructions` 導入**。v0.7.1 = V-A1 / V-A2 の advisory 穴を封鎖（**verdict 不変**）。ツールは `verify_signatures` / `verify_integrity` / `detect_pades_level` / `identify_conformance` / `validate_conformance` / `validate_clauses` / `evaluate_policy`。veraPDF 委譲 + native サブセット（PDF/A 15 規則 / PDF/UA 12 規則）のハイブリッド |
+| 最終更新 | 2026-07-27（**v0.10.0 = V-F2（#8）オブジェクト単位差分**。V-F1 / V-D1 は未着手） |
+| 現状 | **v0.10.0**（2026-07-27）= **V-F2（#8）= `verify_integrity` にリビジョン間オブジェクト単位差分**（`revisions` / `objectChangesAfterLastSignature`。**verdict 不変**。ローカル MCP で実検体試用 PASS）。v0.9.0（2026-07-26）= **V-P1 修正**（/Contents の padding 除去が DER 末尾の 0x00 を削り、約 1/256 の署名を「解析不能」と誤報告していた。DER ヘッダの長さで切り出すよう是正・600 検体中 4 件が該当し全て通過）+ **`validate_clauses` 追加**（ISO 32000 本体条文 = T1。判定は `@shuji-bonji/pdf-constraints@0.1.0` に委譲・exact pin・レポートに版を明記）。**7 ツール**。v0.8.0（2026-07-25）= V-F3（#9）で PAdES を観測として明示（`normativeBasis: 'T3'`）＋ **`instructions` 導入**。v0.7.1 = V-A1 / V-A2 の advisory 穴を封鎖（**verdict 不変**）。ツールは `verify_signatures` / `verify_integrity` / `detect_pades_level` / `identify_conformance` / `validate_conformance` / `validate_clauses` / `evaluate_policy`。veraPDF 委譲 + native サブセット（PDF/A 15 規則 / PDF/UA 12 規則）のハイブリッド |
 | 基準 | `docs/PROJECT_PLAN.md`（v0.1 時点の計画。**現状と乖離あり**）／ `docs/family-standards-alignment.md`（family 共通規約への整合）／ `docs/FINDINGS-2026-07-20.md`（④ 実連携で発見した穴 2 件・解決済み）／ PDFfamily `specs/01-pdf-verify-mcp.md` |
 
 ## 番号規約
@@ -145,7 +145,39 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
   **M-1（PDF/UA flavour 追加・v0.6.0）の教訓を適用**: native の指摘が veraPDF の指摘と矛盾しないことを
   実検体で確認し、native では届かない項目も洗い出して記録する。
 
-- [ ] **V-F2. `verify_integrity` にリビジョン間のオブジェクト単位差分を追加**
+- [x] **V-F2. `verify_integrity` にリビジョン間のオブジェクト単位差分を追加**（**v0.10.0**・2026-07-27）
+
+  **実装**: `src/services/revision-diff.ts`（新規・pdf-lib 非依存）。生バイトで xref チェーンを歩く
+  （`startxref` → `/Prev`、classic table / xref stream / hybrid-reference の 3 形式 + PNG predictor 解除）。
+  `IntegrityReport` に `revisions` と `objectChangesAfterLastSignature` を追加。
+  型は**そのリビジョンの生バイトから**読む（pdf-lib は最終形しか見えない＋暗号化 PDF でも
+  辞書キーと名前は非暗号 = ISO 32000-1 §7.6.2）。ObjStm 内のオブジェクトは `inObjectStream: true` で型なし。
+
+  **verdict は不変**。`policy-engine.ts` が読むフィールドは変えていない（`evaluate_policy` の facts も未変更）。
+
+  **素朴に作ると嘘をつく 3 点**（実測で発見。対処済み）:
+
+  | # | 罠 | 実測 | 対処 |
+  | --- | --- | --- | --- |
+  | 1 | **線形化（Annex F）は 1 セーブで xref が 2 つ** | reader の `linearized.pdf` が 2 リビジョン・10 件の幻の追加 | 新しい方のオフセットが**古い方より小さい**ことで検出し 1 リビジョンに併合。実測で 1 リビジョンに是正 |
+  | 2 | **フルセーブは全オブジェクト書き換え** | `pdfreference1.7old.pdf` で **224,065 件** | 一覧を上限 200 に。`changeCount` に真値・**bookkeeping から先に落とす**。型読み取り自体も候補集合に限定（全件 peek で 45 秒超のタイムアウトを実測） |
+  | 3 | **歩けない ≠ 変更なし** | `startxref 0` を書く既存フィクスチャ `appended.pdf` | チェーン不可時は空配列でなく **`null`**。最後の `startxref` が壊れている場合は古い入口から入り、**「末尾は表現されていない」と明示** |
+
+  **実測**: 手元の 128 PDF（ISO 仕様書・生成フィクスチャ・暗号化・線形化）で **error 0 / null 1**（意図的に壊した `corrupted.pdf` のみ）。
+  `pdfnative-audit/out4/signed-then-annotated.pdf`（実検体）で **署名リビジョン（Sig / Widget / AcroForm）と
+  その後の注釈追記（Highlight + 参照するページ）を分離**できることを確認 = UC-10 の問いそのもの。
+
+  **実機試用で 1 件是正（2026-07-27）**: ISO 32000-2 本体（3 リビジョン・変更 1014 + 2010 件）で
+  **JSON 応答が 25,000 字上限を超えて構造の途中で切れた**。上限を 200 → **25 件/リビジョン**に下げ、
+  切るときの順位を **①型が読めたもの → ②ObjStm 内（番号しか分からない） → ③bookkeeping** の 3 段にした
+  （元は bookkeeping かどうかの 2 段で、番号だけの ObjStm エントリが枠を食い潰していた）。
+  再実測: 128 検体で最大 11 KB。**上限は「切ったこと」を `changesTruncated` と `changeCount` で必ず言う**ので
+  黙って落とすことにはならない。
+
+  **残**: reader [#20](https://github.com/shuji-bonji/pdf-reader-mcp/issues/20) と揃って UC-10 完遂。
+  リリース後は npx 公開版で検証（[[verify-published-package-by-npx]]）。
+
+  <details><summary>起票時の記述</summary>
       → **[Issue #8](https://github.com/shuji-bonji/pdf-verify-mcp/issues/8)（正典・本文は複製しない）**。
       family ギャップ **G-B**（`specs/12 §5`）・**UC-10** の前提。
       **V-A1（v0.7.1）の粗い前身を精緻化するもの** = 「署名後に N バイト足された」を
@@ -153,6 +185,7 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
       復号済み文書に対して動く必要がある（**`src/services/decrypt-document.ts`** の後段。
       同ディレクトリの `decryptor.ts` とは別物なので注意）。
       **G-A（reader [#20](https://github.com/shuji-bonji/pdf-reader-mcp/issues/20)）と対で、両方揃って UC-10 が完遂する**
+  </details>
 - [x] **V-F3. PAdES 判定結果に「規範根拠なし（T3・観測）」を明示**（**v0.8.0**・2026-07-25）
       → **[Issue #9](https://github.com/shuji-bonji/pdf-verify-mcp/issues/9)（正典）**。
       family ギャップ **G-C**・**UC-1** のレポート品質。ラベルは `documentation` だが
