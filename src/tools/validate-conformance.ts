@@ -19,7 +19,7 @@ const ValidateConformanceSchema = {
     .string()
     .optional()
     .describe(
-      'Flavour to validate against. PDF/A: "pdfa-1b", "pdfa-1a", "pdfa-2b", "pdfa-2u", "pdfa-3b", etc. PDF/UA: "pdfua-1", "pdfua-2". Omit to use the document\'s XMP declaration (PDF/A takes precedence when both are declared; falls back to pdfa-2b).',
+      'Flavour to validate against. PDF/A: "pdfa-1b", "pdfa-1a", "pdfa-2b", "pdfa-2u", "pdfa-3b", etc. PDF/A-4 takes no conformance level — use "pdfa-4", or "pdfa-4e" / "pdfa-4f" for the variants ("pdfa-4b" does not exist). PDF/UA: "pdfua-1", "pdfua-2". Omit to use the document\'s XMP declaration (PDF/A takes precedence when both are declared; falls back to pdfa-2b).',
     ),
   engine: z
     .nativeEnum(ValidationEngine)
@@ -57,7 +57,7 @@ Hybrid engine: when veraPDF is installed (PDF_VERIFY_VERAPDF env var or on PATH)
 Args:
   - file_path (string): Absolute path to a local PDF file
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
-  - flavour (string, optional): e.g. "pdfa-2b", "pdfua-1". Defaults to the XMP declaration (PDF/A wins when both are declared; fallback: pdfa-2b)
+  - flavour (string, optional): e.g. "pdfa-2b", "pdfa-4", "pdfa-4f", "pdfua-1". Defaults to the XMP declaration (PDF/A wins when both are declared; fallback: pdfa-2b). PDF/A-4 has no A/B/U level, so there is no "pdfa-4b"
   - engine ('auto' | 'verapdf' | 'native'): Engine selection (default: 'auto')
   - password (string, optional): Password for an encrypted PDF. PDF/UA validation decrypts the document first so structure rules see real structures; permission-encrypted PDFs (empty user password) are decrypted automatically
 

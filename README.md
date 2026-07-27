@@ -48,6 +48,8 @@ Supported SubFilters: `ETSI.CAdES.detached` (PAdES), `adbe.pkcs7.detached`, `ETS
 
 Native results are honest about their limits: violations mean definitively non-compliant; all-passed means "no violations in the checked subset" — never certification.
 
+PDF/A-4 (`pdfa-4`, `pdfa-4e`, `pdfa-4f`) is accepted. Note that **PDF/A-4 has no conformance level** — there is no `pdfa-4b`; `e` and `f` are variants. The native rules were written from ISO 19005-1/-2 and have not been checked against ISO 19005-4, so a PDF/A-4 report says outright that the native verdict ranks below veraPDF. Validate part 4 with veraPDF.
+
 ## ISO 32000 clause constraints (v0.9)
 
 `validate_clauses` covers different ground: the **body of the PDF specification**, not the PDF/A or PDF/UA profiles. A file can be judged COMPLIANT by veraPDF and still violate ISO 32000 — embedding a CFF font program under `/FontFile2` (Table 124) is a real example that surfaced only as a viewer warning.

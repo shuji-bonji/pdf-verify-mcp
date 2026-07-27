@@ -17,10 +17,24 @@ const CONTEXT = 'pdfa-validator';
 
 /** PDF/A flavour under validation */
 export interface PdfaFlavour {
-  /** 1 | 2 | 3 */
+  /** 1 | 2 | 3 | 4 */
   part: number;
-  /** 'A' | 'B' | 'U' | null (unknown) */
+  /**
+   * Parts 1-3: the conformance level 'A' | 'B' | 'U' (null = unknown).
+   * Part 4: PDF/A-4 has NO conformance level — this slot carries the variant
+   * 'E' (engineering) or 'F' (embedded files), and null means plain PDF/A-4.
+   *
+   * The two vocabularies share one field because they share one slot in the
+   * identification schema (pdfaid:conformance) and one position in veraPDF's
+   * profile ids (2b / 4e). A second field would have to be kept in sync with
+   * this one for no gain.
+   */
   conformance: string | null;
+}
+
+/** Which pdfaid:conformance values are meaningful for a given part */
+function allowedConformance(part: number): string[] {
+  return part === 4 ? ['E', 'F'] : ['A', 'B', 'U'];
 }
 
 export interface RuleResult {
@@ -206,10 +220,22 @@ const RULES: Rule[] = [
   },
   {
     ruleId: 'pdf-version',
-    clause: 'ISO 19005-1, 6.1.2 / 19005-2, 6.1.2',
-    description: 'PDF version shall be within the allowed range (A-1: ≤1.4, A-2/A-3: ≤1.7)',
+    clause: 'ISO 19005-1, 6.1.2 / 19005-2, 6.1.2 / 19005-4, 6.1',
+    description:
+      'PDF version shall be within the allowed range (A-1: ≤1.4, A-2/A-3: ≤1.7, A-4: 2.0)',
     check: (ctx) => {
       const version = Number.parseFloat(ctx.parsed.pdfVersion ?? '0');
+      // PDF/A-4 is built on ISO 32000-2, so it does not take a range: the file
+      // is a PDF 2.0 file or it is not one.
+      if (ctx.flavour.part === 4) {
+        const ok = version === 2.0;
+        return {
+          passed: ok,
+          detail: ok
+            ? null
+            : `Header version ${ctx.parsed.pdfVersion} is not 2.0 (PDF/A-4 is based on PDF 2.0)`,
+        };
+      }
       const limit = ctx.flavour.part === 1 ? 1.4 : 1.7;
       const ok = version > 0 && version <= limit;
       return {
@@ -235,7 +261,12 @@ const RULES: Rule[] = [
   {
     ruleId: 'output-intent',
     clause: 'ISO 19005-1, 6.2.2',
-    description: 'A PDF/A OutputIntent (GTS_PDFA1) shall be present',
+    description: 'A PDF/A OutputIntent (GTS_PDFA1) shall be present (PDF/A-1 to -3)',
+    // Whether PDF/A-4 requires an OutputIntent unconditionally is not something
+    // this family can read: ISO 19005-4 is outside the corpus (T2). Asserting
+    // the -1..-3 requirement for -4 would manufacture a failure out of a guess,
+    // so the question is left to the oracle (veraPDF) instead.
+    appliesToParts: [1, 2, 3],
     check: (ctx) => {
       const intents = ctx.doc.catalog.lookup(PDFName.of('OutputIntents'));
       if (intents instanceof PDFArray) {
@@ -364,14 +395,21 @@ const RULES: Rule[] = [
 /** Number of rules in the native PDF/A subset (keeps tool descriptions accurate) */
 export const PDFA_NATIVE_RULE_COUNT = RULES.length;
 
-/** Determine the flavour to validate: explicit request or the XMP declaration */
+/**
+ * Determine the flavour to validate: explicit request or the XMP declaration.
+ *
+ * Accepts "pdfa-1b" … "pdfa-3u" and, for PDF/A-4, "pdfa-4" / "pdfa-4e" /
+ * "pdfa-4f". Combinations that name no real flavour ("pdfa-4b", "pdfa-2e")
+ * are rejected here rather than handed to veraPDF as an unknown profile.
+ */
 export function resolveFlavour(parsed: ParsedPdf, requested?: string): PdfaFlavour | null {
   if (requested) {
-    const match = /^pdfa-([123])([abu])?$/i.exec(requested);
-    if (match) {
-      return { part: Number(match[1]), conformance: match[2]?.toUpperCase() ?? null };
-    }
-    return null;
+    const match = /^pdfa-([1234])([abuef])?$/i.exec(requested);
+    if (!match) return null;
+    const part = Number(match[1]);
+    const conformance = match[2]?.toUpperCase() ?? null;
+    if (conformance && !allowedConformance(part).includes(conformance)) return null;
+    return { part, conformance };
   }
   return extractPdfaId(parsed.xmpMetadata);
 }
@@ -407,12 +445,19 @@ export function validatePdfaNative(
     });
   }
 
+  const notes = [
+    `Native engine checks a SUBSET of ISO 19005 (${results.length} rules) — passing does not certify conformance. Install veraPDF for authoritative validation.`,
+  ];
+  if (flavour.part === 4) {
+    notes.push(
+      'PDF/A-4: these native rules were derived from ISO 19005-1/-2 and have NOT been checked against ISO 19005-4, which is outside the corpus of this family. Treat every native PDF/A-4 result as a hint that ranks below veraPDF, and validate with engine: "verapdf".',
+    );
+  }
+
   return {
     flavour,
     allCheckedRulesPassed: results.every((r) => r.passed),
     results,
-    notes: [
-      `Native engine checks a SUBSET of ISO 19005 (${results.length} rules) — passing does not certify conformance. Install veraPDF for authoritative validation.`,
-    ],
+    notes,
   };
 }

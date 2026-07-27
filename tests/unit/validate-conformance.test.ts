@@ -4,7 +4,7 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { ValidationEngine } from '../../src/constants.js';
-import { validateConformance } from '../../src/services/conformance-validation.js';
+import { validateConformance, veraFlavourId } from '../../src/services/conformance-validation.js';
 import { parsePdfBytes } from '../../src/services/pdf-parser.js';
 import { resolveFlavour } from '../../src/services/pdfa-validator.js';
 import { findVeraPdf, resetVeraPdfCache } from '../../src/services/verapdf.js';
@@ -29,6 +29,59 @@ describe('resolveFlavour', () => {
     const pdf = await createSignedPdf(identity, { xmp: { pdfaPart: '2', pdfaConformance: 'B' } });
     const parsed = await parsePdfBytes(pdf);
     expect(resolveFlavour(parsed)).toEqual({ part: 2, conformance: 'B' });
+  });
+
+  // M-9: PDF/A-4 takes no A/B/U level; E and F are variants, not levels.
+  it('parses the PDF/A-4 flavours', async () => {
+    const pdf = await createSignedPdf(identity);
+    const parsed = await parsePdfBytes(pdf);
+    expect(resolveFlavour(parsed, 'pdfa-4')).toEqual({ part: 4, conformance: null });
+    expect(resolveFlavour(parsed, 'pdfa-4e')).toEqual({ part: 4, conformance: 'E' });
+    expect(resolveFlavour(parsed, 'PDFA-4F')).toEqual({ part: 4, conformance: 'F' });
+  });
+
+  it('rejects level/variant combinations that name no real flavour', async () => {
+    const pdf = await createSignedPdf(identity);
+    const parsed = await parsePdfBytes(pdf);
+    expect(resolveFlavour(parsed, 'pdfa-4b')).toBeNull();
+    expect(resolveFlavour(parsed, 'pdfa-4a')).toBeNull();
+    expect(resolveFlavour(parsed, 'pdfa-2e')).toBeNull();
+    expect(resolveFlavour(parsed, 'pdfa-3f')).toBeNull();
+    expect(resolveFlavour(parsed, 'pdfa-5')).toBeNull();
+  });
+
+  it('reads a PDF/A-4f declaration, and drops a variant that does not fit the part', async () => {
+    const f = await createSignedPdf(identity, { xmp: { pdfaPart: '4', pdfaConformance: 'F' } });
+    expect(resolveFlavour(await parsePdfBytes(f))).toEqual({ part: 4, conformance: 'F' });
+
+    const plain4 = await createSignedPdf(identity, { xmp: { pdfaPart: '4' } });
+    expect(resolveFlavour(await parsePdfBytes(plain4))).toEqual({ part: 4, conformance: null });
+
+    // A declaration pairing part 4 with a level, or part 2 with a variant, is
+    // not a flavour anyone can validate — the stray token is dropped.
+    const bogus4 = await createSignedPdf(identity, {
+      xmp: { pdfaPart: '4', pdfaConformance: 'B' },
+    });
+    expect(resolveFlavour(await parsePdfBytes(bogus4))).toEqual({ part: 4, conformance: null });
+
+    const bogus2 = await createSignedPdf(identity, {
+      xmp: { pdfaPart: '2', pdfaConformance: 'F' },
+    });
+    expect(resolveFlavour(await parsePdfBytes(bogus2))).toEqual({ part: 2, conformance: null });
+  });
+});
+
+describe('veraFlavourId', () => {
+  it('maps parts 1-3 to level ids and defaults an absent level to b', () => {
+    expect(veraFlavourId({ part: 1, conformance: 'B' })).toBe('1b');
+    expect(veraFlavourId({ part: 2, conformance: 'U' })).toBe('2u');
+    expect(veraFlavourId({ part: 3, conformance: null })).toBe('3b');
+  });
+
+  it('never produces "4b" — PDF/A-4 profile ids are 4, 4e and 4f', () => {
+    expect(veraFlavourId({ part: 4, conformance: null })).toBe('4');
+    expect(veraFlavourId({ part: 4, conformance: 'E' })).toBe('4e');
+    expect(veraFlavourId({ part: 4, conformance: 'F' })).toBe('4f');
   });
 });
 
@@ -61,6 +114,23 @@ describe('validateConformance (native engine)', () => {
 
     const failedIds = report.violations.map((v) => v.ruleId);
     expect(failedIds).toContain('pdf-version');
+  });
+
+  it('flags PDF version against PDF/A-4 (1.7 is not 2.0)', async () => {
+    const pdf = await createSignedPdf(identity);
+    const parsed = await parsePdfBytes(pdf);
+    const report = await validateConformance(parsed, '', {
+      engine: ValidationEngine.NATIVE,
+      flavour: 'pdfa-4f',
+    });
+
+    expect(report.flavour).toBe('PDF/A-4f');
+    const failedIds = report.violations.map((v) => v.ruleId);
+    expect(failedIds).toContain('pdf-version');
+    // The OutputIntent requirement is a -1..-3 rule; whether -4 needs one is a
+    // question for veraPDF, so the native engine must not decide it.
+    expect(failedIds).not.toContain('output-intent');
+    expect(report.notes.join(' ')).toContain('ISO 19005-4');
   });
 
   it('falls back to PDF/A-2b with a note when nothing is declared', async () => {

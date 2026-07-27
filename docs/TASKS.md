@@ -3,8 +3,8 @@
 | 項目 | 内容 |
 | --- | --- |
 | 作成日 | 2026-07-25 |
-| 最終更新 | 2026-07-27（**v0.10.0 = V-F2（#8）オブジェクト単位差分**。V-F1 / V-D1 は未着手） |
-| 現状 | **v0.10.0**（2026-07-27）= **V-F2（#8）= `verify_integrity` にリビジョン間オブジェクト単位差分**（`revisions` / `objectChangesAfterLastSignature`。**verdict 不変**。ローカル MCP で実検体試用 PASS）。v0.9.0（2026-07-26）= **V-P1 修正**（/Contents の padding 除去が DER 末尾の 0x00 を削り、約 1/256 の署名を「解析不能」と誤報告していた。DER ヘッダの長さで切り出すよう是正・600 検体中 4 件が該当し全て通過）+ **`validate_clauses` 追加**（ISO 32000 本体条文 = T1。判定は `@shuji-bonji/pdf-constraints@0.1.0` に委譲・exact pin・レポートに版を明記）。**7 ツール**。v0.8.0（2026-07-25）= V-F3（#9）で PAdES を観測として明示（`normativeBasis: 'T3'`）＋ **`instructions` 導入**。v0.7.1 = V-A1 / V-A2 の advisory 穴を封鎖（**verdict 不変**）。ツールは `verify_signatures` / `verify_integrity` / `detect_pades_level` / `identify_conformance` / `validate_conformance` / `validate_clauses` / `evaluate_policy`。veraPDF 委譲 + native サブセット（PDF/A 15 規則 / PDF/UA 12 規則）のハイブリッド |
+| 最終更新 | 2026-07-27（**v0.11.0 = V-F1（M-9）PDF/A-4 flavour**。v0.10.0（V-F2 = オブジェクト単位差分）は**公開済み**。V-D1 は未着手） |
+| 現状 | **v0.11.0**（2026-07-27・リリース待ち）= **V-F1（M-9）= `validate_conformance` に PDF/A-4（`pdfa-4` / `pdfa-4e` / `pdfa-4f`）**。実 veraPDF 1.30.0 で 109 規則を回すことを実測（`pdfa-4b` は拒否）。**v0.10.0**（2026-07-27・**公開済み**）= **V-F2（#8）= `verify_integrity` にリビジョン間オブジェクト単位差分**（`revisions` / `objectChangesAfterLastSignature`。**verdict 不変**。ローカル MCP で実検体試用 PASS）。v0.9.0（2026-07-26）= **V-P1 修正**（/Contents の padding 除去が DER 末尾の 0x00 を削り、約 1/256 の署名を「解析不能」と誤報告していた。DER ヘッダの長さで切り出すよう是正・600 検体中 4 件が該当し全て通過）+ **`validate_clauses` 追加**（ISO 32000 本体条文 = T1。判定は `@shuji-bonji/pdf-constraints@0.1.0` に委譲・exact pin・レポートに版を明記）。**7 ツール**。v0.8.0（2026-07-25）= V-F3（#9）で PAdES を観測として明示（`normativeBasis: 'T3'`）＋ **`instructions` 導入**。v0.7.1 = V-A1 / V-A2 の advisory 穴を封鎖（**verdict 不変**）。ツールは `verify_signatures` / `verify_integrity` / `detect_pades_level` / `identify_conformance` / `validate_conformance` / `validate_clauses` / `evaluate_policy`。veraPDF 委譲 + native サブセット（PDF/A 15 規則 / PDF/UA 12 規則）のハイブリッド |
 | 基準 | `docs/PROJECT_PLAN.md`（v0.1 時点の計画。**現状と乖離あり**）／ `docs/family-standards-alignment.md`（family 共通規約への整合）／ `docs/FINDINGS-2026-07-20.md`（④ 実連携で発見した穴 2 件・解決済み）／ PDFfamily `specs/01-pdf-verify-mcp.md` |
 
 ## 番号規約
@@ -95,24 +95,91 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
 
 ## B. Feature（V-F\*）
 
-- [ ] **V-F1. `validate_conformance` に PDF/A-4 flavour を追加**（2026-07-25 起票）
+- [x] **V-F1. `validate_conformance` に PDF/A-4 flavour を追加**（2026-07-25 起票・**v0.11.0**・2026-07-27）
       **writer 側の依頼番号は M-9。writer B-20（PDF/A-4 正規化）の前提タスク。**
       ロードマップ: `Document-Note/mcps/PDFfamily/specs/16-pdfa4-roadmap.md` 第一段階 §1。
 
   **✅ 一次情報（2026-07-25 実測）**: `validate_conformance(flavour: "pdfa-4")` → **`INVALID_FLAVOUR`**。
   **family の窓口が閉じている**ため、writer B-20 の `write → validate → 直す` ループが**そもそも回らない**。
 
-  > **⚠️ 二次情報（未実測・要検証）**
-  > 内容: veraPDF は **1.20** で PDF/A-4（core / Level F / Level E）を実装し、flavour コードは
-  > **`4` / `4e` / `4f`**。**PDF/A-4 は conformance レベルを持たず `4b` は存在しない**（`4e` = Engineering / `4f` = file attachments）。
-  > 情報源: veraPDF 公式ドキュメント・リリースノート（`docs.verapdf.org/cli/validation/`・`verapdf.org/news/`）
-  > 信頼度: 高（一次配布元）だが **ホスト実機では未確認**。ISO 19005-4 はコーパス外（**T2**）なので条文でも裏を取れない。
-  > **着手時に `verapdf --version` と `--flavour` の受理値を実測して、この節を一次情報に書き換えること。**
+  ### 実装（2026-07-27・**v0.11.0**）
 
-  **着手条件**: ホストの `verapdf --version` ≧ **1.20**（上記の閾値は二次情報。**実測で確定させる**）。
-  更新する場合は **UC-2（PDF/UA-1 = 106/106）と UC-4（PDF/A-3b = 143/146）の回帰確認込み**で行う。
-  実務上のリスクは低い（閾値が誤っていても `INVALID_FLAVOUR` 相当で即座に判明する）が、
-  **「まず veraPDF を更新する」という手順の前提が崩れる**ため印を付けている。
+  > **当初 v0.10.0 に同乗させるつもりだったが、0.10.0 は既に npm に公開済みだった**
+  > （公開版の `gitHead` は V-F2 のコミット = M-9 の 1 つ前）。公開済みの版に後から
+  > 中身を足すことはできないので **0.11.0 として切り出した**。CHANGELOG も分けてある。
+
+  **決定①: `e` / `f` は `conformance` に相乗りさせる。** 別フィールドにしない。
+  理由は「同じ 1 スロットだから」— `pdfaid:conformance` も veraPDF の profile id（`2b` / `4e`）も、
+  レベルと variant を同じ位置に置く。フィールドを分けると 2 つを同期させる責務が生まれるだけで、
+  `flavourLabel()` は `PDF/A-4` / `PDF/A-4e` / `PDF/A-4f` を無改修で出す。
+  **代わりに part ごとの語彙を関数 1 つに閉じる**（`allowedConformance(part)`）。
+
+  | # | 箇所 | 変更後 |
+  | --- | --- | --- |
+  | 1 | `resolveFlavour()` | `/^pdfa-([1234])([abuef])?$/i` + part ごとの語彙検査。**`pdfa-4b` / `pdfa-2e` は `null`（= `INVALID_FLAVOUR`）** |
+  | 2 | `veraFlavourId()` | part 4 は `4` / `4e` / `4f`。**`?? 'B'` の既定は part 1-3 のみに適用**（`4b` を作らない） |
+  | 3 | `pdf-version` 規則 | part 4 は範囲ではなく **`=== 2.0`**（PDF/A-4 は ISO 32000-2 基盤なので「上限」ではない） |
+  | 4 | `output-intent` 規則 | **`appliesToParts: [1,2,3]`**。-4 で必須かは条文が引けない（T2）⇒ **推測で fail を作らずオラクルに委ねる** |
+  | 5 | `extractPdfaId()` | `[ABUEFabuef]` を受理しつつ **part 4 = E/F・part 1-3 = A/B/U 以外は落とす**（part 2 + `F` のような宣言を veraPDF に渡さない） |
+  | 6 | `notes`（part 4 のとき） | 「native 規則は ISO 19005-1/-2 由来で **-4 で検証していない**。veraPDF に劣後する参考値」 |
+
+  **`no-transparency` / `no-embedded-files` は変更不要だった**（起票時の見込みと違う）。
+  どちらも `appliesToParts: [1]` で -4 に届いていないため、-4 が透明性・添付を許すことは
+  現状の規則と矛盾しない。**「-4 で緩む」規則を緩める必要は無く、緩めるべきは -4 に効いていた
+  `output-intent` の方だった**。
+
+  **`pdfaid:rev` の検査は入れていない。** -4 が `rev` を要求するという情報は二次情報のみで、
+  条文が引けない状態で native 規則にすると**誤 fail を製造する**。→ 下記「T2 残件」に送る。
+
+  ### 受け入れ実測（2026-07-27 ホスト・dist 直叩き）
+
+  `npm test` **113 passed / 13 files**、`npm run check` 緑（`check:fix` で test の整形 1 件）。
+  実 veraPDF を通した結果（検体 = `tests/fixtures/generated/pdfa-declared.pdf`）:
+
+  | flavour | engine | label | 結果 | 最初の違反 |
+  | --- | --- | --- | --- | --- |
+  | `pdfa-4` | verapdf | PDF/A-4 | 102/**109** | `ISO 19005-4:2020 6.1.3-1` |
+  | `pdfa-4e` | verapdf | PDF/A-4e | 102/**109** | `ISO 19005-4:2020 6.1.2-1` |
+  | `pdfa-4f` | verapdf | PDF/A-4f | 101/**109** | `ISO 19005-4:2020 6.7.3-2` |
+  | `pdfa-4b` | — | — | **`INVALID_FLAVOUR`**（拒否） | — |
+
+  **窓口が開いたことの証拠は規則 ID の側にある** — `ISO 19005-4:2020` が返ってきている以上、
+  veraPDF は確かに -4 の profile を回している（-3b は `ISO 19005-3:2012`）。
+  **規則数は -4 = 109、-3b = 146**。-4f だけ 1 件多く落ちる（`6.7.3-2`）＝ 3 profile は別物として動いている。
+  `compliant=false` は検体（PDF/A-2 用のフィクスチャ）の性質であって -4 対応の失敗ではない。
+
+  **回帰**: UC-2 = `pdfua-1` で **106/106 COMPLIANT を維持**。
+
+  > **⚠️ UC-4 は本当の意味では測れていない。** 上記で `pdfa-3b` に使ったのは `pdfnative-audit/out4/`
+  > の検体（145/146）で、**B-8 の受け入れ値 146/146 を出した writer `ensure_pdfa` の出力ではない**
+  > （後者はサンドボックス上に残っていない）。今回言えるのは「**3b profile が従来どおり 146 規則で起動した**」
+  > までで、146/146 の再現ではない。**parts 1-3 の経路はコード上 1 行も変わっていない**
+  > （`resolveFlavour` の語彙検査・`veraFlavourId` の既定・`pdf-version` の分岐・`output-intent` の
+  > `appliesToParts: [1,2,3]` は、いずれも part 4 以外では従前と同一の枝を通る）が、
+  > **B-20 着手時に `ensure_pdfa` 出力で 146/146 を取り直すこと**。
+
+  ### T2 残件（第二段階 = ISO 19005-4 購入後に条文で当てる）
+
+  | # | 項目 | 現状の扱い | 条文で確かめること |
+  | --- | --- | --- | --- |
+  | T2-1 | OutputIntent の必須性 | -4 では native 規則を**適用しない** | -4 が無条件に要求するのか、色空間の使用が条件なのか |
+  | T2-2 | `pdfaid:rev` | **検査しない** | -4 の識別に `rev`（発行年）が必須か。必須なら native 規則を追加する |
+  | T2-3 | `e` / `f` の分岐条件 | 文字列として受けるだけ | -4e / -4f を名乗れる条件（3D・添付の種別） |
+  | T2-4 | PDF 版数 | `=== 2.0` と断定 | -4 が 2.0 のみか、以降の 2.x を許すか |
+  | T2-5 | native 15 規則の残り | -1/-2 由来のまま -4 に適用 | -4 で消えた/変わった要件が無いか（LZW・暗号化・アクション） |
+
+  **✅ 一次情報（2026-07-27 ホスト実測・`verapdf --version` / `verapdf -l`）**
+
+  ```
+  veraPDF 1.30.0   Built: Wed Jun 03 13:47:00 JST 2026
+    ... 3u - PDF/A-3u / 4 - PDF/A-4 / 4f - PDF/A-4f / 4e - PDF/A-4e / ua1 / ua2 / wt1r / wt1a
+  ```
+
+  **着手条件（≧ 1.20）は既に満たしていた** — veraPDF の更新は不要で、UC-2 / UC-4 の回帰も
+  「更新に伴う回帰」としては発生しない（**flavour 追加そのものの回帰確認は別途必要**）。
+  `4` / `4e` / `4f` の 3 profile が実在し、**`4b` は一覧に無い**ことも実機で確認済み
+  （起票時の二次情報 = veraPDF ドキュメントは正しかった。ISO 19005-4 が **T2** であることは変わらない —
+  実測できたのは「veraPDF に profile がある」ことだけで、条文の内容ではない）。
 
   ### 要改修 3 箇所
 

@@ -20,6 +20,13 @@ function matchXmp(xmp: string, patterns: RegExp[]): string | null {
  * Extract the declared PDF/A identification (pdfaid:part / pdfaid:conformance)
  * from XMP metadata. Handles both the attribute and the element form. Shared
  * by conformance identification and PDF/A flavour resolution.
+ *
+ * pdfaid:conformance carries the conformance level A / B / U for parts 1-3 and
+ * the variant E / F for part 4 (PDF/A-4 itself has no conformance level, so the
+ * property is absent for plain PDF/A-4). The two vocabularies are kept apart:
+ * a declaration pairing part 2 with "F", or part 4 with "B", is not a flavour
+ * this validator can act on, so the variant is dropped rather than passed on to
+ * veraPDF as a nonexistent profile id.
  */
 export function extractPdfaId(
   xmp: string | null | undefined,
@@ -30,11 +37,17 @@ export function extractPdfaId(
     /<pdfaid:part>\s*(\d+)\s*<\/pdfaid:part>/,
   ]);
   if (part === null) return null;
-  const conformance = matchXmp(xmp, [
-    /pdfaid:conformance\s*=\s*["']([ABUabu])["']/,
-    /<pdfaid:conformance>\s*([ABUabu])\s*<\/pdfaid:conformance>/,
+  const raw = matchXmp(xmp, [
+    /pdfaid:conformance\s*=\s*["']([ABUEFabuef])["']/,
+    /<pdfaid:conformance>\s*([ABUEFabuef])\s*<\/pdfaid:conformance>/,
   ]);
-  return { part: Number(part), conformance: conformance ? conformance.toUpperCase() : null };
+  const partNumber = Number(part);
+  const upper = raw ? raw.toUpperCase() : null;
+  const allowed = partNumber === 4 ? ['E', 'F'] : ['A', 'B', 'U'];
+  return {
+    part: partNumber,
+    conformance: upper && allowed.includes(upper) ? upper : null,
+  };
 }
 
 /**

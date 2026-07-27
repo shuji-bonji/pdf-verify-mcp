@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0] - 2026-07-27
+
+### Added
+
+- **PDF/A-4 can now be asked for (M-9).** `validate_conformance(flavour: "pdfa-4")` used to come
+  back `INVALID_FLAVOUR`: the flavour parser accepted parts 1-3 only, so the family had no way
+  to put a question about the newest part of ISO 19005 to veraPDF at all. `pdfa-4`, `pdfa-4e`
+  and `pdfa-4f` are now accepted and mapped to veraPDF's profile ids `4` / `4e` / `4f`.
+
+  The trap here is that **PDF/A-4 has no conformance level.** `4b` does not exist, and the old
+  code defaulted an absent level to `b` — applied to part 4 that would have sent veraPDF a
+  profile id no profile answers to. `E` and `F` are *variants*, not levels, and they are carried
+  in the same field because they occupy the same slot in both places that name them: the
+  `pdfaid:conformance` property and the veraPDF profile id. Combinations that name nothing real
+  (`pdfa-4b`, `pdfa-2e`) are rejected here rather than passed downstream, and an XMP declaration
+  that pairs part 4 with `B`, or part 2 with `F`, has the stray token dropped.
+
+  Two native rules move, and **only two** — the native rule set was written from ISO 19005-1/-2,
+  and ISO 19005-4 is outside this family's corpus (T2), so anything not visible from PDF 2.0
+  itself is left to the oracle rather than guessed at:
+
+  - `pdf-version` takes no range for part 4. PDF/A-4 is built on ISO 32000-2, so the file either
+    carries a 2.0 header or it does not.
+  - `output-intent` no longer applies to part 4. Whether -4 requires one unconditionally cannot
+    be read from any text on hand, and asserting the -1..-3 requirement would have manufactured
+    a failure out of a guess.
+
+  Every native PDF/A-4 result now carries a note saying it ranks below veraPDF. Native rules
+  passing on a PDF/A-4 file means less here than it does for the older parts, and the report
+  says so rather than leaving the reader to know it.
+
+  Measured against veraPDF 1.30.0: `pdfa-4` and `pdfa-4e` check 109 rules, `pdfa-4f` fails one
+  more than either, and the violations come back with `ISO 19005-4:2020` rule ids — which is the
+  evidence that the -4 profile is the one running, rather than a 1.7-era profile answering to a
+  new name. `pdfa-4b` is still refused. PDF/UA-1 is unmoved at 106/106.
+
+  Note on what this does *not* change: PDF/A-4 remains **T2**. veraPDF having a profile for it is
+  not the same as this family being able to read ISO 19005-4, so a -4 result is still "veraPDF
+  judged this", never "conforms to ISO 19005-4".
+
 ## [0.10.0] - 2026-07-27
 
 ### Added

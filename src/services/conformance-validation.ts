@@ -62,7 +62,18 @@ function flavourLabel(flavour: PdfaFlavour): string {
   return `PDF/A-${flavour.part}${flavour.conformance ? flavour.conformance.toLowerCase() : ''}`;
 }
 
-function veraFlavourId(flavour: PdfaFlavour): string {
+/**
+ * veraPDF profile ids: 1a…3u for parts 1-3, and 4 / 4e / 4f for part 4.
+ * PDF/A-4 has no conformance level, so "4b" must never be produced — defaulting
+ * an absent level to B is only right for the older parts.
+ *
+ * Exported for tests: this mapping is the one place where a wrong id turns into
+ * an unknown-profile error from veraPDF rather than a validation result.
+ */
+export function veraFlavourId(flavour: PdfaFlavour): string {
+  if (flavour.part === 4) {
+    return `4${flavour.conformance ? flavour.conformance.toLowerCase() : ''}`;
+  }
   return `${flavour.part}${(flavour.conformance ?? 'B').toLowerCase()}`;
 }
 
@@ -82,7 +93,7 @@ function isPdfuaRequest(parsed: ParsedPdf, requested?: string): boolean {
 }
 
 export interface ValidateConformanceOptions {
-  /** e.g. 'pdfa-1b', 'pdfa-2b', 'pdfa-3b', 'pdfua-1', 'pdfua-2'. Omit to use the XMP declaration. */
+  /** e.g. 'pdfa-1b', 'pdfa-2b', 'pdfa-3b', 'pdfa-4', 'pdfa-4f', 'pdfua-1', 'pdfua-2'. Omit to use the XMP declaration. */
   flavour?: string;
   engine?: ValidationEngine;
   /**
@@ -126,7 +137,7 @@ export async function validateConformance(
   let flavour = resolveFlavour(parsed, options.flavour);
   if (options.flavour && !flavour) {
     throw new PdfVerifyError(
-      `Invalid flavour "${options.flavour}" (expected e.g. "pdfa-1b", "pdfa-2b", "pdfa-3b", "pdfua-1")`,
+      `Invalid flavour "${options.flavour}" (expected e.g. "pdfa-1b", "pdfa-2b", "pdfa-3b", "pdfa-4", "pdfa-4e", "pdfa-4f", "pdfua-1"; PDF/A-4 has no A/B/U level, so "pdfa-4b" is not a flavour)`,
       'INVALID_FLAVOUR',
     );
   }
