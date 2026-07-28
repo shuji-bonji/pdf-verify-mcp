@@ -50,10 +50,14 @@ Context line: the clause is real, but the industry deviates from it on purpose (
 QuadPoints winding is the standing example). Report the context with the failure — dropping it
 turns a true statement into a misleading one.
 
-Two more limits that get forgotten:
+Three more limits that get forgotten:
   - Trust. A "valid" verdict without trust_anchors means the cryptography checks out, NOT that
     the signer is who they claim. trust: not_evaluated is reported for exactly this reason.
   - Revocation. If it could not be checked, "not revoked" cannot be claimed either.
+  - Non-execution. validate_conformance falls back to a native subset when veraPDF is absent or
+    unusable, and says so in authoritativeValidation.performed = false with the reason. A subset
+    result is a weaker claim, not a lighter version of the same one: carry the non-execution into
+    the report. Omitting it turns "nothing could be disproved" into a pass nobody granted.
 
 evaluate_policy returns a deterministic verdict (trust_and_use / use_with_caution /
 human_review_required / reject) from a rule engine over the facts — same facts and profile give

@@ -319,6 +319,16 @@ export function evaluatePolicy(facts: PolicyFacts, profileId: PolicyProfileId): 
       `${facts.conformance.flavour} validation found violations (engine: ${facts.conformance.engine}) — not ideal as a long-term preservation format`,
     );
   }
+  // The archival check ran, but not with the validator that can settle it. This
+  // never moves the verdict (the subset found nothing to disprove, which is all
+  // it can ever say) — it stops "no violations detected" from being read as an
+  // archival pass when the authoritative validator never spoke.
+  if (facts.conformance && !facts.conformance.authoritativeValidation.performed) {
+    advisories.push(
+      `${facts.conformance.flavour} was checked with the native rule subset only — ${facts.conformance.authoritativeValidation.detail} ` +
+        'The subset can disprove conformance but cannot certify it, so long-term preservation suitability is UNDETERMINED here, not confirmed',
+    );
+  }
   if (facts.integrity.certification?.laterChangesAppearLtvOnly) {
     advisories.push(
       'Changes after certification appear to be DSS/document-timestamp updates (permitted by ISO 32000-2 §12.8.2.2); object-level confirmation was not performed',

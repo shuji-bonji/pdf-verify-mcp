@@ -61,6 +61,8 @@ Args:
   - engine ('auto' | 'verapdf' | 'native'): Engine selection (default: 'auto')
   - password (string, optional): Password for an encrypted PDF. PDF/UA validation decrypts the document first so structure rules see real structures; permission-encrypted PDFs (empty user password) are decrypted automatically
 
+When veraPDF does not run, the report says so before the numbers: authoritativeValidation.performed is false and names the reason ("not_installed", "configured_path_unusable" when PDF_VERIFY_VERAPDF points at something that is not executable, or "native_engine_requested"). A configured-but-unusable path is never silently replaced by another executable — with engine: "verapdf" it errors as VERAPDF_NOT_AVAILABLE.
+
 Returns:
   Per-rule results with ISO clause references. compliant is true/false for veraPDF; for the native engine, false means definitive violations were found and null means "no violations in the checked subset" (NOT certification). PDF/UA native violations carry a severity: only 'error' rules can prove non-conformance, 'warning' rules need human review. For an encrypted PDF that cannot be decrypted, structure-dependent PDF/UA rules are reported in skippedRules (not checked) rather than as violations.
 

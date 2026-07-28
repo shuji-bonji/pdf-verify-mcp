@@ -43,24 +43,75 @@ export interface VeraPdfReport {
   violations: VeraPdfViolation[];
 }
 
-let cachedPath: string | null | undefined;
+/**
+ * Where the executable came from. Recorded because "which veraPDF ran" is part
+ * of the provenance of a verdict: the same env var pointing at a different
+ * build produces a different rule count.
+ */
+export type VeraPdfSource = 'env' | 'path' | 'well-known';
 
-/** Locate the veraPDF executable (env var first, then PATH) */
-export async function findVeraPdf(): Promise<string | null> {
-  if (cachedPath !== undefined) return cachedPath;
+/**
+ * The result of looking for veraPDF.
+ *
+ * `configured_path_unusable` is kept distinct from `not_installed` on purpose.
+ * A stale `PDF_VERIFY_VERAPDF` is a *misconfiguration* — the operator asked for
+ * a specific validator and it is not there — whereas `not_installed` is simply
+ * an environment without veraPDF. Collapsing the two hides the mistake, and
+ * silently falling through to another binary would be worse still: the verdict
+ * would then come from a validator nobody chose.
+ */
+export type VeraPdfAvailability =
+  | { available: true; path: string; source: VeraPdfSource }
+  | { available: false; reason: 'not_installed' }
+  | {
+      available: false;
+      reason: 'configured_path_unusable';
+      configuredPath: string;
+      detail: string;
+    };
+
+let cachedAvailability: VeraPdfAvailability | undefined;
+
+/**
+ * Locate the veraPDF executable (env var first, then PATH, then well-known
+ * locations) and report *why* when it cannot be used.
+ *
+ * The env var is checked for executability like every other candidate. It used
+ * to be trusted blindly, so a stale path was accepted as found and only failed
+ * later inside execFile — surfacing as "veraPDF execution failed" instead of
+ * "the validator you configured is not there". That is the failure mode this
+ * function exists to prevent.
+ */
+export async function resolveVeraPdf(): Promise<VeraPdfAvailability> {
+  if (cachedAvailability !== undefined) return cachedAvailability;
 
   const envPath = process.env[VERAPDF_ENV];
   if (envPath) {
-    cachedPath = envPath;
-    return cachedPath;
+    try {
+      await accessAsync(envPath, constants.X_OK);
+      cachedAvailability = { available: true, path: envPath, source: 'env' };
+    } catch (error) {
+      // Deliberately NOT falling through to PATH: an explicit setting that is
+      // wrong must surface, not be papered over by a different executable.
+      cachedAvailability = {
+        available: false,
+        reason: 'configured_path_unusable',
+        configuredPath: envPath,
+        detail:
+          (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'no such file' : 'not executable',
+      };
+      logger.debug(CONTEXT, `${VERAPDF_ENV}=${envPath} is not executable`);
+    }
+    return cachedAvailability;
   }
+
   try {
     const which = process.platform === 'win32' ? 'where' : 'which';
     const { stdout } = await execFileAsync(which, ['verapdf'], { timeout: 5000 });
     const found = stdout.split('\n')[0]?.trim();
     if (found) {
-      cachedPath = found;
-      return cachedPath;
+      cachedAvailability = { available: true, path: found, source: 'path' };
+      return cachedAvailability;
     }
   } catch {
     // fall through to well-known locations
@@ -69,20 +120,26 @@ export async function findVeraPdf(): Promise<string | null> {
   for (const candidate of WELL_KNOWN_PATHS) {
     try {
       await accessAsync(candidate, constants.X_OK);
-      cachedPath = candidate;
       logger.debug(CONTEXT, `veraPDF found at well-known path: ${candidate}`);
-      return cachedPath;
+      cachedAvailability = { available: true, path: candidate, source: 'well-known' };
+      return cachedAvailability;
     } catch {
       // try next
     }
   }
-  cachedPath = null;
-  return cachedPath;
+  cachedAvailability = { available: false, reason: 'not_installed' };
+  return cachedAvailability;
 }
 
-/** Reset the cached executable path (for tests) */
+/** Locate the veraPDF executable, or null when it cannot be used. */
+export async function findVeraPdf(): Promise<string | null> {
+  const availability = await resolveVeraPdf();
+  return availability.available ? availability.path : null;
+}
+
+/** Reset the cached lookup (for tests) */
 export function resetVeraPdfCache(): void {
-  cachedPath = undefined;
+  cachedAvailability = undefined;
 }
 
 interface VeraPdfJsonRuleSummary {

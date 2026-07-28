@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0] - 2026-07-29
+
+### Fixed
+
+- **A configured-but-unusable veraPDF is no longer treated as found (V-A3).** `PDF_VERIFY_VERAPDF`
+  was accepted without checking that it points at something executable, while every other
+  candidate location was checked with `access(X_OK)`. A stale path — the ordinary consequence of
+  moving or upgrading veraPDF — therefore passed the lookup and only failed later inside
+  `execFile`, so `validate_conformance` returned `veraPDF execution failed: spawn … ENOENT` and
+  no report at all. The honest answer is "the validator you configured is not there, and nothing
+  authoritative was run"; that is what it says now.
+
+  A wrong setting is **not** silently replaced by another executable found on PATH. A verdict
+  from a validator nobody chose is worse than no verdict: with `engine: "auto"` the report falls
+  back to the native subset and states the non-execution, and with `engine: "verapdf"` it fails
+  with the new code **`VERAPDF_NOT_AVAILABLE`** (`VERAPDF_NOT_FOUND` still means "not installed
+  anywhere").
+
+  Found by the family's boundary eval (`Document-Note/mcps/PDFfamily/evals/boundary`), whose E-6
+  case could never be scored because the fallback it was written to observe did not exist.
+
+### Added
+
+- **`validate_conformance` reports whether the authoritative validation actually ran.** The
+  report carries `authoritativeValidation`: `{ performed: true, validator, path }`, or
+  `{ performed: false, reason, detail }` with `reason` one of `not_installed`,
+  `configured_path_unusable` or `native_engine_requested`. In markdown it appears **above** the
+  rule counts, not in the notes at the bottom — a reader who meets "13 checked, 13 passed" first
+  has already formed a verdict by the time a footnote says veraPDF never spoke.
+
+  `engine: "native"` said this implicitly before. Implicitly is the problem: a subset result is a
+  weaker claim than a veraPDF result, not a lighter version of the same one, and "no violations
+  detected" reads as a pass to anyone who does not already know the difference.
+
+- **`evaluate_policy` carries the non-execution into its advisories.** When the archival check
+  ran without veraPDF, an advisory says long-term preservation suitability is undetermined rather
+  than confirmed. **The verdict is unchanged** — advisories never move it (this is the same shape
+  as the V-A1 / V-A2 fixes in 0.7.1).
+
 ## [0.12.0] - 2026-07-28
 
 ### Added

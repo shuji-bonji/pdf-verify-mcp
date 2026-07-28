@@ -3,8 +3,8 @@
 | 項目 | 内容 |
 | --- | --- |
 | 作成日 | 2026-07-25 |
-| 最終更新 | 2026-07-28（**v0.12.0 候補 = 第 3 ドメイン（注釈）+ Context 行**。v0.11.0 / v0.10.0 は**公開済み**。V-D1 は未着手） |
-| 現状 | **v0.12.0**（2026-07-28・**ホストのテストと publish 待ち**）= **`validate_clauses` が第 3 ドメイン「注釈」（CT-ANNOT-1〜15・ISO 32000-2 §12.5）を持つ**（`@shuji-bonji/pdf-constraints` の pin を **0.1.0 → 0.3.0**）＋ **failure の Context 行**（制約が持つ文脈をレポートまで運ぶ。CT-ANNOT-9 = QuadPoints の反時計回りは業界がほぼ一様に逸脱しているため、文脈なしでは欠陥として誤読される）。**ドメイン一覧はパッケージから読むので `domains` と description は自動追随**。**⚠️ 手順の順序**: constraints 0.3.0 を publish → verify で `npm install` → test。**v0.11.0**（2026-07-27・公開済み）= **V-F1（M-9）= `validate_conformance` に PDF/A-4（`pdfa-4` / `pdfa-4e` / `pdfa-4f`）**。実 veraPDF 1.30.0 で 109 規則を回すことを実測（`pdfa-4b` は拒否）。**v0.10.0**（2026-07-27・**公開済み**）= **V-F2（#8）= `verify_integrity` にリビジョン間オブジェクト単位差分**（`revisions` / `objectChangesAfterLastSignature`。**verdict 不変**。ローカル MCP で実検体試用 PASS）。v0.9.0（2026-07-26）= **V-P1 修正**（/Contents の padding 除去が DER 末尾の 0x00 を削り、約 1/256 の署名を「解析不能」と誤報告していた。DER ヘッダの長さで切り出すよう是正・600 検体中 4 件が該当し全て通過）+ **`validate_clauses` 追加**（ISO 32000 本体条文 = T1。判定は `@shuji-bonji/pdf-constraints@0.1.0` に委譲・exact pin・レポートに版を明記）。**7 ツール**。v0.8.0（2026-07-25）= V-F3（#9）で PAdES を観測として明示（`normativeBasis: 'T3'`）＋ **`instructions` 導入**。v0.7.1 = V-A1 / V-A2 の advisory 穴を封鎖（**verdict 不変**）。ツールは `verify_signatures` / `verify_integrity` / `detect_pades_level` / `identify_conformance` / `validate_conformance` / `validate_clauses` / `evaluate_policy`。veraPDF 委譲 + native サブセット（PDF/A 15 規則 / PDF/UA 12 規則）のハイブリッド |
+| 最終更新 | 2026-07-29（**v0.13.0 = V-A3**（`PDF_VERIFY_VERAPDF` の無検査採用を是正・未実施の明示）。**ホストの test / typecheck / check → publish 待ち**。V-D1 は未着手） |
+| 現状 | **v0.13.0**（2026-07-29・**ホストのテストと publish 待ち**）= **V-A3 = `PDF_VERIFY_VERAPDF` が実行可能かを検査せず採用していた欠陥の是正**（不正な env は PATH の別バイナリで代替せず、`auto` は native + **未実施の明示**、`verapdf` 指定は **`VERAPDF_NOT_AVAILABLE`**）＋ レポートに **`authoritativeValidation`**（`performed` / `reason` / `detail`。markdown では規則数より上に出す）＋ `evaluate_policy` の advisory（**verdict 不変**）。**出所は family の境界遵守 eval の E-6**。**v0.12.0**（2026-07-28・**公開済み・npx 検証 PASS**）= **`validate_clauses` が第 3 ドメイン「注釈」（CT-ANNOT-1〜15・ISO 32000-2 §12.5）を持つ**（`@shuji-bonji/pdf-constraints` の pin を **0.1.0 → 0.3.0**）＋ **failure の Context 行**（制約が持つ文脈をレポートまで運ぶ。CT-ANNOT-9 = QuadPoints の反時計回りは業界がほぼ一様に逸脱しているため、文脈なしでは欠陥として誤読される）。**ドメイン一覧はパッケージから読むので `domains` と description は自動追随**。**手順の順序**（constraints → verify の 2 リリース）は実行済み。**v0.11.0**（2026-07-27・公開済み）= **V-F1（M-9）= `validate_conformance` に PDF/A-4（`pdfa-4` / `pdfa-4e` / `pdfa-4f`）**。実 veraPDF 1.30.0 で 109 規則を回すことを実測（`pdfa-4b` は拒否）。**v0.10.0**（2026-07-27・**公開済み**）= **V-F2（#8）= `verify_integrity` にリビジョン間オブジェクト単位差分**（`revisions` / `objectChangesAfterLastSignature`。**verdict 不変**。ローカル MCP で実検体試用 PASS）。v0.9.0（2026-07-26）= **V-P1 修正**（/Contents の padding 除去が DER 末尾の 0x00 を削り、約 1/256 の署名を「解析不能」と誤報告していた。DER ヘッダの長さで切り出すよう是正・600 検体中 4 件が該当し全て通過）+ **`validate_clauses` 追加**（ISO 32000 本体条文 = T1。判定は `@shuji-bonji/pdf-constraints@0.1.0` に委譲・exact pin・レポートに版を明記）。**7 ツール**。v0.8.0（2026-07-25）= V-F3（#9）で PAdES を観測として明示（`normativeBasis: 'T3'`）＋ **`instructions` 導入**。v0.7.1 = V-A1 / V-A2 の advisory 穴を封鎖（**verdict 不変**）。ツールは `verify_signatures` / `verify_integrity` / `detect_pades_level` / `identify_conformance` / `validate_conformance` / `validate_clauses` / `evaluate_policy`。veraPDF 委譲 + native サブセット（PDF/A 15 規則 / PDF/UA 12 規則）のハイブリッド |
 | 基準 | `docs/PROJECT_PLAN.md`（v0.1 時点の計画。**現状と乖離あり**）／ `docs/family-standards-alignment.md`（family 共通規約への整合）／ `docs/FINDINGS-2026-07-20.md`（④ 実連携で発見した穴 2 件・解決済み）／ PDFfamily `specs/01-pdf-verify-mcp.md` |
 
 ## 番号規約
@@ -66,10 +66,11 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
     §14.4 は `ID` を「**optional but should be used**」とするので、**T1 で示せるのは「値の作り方」（2 要素のバイト列・permanent + changing）まで**。
     「存在しなければならない」という**義務は PDF/A 側（T2）にしかない**。ここを混ぜると T2 の義務を T1 の断定に見せてしまう
 - **native 判定と veraPDF 判定を混ぜない**。
-  ⚠️ **現状 `engine: 'auto'` で veraPDF 不在にフォールバックした事実は `notes` にしか出ない**
-  （実在するエラーコードは `VERAPDF_NOT_FOUND` のみで、`engine: 'verapdf'` を**明示指定した場合だけ** throw される。
-  `conformance-validation.ts:107-112`）。
-  §C-1 が提案している **`VERAPDF_NOT_AVAILABLE` は未実装**。導入すれば編成 Skill が分岐できる
+  ✅ **v0.13.0（V-A3）で解決**: フォールバックした事実は `authoritativeValidation`
+  （`performed` / `reason` / `detail`）として**機械可読**に返り、markdown では規則数より上に出る。
+  `reason` は `not_installed` / `configured_path_unusable` / `native_engine_requested` の 3 値で、
+  編成 Skill はこれで分岐できる。`engine: 'verapdf'` 明示時のエラーは
+  **`VERAPDF_NOT_AVAILABLE`**（設定が不正）と `VERAPDF_NOT_FOUND`（どこにも無い）に分かれた
 - **T2/T3 は「検証していない」と「違反がない」を区別する**。
   `specs/09 §2`: 「検索がヒットしないことは『要件が存在しない』証拠ではなく『答えられない』を意味する」
 
@@ -92,6 +93,31 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
 > **T2 との違い**: T2（PDF/A）には veraPDF という第三者判定器があるので「**veraPDF はこう判定した**」と
 > 判定主体を名指しできる。T3 には判定器が無く、判定しているのは family 自身の構造検査である。
 > だから T3 は「誰が判定したか」ではなく「**これは観測であって判定ではない**」と述べる。
+
+## A. Audit（V-A\*）
+
+- [x] **V-A3. `PDF_VERIFY_VERAPDF` が無検査で採用されていた**（2026-07-29 起票・**v0.13.0** で是正）
+      **出所は family の境界遵守 eval**（`Document-Note/mcps/PDFfamily/evals/boundary`）。
+      E-6（veraPDF を切ったとき「未実施」と報告するか）が 4 回まわして一度も採点できず、
+      README は原因を「env が MCP サーバの子プロセスに届かない」と記録していた。**実際は verify 側**で、
+      `findVeraPdf()` が env のパスだけ `access(X_OK)` を掛けずに採用していた（well-known パスは掛けている）。
+      結果、実在しないパスが「見つかった」として通り、`execFile` の中で ENOENT になって
+      **`veraPDF execution failed: spawn … ENOENT` というレポート無しのエラー**になっていた。
+      観測できるはずのフォールバックがそもそも存在しなかったので、E-6 は永久に判定不能だった。
+
+      **是正の要点は 3 つ**:
+      1. env のパスも実行可能性を検査する
+      2. **不正な env で PATH の別バイナリに落ちない** — 誰も選んでいない検証器の判定は、判定が無いより悪い
+      3. `engine: "auto"` は native に落ちて**未実施を明示**し、`engine: "verapdf"` は
+         **`VERAPDF_NOT_AVAILABLE`** で失敗する（`VERAPDF_NOT_FOUND` は「どこにも入っていない」のまま）
+
+      **`authoritativeValidation`**（`performed` / `reason` / `detail`）をレポートに追加し、
+      markdown では**規則数より上**に出す。`evaluate_policy` にも advisory として運ぶ（**verdict 不変**）。
+      C-1（エラー語彙の family 標準化）が名指ししていた `VERAPDF_NOT_AVAILABLE` の初出でもある。
+
+      **教訓**: eval が 4 回「測れなかった」と言い続けたのは正しかった。
+      偽の数字を出さなかったので、原因を実装まで追える状態が保たれていた
+      （[[green-tests-can-be-vacuous]] の裏返し = **判定不能を用意しておくことの利得**）。
 
 ## B. Feature（V-F\*）
 

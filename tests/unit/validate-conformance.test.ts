@@ -2,12 +2,12 @@
  * v0.3: PDF/A conformance validation (native engine subset).
  */
 
-import { beforeAll, describe, expect, it } from 'vitest';
-import { ValidationEngine } from '../../src/constants.js';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { ValidationEngine, VERAPDF_ENV } from '../../src/constants.js';
 import { validateConformance, veraFlavourId } from '../../src/services/conformance-validation.js';
 import { parsePdfBytes } from '../../src/services/pdf-parser.js';
 import { resolveFlavour } from '../../src/services/pdfa-validator.js';
-import { findVeraPdf, resetVeraPdfCache } from '../../src/services/verapdf.js';
+import { findVeraPdf, resetVeraPdfCache, resolveVeraPdf } from '../../src/services/verapdf.js';
 import { createSignedPdf, createTestIdentity, type TestIdentity } from '../helpers/signed-pdf.js';
 
 let identity: TestIdentity;
@@ -183,5 +183,120 @@ describe('veraPDF engine selection', () => {
     await expect(
       validateConformance(parsed, '', { engine: ValidationEngine.VERAPDF }),
     ).rejects.toThrow(/veraPDF not found/);
+  });
+});
+
+/**
+ * V-A3: a configured-but-unusable PDF_VERIFY_VERAPDF.
+ *
+ * The env var used to be trusted without checking that it points at something
+ * executable, so a stale path was accepted as "found" and only blew up later
+ * inside execFile — the caller saw "veraPDF execution failed" and no report at
+ * all, where the honest answer is "the validator you configured is not there,
+ * and nothing authoritative was run".
+ *
+ * These tests set the env var themselves, so they exercise the path regardless
+ * of whether the machine running them has veraPDF installed. That matters: the
+ * neighbouring negative test above returns early on a machine that has it, and
+ * a test that quietly skips is a test that cannot fail.
+ */
+describe('veraPDF configured but unusable', () => {
+  const UNUSABLE = '/nonexistent/verapdf';
+  let saved: string | undefined;
+
+  beforeEach(() => {
+    saved = process.env[VERAPDF_ENV];
+    process.env[VERAPDF_ENV] = UNUSABLE;
+    resetVeraPdfCache();
+  });
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env[VERAPDF_ENV];
+    else process.env[VERAPDF_ENV] = saved;
+    resetVeraPdfCache();
+  });
+
+  it('reports the path as unusable instead of treating it as found', async () => {
+    const availability = await resolveVeraPdf();
+    expect(availability.available).toBe(false);
+    expect(availability).toMatchObject({
+      reason: 'configured_path_unusable',
+      configuredPath: UNUSABLE,
+    });
+  });
+
+  it('does not substitute another executable for the configured one', async () => {
+    // Even on a machine with veraPDF on PATH, an explicit setting that is wrong
+    // must surface — a verdict from a validator nobody chose is worse than none.
+    expect(await findVeraPdf()).toBeNull();
+  });
+
+  it('falls back to native and says the authoritative validation was not performed', async () => {
+    const pdf = await createSignedPdf(identity, { xmp: { pdfaPart: '2', pdfaConformance: 'B' } });
+    const parsed = await parsePdfBytes(pdf);
+    const report = await validateConformance(parsed, '', { engine: ValidationEngine.AUTO });
+
+    expect(report.engine).toBe('native');
+    expect(report.authoritativeValidation).toMatchObject({
+      performed: false,
+      validator: 'verapdf',
+      reason: 'configured_path_unusable',
+    });
+    // The reason has to reach the prose too: Skills read notes, not types.
+    const notes = report.notes.join(' ');
+    expect(notes).toContain(UNUSABLE);
+    expect(notes).toMatch(/NOT performed/i);
+    expect(notes).toMatch(/cannot certify/i);
+  });
+
+  it('errors with VERAPDF_NOT_AVAILABLE when engine=verapdf was demanded', async () => {
+    const pdf = await createSignedPdf(identity);
+    const parsed = await parsePdfBytes(pdf);
+    await expect(
+      validateConformance(parsed, '', { engine: ValidationEngine.VERAPDF }),
+    ).rejects.toMatchObject({ code: 'VERAPDF_NOT_AVAILABLE' });
+  });
+
+  it('carries the non-execution into the PDF/UA path as well', async () => {
+    const pdf = await createSignedPdf(identity, { xmp: { pdfuaPart: '1' } });
+    const parsed = await parsePdfBytes(pdf);
+    const report = await validateConformance(parsed, '', { flavour: 'pdfua-1' });
+
+    expect(report.engine).toBe('native');
+    expect(report.authoritativeValidation.performed).toBe(false);
+    expect(report.notes.join(' ')).toMatch(/NOT performed/i);
+  });
+});
+
+describe('authoritative validation provenance', () => {
+  const savedEnv = process.env[VERAPDF_ENV];
+
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env[VERAPDF_ENV];
+    else process.env[VERAPDF_ENV] = savedEnv;
+    resetVeraPdfCache();
+  });
+
+  it('accepts an executable env path and records where it came from', async () => {
+    // /bin/sh stands in for veraPDF: the point is that an *executable* env path
+    // is accepted, which is what distinguishes this from the unusable case.
+    process.env[VERAPDF_ENV] = '/bin/sh';
+    resetVeraPdfCache();
+    expect(await resolveVeraPdf()).toEqual({
+      available: true,
+      path: '/bin/sh',
+      source: 'env',
+    });
+  });
+
+  it('names engine=native as the reason rather than implying veraPDF is missing', async () => {
+    const pdf = await createSignedPdf(identity);
+    const parsed = await parsePdfBytes(pdf);
+    const report = await validateConformance(parsed, '', { engine: ValidationEngine.NATIVE });
+
+    expect(report.authoritativeValidation).toMatchObject({
+      performed: false,
+      reason: 'native_engine_requested',
+    });
   });
 });

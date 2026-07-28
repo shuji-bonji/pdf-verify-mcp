@@ -301,6 +301,14 @@ export function formatConformanceValidation(
   const lines: string[] = [`# ${standard} Conformance Validation`, ''];
   lines.push(`- Flavour: ${report.flavour}`);
   lines.push(`- Engine: ${report.engine}`);
+  // Before the numbers, not after them. A reader who meets "24 checked, 24
+  // passed" first has already formed a verdict by the time a note at the bottom
+  // says the authoritative validator never ran.
+  if (!report.authoritativeValidation.performed) {
+    lines.push(
+      `- **Authoritative validation (veraPDF): NOT PERFORMED** — ${report.authoritativeValidation.detail} The subset below can disprove conformance but cannot certify it.`,
+    );
+  }
   const compliantLabel =
     report.compliant === true
       ? '**COMPLIANT**'

@@ -18,7 +18,7 @@ import { unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PDFDict } from 'pdf-lib';
-import { ValidationEngine } from '../constants.js';
+import { ValidationEngine, VERAPDF_ENV } from '../constants.js';
 import type { ParsedPdf } from '../types.js';
 import { PdfVerifyError } from '../utils/error-handler.js';
 import { extractPdfaId, extractPdfuaPart } from './conformance.js';
@@ -26,7 +26,7 @@ import { decryptDocumentBytes } from './decrypt-document.js';
 import { loadPdfDocument, parsePdfBytes } from './pdf-parser.js';
 import { type PdfaFlavour, resolveFlavour, validatePdfaNative } from './pdfa-validator.js';
 import { type PdfuaFlavour, resolvePdfuaFlavour, validatePdfuaNative } from './pdfua-validator.js';
-import { findVeraPdf, runVeraPdf } from './verapdf.js';
+import { resolveVeraPdf, runVeraPdf } from './verapdf.js';
 
 export interface ConformanceViolation {
   ruleId: string;
@@ -37,8 +37,28 @@ export interface ConformanceViolation {
   severity?: 'error' | 'warning';
 }
 
+/**
+ * Whether the authoritative validator actually ran, and why not when it did not.
+ *
+ * The native engine can disprove conformance but never certify it, so a report
+ * produced without veraPDF is a *weaker* claim than one produced with it. Saying
+ * only `engine: "native"` leaves the reader to infer that; this states it, and
+ * names the reason so a misconfiguration is not read as "veraPDF is not
+ * installed here" (anti-pattern: passing over what was not performed).
+ */
+export type AuthoritativeValidation =
+  | { performed: true; validator: 'verapdf'; path: string }
+  | {
+      performed: false;
+      validator: 'verapdf';
+      reason: 'not_installed' | 'configured_path_unusable' | 'native_engine_requested';
+      detail: string;
+    };
+
 export interface ConformanceValidationReport {
   engine: 'native' | 'verapdf';
+  /** Provenance of the verdict: which validator decided it, or why none did. */
+  authoritativeValidation: AuthoritativeValidation;
   flavour: string;
   /**
    * true/false is definitive for veraPDF. For the native engine:
@@ -105,6 +125,70 @@ export interface ValidateConformanceOptions {
   password?: string;
 }
 
+/** Look for the authoritative validator, honouring an explicit engine choice. */
+async function resolveAuthoritativeValidation(
+  engineChoice: ValidationEngine,
+): Promise<AuthoritativeValidation> {
+  if (engineChoice === ValidationEngine.NATIVE) {
+    return {
+      performed: false,
+      validator: 'verapdf',
+      reason: 'native_engine_requested',
+      detail: 'engine: "native" was requested, so veraPDF was not consulted.',
+    };
+  }
+  const availability = await resolveVeraPdf();
+  if (availability.available) {
+    return { performed: true, validator: 'verapdf', path: availability.path };
+  }
+  if (availability.reason === 'configured_path_unusable') {
+    return {
+      performed: false,
+      validator: 'verapdf',
+      reason: 'configured_path_unusable',
+      detail: `${VERAPDF_ENV} points at ${availability.configuredPath} (${availability.detail}).`,
+    };
+  }
+  return {
+    performed: false,
+    validator: 'verapdf',
+    reason: 'not_installed',
+    detail: `veraPDF was not found (${VERAPDF_ENV} is unset and no executable is on PATH).`,
+  };
+}
+
+/**
+ * The prose form of "this was not performed".
+ *
+ * Both halves matter: what did not run, and what the verdict below is therefore
+ * worth. A reader who sees only the first half tends to read the native result
+ * as a lighter version of the same answer, which it is not.
+ */
+function notPerformedNote(status: Extract<AuthoritativeValidation, { performed: false }>): string {
+  const consequence =
+    'Authoritative validation was NOT performed. The result below comes from the native rule subset, which can disprove conformance but cannot certify it.';
+  return status.reason === 'configured_path_unusable'
+    ? `${status.detail} veraPDF was configured but could not be used, and no other executable was substituted for it. ${consequence}`
+    : `${status.detail} ${consequence}`;
+}
+
+/** engine: "verapdf" was demanded and cannot be honoured — fail rather than quietly downgrade. */
+function toVeraPdfUnavailableError(
+  status: Extract<AuthoritativeValidation, { performed: false }>,
+): PdfVerifyError {
+  return status.reason === 'configured_path_unusable'
+    ? new PdfVerifyError(
+        `veraPDF is unavailable: ${status.detail}`,
+        'VERAPDF_NOT_AVAILABLE',
+        `Point ${VERAPDF_ENV} at an executable veraPDF, unset it to search PATH, or use engine: "native" (subset — cannot certify conformance)`,
+      )
+    : new PdfVerifyError(
+        'veraPDF not found (set PDF_VERIFY_VERAPDF or add verapdf to PATH)',
+        'VERAPDF_NOT_FOUND',
+        'Install veraPDF from https://verapdf.org/ or use engine: "native"',
+      );
+}
+
 export async function validateConformance(
   parsed: ParsedPdf,
   filePath: string,
@@ -113,18 +197,16 @@ export async function validateConformance(
   const notes: string[] = [];
 
   const engineChoice = options.engine ?? ValidationEngine.AUTO;
-  const veraPath = engineChoice === ValidationEngine.NATIVE ? null : await findVeraPdf();
+  const status = await resolveAuthoritativeValidation(engineChoice);
+  const veraPath = status.performed ? status.path : null;
 
-  if (engineChoice === ValidationEngine.VERAPDF && !veraPath) {
-    throw new PdfVerifyError(
-      'veraPDF not found (set PDF_VERIFY_VERAPDF or add verapdf to PATH)',
-      'VERAPDF_NOT_FOUND',
-      'Install veraPDF from https://verapdf.org/ or use engine: "native"',
-    );
+  if (engineChoice === ValidationEngine.VERAPDF && !status.performed) {
+    throw toVeraPdfUnavailableError(status);
   }
+  if (!status.performed) notes.push(notPerformedNote(status));
 
   if (isPdfuaRequest(parsed, options.flavour)) {
-    return validatePdfua(parsed, filePath, options, engineChoice, veraPath, notes);
+    return validatePdfua(parsed, filePath, options, engineChoice, veraPath, notes, status);
   }
 
   // A PDF/A validation was requested but the document also declares PDF/UA
@@ -152,6 +234,7 @@ export async function validateConformance(
     const report = await runVeraPdf(veraPath, filePath, veraFlavourId(flavour));
     return {
       engine: 'verapdf',
+      authoritativeValidation: status,
       flavour: flavourLabel(flavour),
       compliant: report.compliant,
       checkedRules: report.passedRules + report.failedRules,
@@ -174,6 +257,7 @@ export async function validateConformance(
 
   return {
     engine: 'native',
+    authoritativeValidation: status,
     flavour: flavourLabel(flavour),
     compliant: failed.length > 0 ? false : null,
     checkedRules: native.results.length,
@@ -203,6 +287,7 @@ async function validatePdfua(
   engineChoice: ValidationEngine,
   veraPath: string | null,
   notes: string[],
+  status: AuthoritativeValidation,
 ): Promise<ConformanceValidationReport> {
   // Issue #7: an encrypted document's structures (object streams, strings)
   // are ciphertext — validating them as-is produces false findings. Rebuild a
@@ -276,6 +361,7 @@ async function validatePdfua(
     }
     return {
       engine: 'verapdf',
+      authoritativeValidation: status,
       flavour: `PDF/UA-${flavour.part}`,
       compliant: report.compliant,
       checkedRules: report.passedRules + report.failedRules,
@@ -308,6 +394,7 @@ async function validatePdfua(
 
   return {
     engine: 'native',
+    authoritativeValidation: status,
     flavour: `PDF/UA-${flavour.part}`,
     // Only definitive violations (severity 'error') can prove non-conformance
     compliant: errors.length > 0 ? false : null,
