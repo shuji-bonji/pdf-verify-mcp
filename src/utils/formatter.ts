@@ -362,6 +362,8 @@ export function formatClauseValidation(
           `  - ${kind}: ${failure.message}`,
           `  - Evidence: \`${failure.fact}\` = ${JSON.stringify(failure.actual)}`,
         );
+        // 判定は変えないが、これが無いと誤読される文脈。verdict と混ぜないよう別行に置く
+        if (failure.note) lines.push(`  - Context: ${failure.note}`);
       }
     }
   }

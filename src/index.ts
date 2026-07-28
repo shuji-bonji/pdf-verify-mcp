@@ -45,7 +45,10 @@ body. It reports only what the bundled constraints cover, so no failures means "
 could be disproved", never "conforms". A constraint that depends on a fact outside the file
 (whether a font is a subset, say) is returned as needs_external_fact rather than defaulted into
 a pass. Some failures are marked as traces: those clauses address the PDF *processor*, so the
-file shows that someone broke the rule, not that the last writer did.
+file shows that someone broke the rule, not that the last writer did. A failure may also carry a
+Context line: the clause is real, but the industry deviates from it on purpose (annotation
+QuadPoints winding is the standing example). Report the context with the failure — dropping it
+turns a true statement into a misleading one.
 
 Two more limits that get forgotten:
   - Trust. A "valid" verdict without trust_anchors means the cryptography checks out, NOT that

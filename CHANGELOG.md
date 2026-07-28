@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2026-07-28
+
+### Added
+
+- **`validate_clauses` now covers annotations (ISO 32000-2 §12.5).** The bundled constraint
+  package moves from `@shuji-bonji/pdf-constraints` 0.1.0 to **0.3.0**, which adds a third
+  domain, `annotation` (CT-ANNOT-1〜15): the appearance dictionary a writer owes, paragraph
+  breaks in `Contents`, the syntax of `C` / `BM` / `F`, `QuadPoints` winding, the `Popup` and
+  `IRT` relationships, and the rule that an annotation dictionary belongs to exactly one page.
+
+  `AP` is the reason the domain was worth adding. ISO 32000-1 left the appearance dictionary
+  optional and 32000-2 made it a `shall` for writers, so a validator built on 32000-1 — which is
+  what PDF/UA-1 validation is — never asks the question. This is the same ground the font domain
+  occupies: **things veraPDF is not looking for.**
+
+  The domain list is read from the package, so `domains` and the tool description pick it up
+  without a code change here.
+
+- **Failures can now carry a Context line.** A constraint may attach a note explaining why its
+  failure needs reading with care, and that note travels with the failure into the report.
+
+  The case that forced it: R-12.5.6.10-5 requires `QuadPoints` vertices in counterclockwise
+  order, and virtually every writer in existence uses Z order instead — deliberately, because
+  following the clause literally breaks rendering in major viewers. Reported bare, that failure
+  says "the vertex order is wrong" about almost every annotated PDF ever produced. It is true
+  and it is misleading. **Context that does not travel with the failure does not exist.**
+
 ## [0.11.0] - 2026-07-27
 
 ### Added

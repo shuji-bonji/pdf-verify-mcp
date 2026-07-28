@@ -34,6 +34,12 @@ export interface ClauseResult {
      * ファイルから観測できるのは「誰かが破った痕跡」であって、直近の書き手の違反とは限らない。
      */
     traceOnly: boolean;
+    /**
+     * 制約が持つ文脈（pdf-constraints 0.3.0+）。**判定は変えない**が、
+     * これが無いと技術的に正しいまま誤読される種類の fail に付く。
+     * 例: CT-ANNOT-9（QuadPoints の反時計回り）は業界がほぼ一様に逸脱している。
+     */
+    note?: string;
   }[];
 }
 
@@ -80,6 +86,7 @@ export async function validateClauses(
       fact: f.fact,
       actual: f.actual,
       traceOnly: f.traceOnly,
+      note: f.note,
     })),
   }));
 
