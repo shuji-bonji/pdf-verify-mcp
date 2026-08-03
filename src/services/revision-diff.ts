@@ -26,7 +26,12 @@
  */
 
 import { inflateSync } from 'node:zlib';
-import type { RevisionObjectChange, RevisionSummary, XrefKind } from '../types.js';
+import type {
+  DocMdpChangeClass,
+  RevisionObjectChange,
+  RevisionSummary,
+  XrefKind,
+} from '../types.js';
 import { logger } from '../utils/logger.js';
 
 const CONTEXT = 'revision-diff';
@@ -678,6 +683,56 @@ function describeRole(peeked: PeekedObject | null): string | null {
   return null;
 }
 
+/**
+ * Which kind of change this object represents, for the DocMDP assessment
+ * (ISO 32000-2 Table 257). See `DocMdpChangeClass` for what each value means
+ * and why `housekeeping` exists.
+ *
+ * ⚠️ Returns `unknown` whenever the object's kind could not be read — including
+ * objects inside an object stream, whose bytes are not inflated here. The
+ * caller turns that into `indeterminate`, never into a pass.
+ */
+function classifyChange(peeked: PeekedObject | null, bookkeeping: boolean): DocMdpChangeClass {
+  if (bookkeeping) return 'bookkeeping';
+  if (!peeked) return 'unknown';
+  const { type, subtype, keys } = peeked;
+
+  if (type === 'Annot') return subtype === 'Widget' ? 'form-fill' : 'annotation';
+  if (type === 'Sig' || type === 'DocTimeStamp') return 'signature';
+  // The page itself is dragged along by a lawful annotation or form-field
+  // change (its /Annots array gains an entry). Its *content* is a different
+  // object (the stream /Contents points at), which classifies as `content`.
+  if (type === 'Page' || type === 'Pages' || type === 'Catalog') return 'housekeeping';
+  if (type === 'Metadata') return 'housekeeping';
+  if (
+    type === 'StructTreeRoot' ||
+    type === 'StructElem' ||
+    type === 'Font' ||
+    type === 'XObject' ||
+    type === 'ExtGState' ||
+    type === 'OCG' ||
+    type === 'OCMD'
+  ) {
+    return 'content';
+  }
+  if (type !== null) return 'content';
+
+  // Untyped dictionaries — identified by the keys they carry.
+  if (keys.includes('Fields') && (keys.includes('SigFlags') || keys.includes('DA')))
+    return 'form-fill';
+  if (keys.includes('Kids') && keys.includes('Fields')) return 'form-fill';
+  if (keys.includes('FT')) return 'form-fill';
+  if (keys.includes('Certs') || keys.includes('OCSPs') || keys.includes('CRLs')) return 'signature';
+  // The trailer's /Info dictionary carries no /Type, which is why it used to be
+  // reported as "type not determined". Every writer bumps its /ModDate and
+  // /Producer alongside a permitted change, so it is housekeeping — but
+  // identify it by its own keys rather than assuming any untyped dictionary is.
+  if (keys.includes('Producer') || keys.includes('ModDate') || keys.includes('CreationDate')) {
+    return 'housekeeping';
+  }
+  return 'unknown';
+}
+
 /* ------------------------------------------------------------------ *
  * public entry point
  * ------------------------------------------------------------------ */
@@ -781,6 +836,7 @@ export function diffRevisions(input: RevisionDiffInput): RevisionDiffResult | nu
     const typed = candidates.map(({ entry, change, selfXref }) => {
       const peeked =
         entry.kind === 'n' && entry.offset !== null ? peekObject(bytes, entry.offset) : null;
+      const bookkeeping = selfXref || peeked?.type === 'XRef' || peeked?.type === 'ObjStm';
       const item: RevisionObjectChange = {
         objectNumber: entry.objectNumber,
         generation: entry.generation,
@@ -788,7 +844,8 @@ export function diffRevisions(input: RevisionDiffInput): RevisionDiffResult | nu
         type: peeked?.type ?? null,
         subtype: peeked?.subtype ?? null,
         role: describeRole(peeked),
-        bookkeeping: selfXref || peeked?.type === 'XRef' || peeked?.type === 'ObjStm',
+        changeClass: classifyChange(peeked, bookkeeping),
+        bookkeeping,
         inObjectStream: entry.kind === 'c',
       };
       return item;

@@ -3,8 +3,8 @@
 | 項目 | 内容 |
 | --- | --- |
 | 作成日 | 2026-07-25 |
-| 最終更新 | 2026-07-29（**v0.13.0 = V-A3**（`PDF_VERIFY_VERAPDF` の無検査採用を是正・未実施の明示）。**ホストの test / typecheck / check → publish 待ち**。V-D1 は未着手） |
-| 現状 | **v0.13.0**（2026-07-29・**ホストのテストと publish 待ち**）= **V-A3 = `PDF_VERIFY_VERAPDF` が実行可能かを検査せず採用していた欠陥の是正**（不正な env は PATH の別バイナリで代替せず、`auto` は native + **未実施の明示**、`verapdf` 指定は **`VERAPDF_NOT_AVAILABLE`**）＋ レポートに **`authoritativeValidation`**（`performed` / `reason` / `detail`。markdown では規則数より上に出す）＋ `evaluate_policy` の advisory（**verdict 不変**）。**出所は family の境界遵守 eval の E-6**。**v0.12.0**（2026-07-28・**公開済み・npx 検証 PASS**）= **`validate_clauses` が第 3 ドメイン「注釈」（CT-ANNOT-1〜15・ISO 32000-2 §12.5）を持つ**（`@shuji-bonji/pdf-constraints` の pin を **0.1.0 → 0.3.0**）＋ **failure の Context 行**（制約が持つ文脈をレポートまで運ぶ。CT-ANNOT-9 = QuadPoints の反時計回りは業界がほぼ一様に逸脱しているため、文脈なしでは欠陥として誤読される）。**ドメイン一覧はパッケージから読むので `domains` と description は自動追随**。**手順の順序**（constraints → verify の 2 リリース）は実行済み。**v0.11.0**（2026-07-27・公開済み）= **V-F1（M-9）= `validate_conformance` に PDF/A-4（`pdfa-4` / `pdfa-4e` / `pdfa-4f`）**。実 veraPDF 1.30.0 で 109 規則を回すことを実測（`pdfa-4b` は拒否）。**v0.10.0**（2026-07-27・**公開済み**）= **V-F2（#8）= `verify_integrity` にリビジョン間オブジェクト単位差分**（`revisions` / `objectChangesAfterLastSignature`。**verdict 不変**。ローカル MCP で実検体試用 PASS）。v0.9.0（2026-07-26）= **V-P1 修正**（/Contents の padding 除去が DER 末尾の 0x00 を削り、約 1/256 の署名を「解析不能」と誤報告していた。DER ヘッダの長さで切り出すよう是正・600 検体中 4 件が該当し全て通過）+ **`validate_clauses` 追加**（ISO 32000 本体条文 = T1。判定は `@shuji-bonji/pdf-constraints@0.1.0` に委譲・exact pin・レポートに版を明記）。**7 ツール**。v0.8.0（2026-07-25）= V-F3（#9）で PAdES を観測として明示（`normativeBasis: 'T3'`）＋ **`instructions` 導入**。v0.7.1 = V-A1 / V-A2 の advisory 穴を封鎖（**verdict 不変**）。ツールは `verify_signatures` / `verify_integrity` / `detect_pades_level` / `identify_conformance` / `validate_conformance` / `validate_clauses` / `evaluate_policy`。veraPDF 委譲 + native サブセット（PDF/A 15 規則 / PDF/UA 12 規則）のハイブリッド |
+| 最終更新 | 2026-08-04（**v0.14.0 = V-P2**（DocMDP の違反判定が P=1 しか見ていなかった欠陥の是正。`changeClass` + 3 値の `violationAssessment`）。**ホストの test / check → publish 待ち**。V-D1 は未着手） |
+| 現状 | **v0.14.0**（2026-08-04・**publish 待ち**）= **V-P2 = DocMDP の違反判定が P=1 しか見ていなかった欠陥の是正**（ISO 32000-2 Table 257 に沿って P ごとに判定。オブジェクト差分に **`changeClass`** を足し、**`violationAssessment` は 3 値**（`permitted` / `violated` / **`indeterminate` = pass ではない**）。`evaluate_policy` に **`POL-REVIEW-DOCMDP-INDETERMINATE`**）。**fail open だったものを塞いだ**。**出所は C-3b の署名検体**（P=1/2/3 × 同じ注釈の追加）。テスト 128 件・検体 12 点で実測。**v0.13.0**（2026-07-29・**公開済み**。境界遵守 eval の **E-6b が 3/3 PASS** = 「未実施を報告が持ち帰るか」の初の実測）= **V-A3 = `PDF_VERIFY_VERAPDF` が実行可能かを検査せず採用していた欠陥の是正**（不正な env は PATH の別バイナリで代替せず、`auto` は native + **未実施の明示**、`verapdf` 指定は **`VERAPDF_NOT_AVAILABLE`**）＋ レポートに **`authoritativeValidation`**（`performed` / `reason` / `detail`。markdown では規則数より上に出す）＋ `evaluate_policy` の advisory（**verdict 不変**）。**出所は family の境界遵守 eval の E-6**。**v0.12.0**（2026-07-28・**公開済み・npx 検証 PASS**）= **`validate_clauses` が第 3 ドメイン「注釈」（CT-ANNOT-1〜15・ISO 32000-2 §12.5）を持つ**（`@shuji-bonji/pdf-constraints` の pin を **0.1.0 → 0.3.0**）＋ **failure の Context 行**（制約が持つ文脈をレポートまで運ぶ。CT-ANNOT-9 = QuadPoints の反時計回りは業界がほぼ一様に逸脱しているため、文脈なしでは欠陥として誤読される）。**ドメイン一覧はパッケージから読むので `domains` と description は自動追随**。**手順の順序**（constraints → verify の 2 リリース）は実行済み。**v0.11.0**（2026-07-27・公開済み）= **V-F1（M-9）= `validate_conformance` に PDF/A-4（`pdfa-4` / `pdfa-4e` / `pdfa-4f`）**。実 veraPDF 1.30.0 で 109 規則を回すことを実測（`pdfa-4b` は拒否）。**v0.10.0**（2026-07-27・**公開済み**）= **V-F2（#8）= `verify_integrity` にリビジョン間オブジェクト単位差分**（`revisions` / `objectChangesAfterLastSignature`。**verdict 不変**。ローカル MCP で実検体試用 PASS）。v0.9.0（2026-07-26）= **V-P1 修正**（/Contents の padding 除去が DER 末尾の 0x00 を削り、約 1/256 の署名を「解析不能」と誤報告していた。DER ヘッダの長さで切り出すよう是正・600 検体中 4 件が該当し全て通過）+ **`validate_clauses` 追加**（ISO 32000 本体条文 = T1。判定は `@shuji-bonji/pdf-constraints@0.1.0` に委譲・exact pin・レポートに版を明記）。**7 ツール**。v0.8.0（2026-07-25）= V-F3（#9）で PAdES を観測として明示（`normativeBasis: 'T3'`）＋ **`instructions` 導入**。v0.7.1 = V-A1 / V-A2 の advisory 穴を封鎖（**verdict 不変**）。ツールは `verify_signatures` / `verify_integrity` / `detect_pades_level` / `identify_conformance` / `validate_conformance` / `validate_clauses` / `evaluate_policy`。veraPDF 委譲 + native サブセット（PDF/A 15 規則 / PDF/UA 12 規則）のハイブリッド |
 | 基準 | `docs/PROJECT_PLAN.md`（v0.1 時点の計画。**現状と乖離あり**）／ `docs/family-standards-alignment.md`（family 共通規約への整合）／ `docs/FINDINGS-2026-07-20.md`（④ 実連携で発見した穴 2 件・解決済み）／ PDFfamily `specs/01-pdf-verify-mcp.md` |
 
 ## 番号規約
@@ -14,8 +14,16 @@
 | 接頭 | 意味 | 判定 | 出所 |
 | --- | --- | --- | --- |
 | **V-A\*** | **Audit** — 実連携や監査で見つかった「穴」（既存挙動の不備） | 出力が変わる（穴を塞ぐ） | `docs/FINDINGS-*.md` に観測・原因・提案を書き、ここに 1 行で索引する |
+| **V-P\*** | **Wrong answer** — **答えそのものが誤っていた**もの（穴ではなく誤答） | **出力が変わる（正しくなる）** | 本ファイルに直接起票。**再現手順と実測を必ず残す** |
 | **V-F\*** | **Feature** — 機能追加・対応範囲の拡張・**出力文言の変更** | **出力が変わる** | 本ファイルに直接起票、または GitHub Issue を索引 |
 | **V-D\*** | **Docs** — リポジトリ内文書のみ | **出力は不変** | 本ファイルに直接起票 |
+
+> **V-A と V-P の境目**: V-A は「**見ていなかった**」（測れない・報告しない）、
+> V-P は「**見て、違うことを言った**」。後者の方が危険で、**利用者は誤りに気づけない** ——
+> だから V-P は再現手順と実測を必須にする。
+> V-P1（0.9.0・`/Contents` の padding 除去が DER を削り署名を「解析不能」と誤報告）と
+> V-P2（0.14.0・DocMDP の違反を見逃す）はどちらもこの型で、
+> **2 件とも「大量に測ったら食い違った」から見つかっている**（600 検体 / P=1,2,3 の対）。
 
 > **GitHub の `documentation` ラベルとは基準が違う。** 出力文言を変えるものは（ドキュメント作業に見えても）**V-F** に入れる。
 > 例: Issue #9（PAdES に T3 を明示）はラベルは `documentation` だが、`detect_pades_level` の**出力**が変わるので **V-F3**。
@@ -96,6 +104,48 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
 
 ## A. Audit（V-A\*）
 
+- [x] **V-P2. DocMDP の違反判定が P=1 しか見ていなかった**（2026-08-04 起票・**v0.14.0** で是正）
+      **出所は C-3b の署名検体**（`Document-Note/mcps/PDFfamily/specs/25` §4.1.1）。
+      P=1 / P=2 / P=3 で証明し、**同じ注釈を同じように増分追加した検体**を並べたところ、
+      **P=2 だけが予測と食い違った**。実装は 1 行で説明がついた:
+
+      ```ts
+      violatedByLaterChanges: permission === 1 && laterChanges && !laterChangesAppearLtvOnly
+      ```
+
+      **`permission === 1` で始まるので、P=2 と P=3 は何を足されても違反にならない。**
+      ISO 32000-2 **Table 257** は P=2 について「filling in forms, instantiating page templates,
+      and signing」だけを許し、**それ以外は "shall invalidate the signature"** と書いている
+      （注釈の作成が許されるのは P=3 から）。
+
+      🔴 **`evaluate_policy` まで伝播していた。** `POL-REVIEW-DOCMDP-VIOLATION` はこのフィールドを
+      発火条件にしているので、**条文違反の変更が入った文書が `human_review_required` に上がらず**
+      `use_with_caution` で返っていた —— **見逃す方向（fail open）**である。
+
+      **是正の要点は 4 つ**:
+      1. **変えたのは閾値ではなく問い** —— 「バイトが増えたか」ではなく「**どんな種類の変更か**」。
+         材料は v0.10.0 のオブジェクト差分がすでに持っていた
+      2. `RevisionObjectChange.changeClass` を新設（機械可読）。**規則が読むのは `role`（散文）ではない** ——
+         文言を良くしただけで規則が壊れるのを避ける
+      3. **`violationAssessment` は 3 値**。`indeterminate` は **pass ではない**
+         （`validate_clauses` の `needs_external_fact` と同じ規律）。
+         `violatedByLaterChanges`（boolean）は互換で残すが **`indeterminate` を `false` に潰す**
+      4. `POL-REVIEW-DOCMDP-INDETERMINATE` を新設 —— 判定不能でも人手確認に上げる。
+         **読めない文書を数件レビューする方が、安い誤り**である
+
+      **付随的な変更は違反に数えない。** `/Annots` が増えたページ・カタログ・`/Info`・XMP は
+      `housekeeping`。実測で**正当な P=3 の注釈追加でもこの 4 つが必ず動く**ので、
+      数えると全証明書文書が違反になる。
+
+      ⚠️ **裸のストリーム（`/Type` 無し）は `content` ではなく判定不能**にした。
+      同じバイトがフォームの外観ストリーム（P=2 で許される）にもページ内容（どの P でも不可）にも
+      なりうる —— `content` と読めば**示されていない違反**を報告し、`housekeeping` と読めば**本物を通す**。
+
+      **教訓**: eval の 43 ケースは **P=1 の検体しか持っていない**ので、26 回の通しで
+      1 度も踏まれていなかった（[[green-tests-can-be-vacuous]]）。
+      **予測を書いてから測ったから見つかった** —— 測ってから予測を合わせていたら、
+      `false` が正解として検体に記録され、学習データが「P=2 は違反でない」を教えていた。
+
 - [x] **V-A3. `PDF_VERIFY_VERAPDF` が無検査で採用されていた**（2026-07-29 起票・**v0.13.0** で是正）
       **出所は family の境界遵守 eval**（`Document-Note/mcps/PDFfamily/evals/boundary`）。
       E-6（veraPDF を切ったとき「未実施」と報告するか）が 4 回まわして一度も採点できず、
@@ -114,6 +164,12 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
       **`authoritativeValidation`**（`performed` / `reason` / `detail`）をレポートに追加し、
       markdown では**規則数より上**に出す。`evaluate_policy` にも advisory として運ぶ（**verdict 不変**）。
       C-1（エラー語彙の family 標準化）が名指ししていた `VERAPDF_NOT_AVAILABLE` の初出でもある。
+
+      **公開後の実測（2026-07-29）**: eval の **E-6b が 3/3 PASS**。報告は
+      `authoritativeValidation.performed = false` を引用し、「disprove はできるが
+      certification にはならない」と自分で書き分けた。**この eval で最初の「未実施検出」の実測**。
+      E-6（env で切る側）は、エージェントがシェルの veraPDF に回り込むため依然測れていない
+      （eval 側で Bash を禁止 = cases v6）。**verify 側の作業ではない。**
 
       **教訓**: eval が 4 回「測れなかった」と言い続けたのは正しかった。
       偽の数字を出さなかったので、原因を実装まで追える状態が保たれていた

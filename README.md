@@ -15,7 +15,7 @@ Part of the PDF family alongside [pdf-reader-mcp](https://github.com/shuji-bonji
 | Tool | Purpose |
 |------|---------|
 | `verify_signatures` | Cryptographic verification, trust chain evaluation against trust anchors, revocation checking (embedded OCSP/CRL or online), RFC 3161 timestamp verification |
-| `verify_integrity` | Tamper detection: incremental updates, changes after signing, DocMDP certification violations, and an object-level diff of the revision chain (which objects each update added, rewrote or freed). Incremental updates are legal, so the diff says what to review — no verdict rests on it. Where those objects sit on the page is [pdf-reader-mcp](https://github.com/shuji-bonji/pdf-reader-mcp) `locate_objects` |
+| `verify_integrity` | Tamper detection: incremental updates, changes after signing, **DocMDP certification violations assessed per P value** (below), and an object-level diff of the revision chain (which objects each update added, rewrote or freed). Incremental updates are legal, so the diff says what to review — no verdict rests on it. Where those objects sit on the page is [pdf-reader-mcp](https://github.com/shuji-bonji/pdf-reader-mcp) `locate_objects` |
 | `detect_pades_level` | PAdES baseline level (B-B / B-T / B-LT / B-LTA) with content-validated LTV data |
 | `identify_conformance` | Declared PDF/A / PDF/UA conformance from XMP metadata |
 | `validate_conformance` | PDF/A (ISO 19005) and PDF/UA (ISO 14289) validation: veraPDF when installed, built-in rule subset otherwise |
@@ -29,6 +29,43 @@ Part of the PDF family alongside [pdf-reader-mcp](https://github.com/shuji-bonji
 | `valid` | ByteRange digest matches and the CMS signature is cryptographically valid |
 | `invalid` | Digest mismatch or signature verification failure — possible tampering |
 | `indeterminate` | Unsupported format or verification could not complete |
+
+## DocMDP certification permissions (v0.14)
+
+A certification signature's `P` value states **which kinds of change are allowed**
+(ISO 32000-2 **Table 257**). `verify_integrity` classifies the changes made after signing at the
+object level and compares them against what that `P` permits.
+
+| P | Permitted changes | Is adding an annotation a violation? |
+|---|---|---|
+| 1 | none (DSS / document-timestamp incremental updates are the §12.8.2.2 exception) | **yes** |
+| 2 | filling in forms, instantiating page templates, signing | **yes** — annotations start at 3 |
+| 3 | as for 2, plus annotation creation, deletion and modification | no |
+
+Objects that a permitted change **necessarily drags along** — the page whose `/Annots` grew, the
+catalog, `/Info`, the XMP stream — are classified as `housekeeping` and are not counted as
+violations. Counting them would make *every* certified document violate, since a lawful P=3
+annotation addition moves all four.
+
+### `violationAssessment` is three-valued
+
+| Value | Meaning |
+|---|---|
+| `permitted` | every change after signing is of a kind `P` allows |
+| `violated` | at least one change is outside it |
+| `indeterminate` | **it could not be determined** (the xref chain could not be walked, or a changed object's kind could not be read) |
+
+> ⚠️ **`indeterminate` is not a pass.** This server disproves, and "could not be disproved" is a
+> different statement from "is fine" — the same discipline as `validate_clauses` returning
+> `needs_external_fact` rather than defaulting a check into a pass.
+>
+> `violatedByLaterChanges` (boolean) is kept for compatibility and **collapses `indeterminate` to
+> `false`**. Read `violationAssessment` wherever "could not tell" must not be mistaken for
+> "fine". `evaluate_policy` raises `indeterminate` to `human_review_required` as well.
+
+A bare stream with no `/Type` is treated as *not determined* rather than as `content`: the same
+bytes could be a form field's appearance stream (which P=2 permits) or a page's content stream
+(which no P permits).
 
 ## Trust & revocation (v0.2)
 

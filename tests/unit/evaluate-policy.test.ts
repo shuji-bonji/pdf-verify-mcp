@@ -143,6 +143,53 @@ describe('policy engine (synthetic facts)', () => {
     expect(ids(e)).toContain('POL-REVIEW-INDETERMINATE');
   });
 
+  it('DocMDP indeterminate → human_review_required (could not tell is not a pass)', () => {
+    // 🔴 The boolean is false here — it collapses `indeterminate`. A rule that
+    // read the boolean would let an unreadable certified document through at
+    // use_with_caution, which is what happened before 0.14.0.
+    const e = evaluatePolicy(
+      facts({
+        integrity: integrity({
+          certification: {
+            fieldName: 'Sig1',
+            permission: 2,
+            permissionDescription:
+              'Filling in forms, instantiating page templates, and signing permitted',
+            violatedByLaterChanges: false,
+            violationAssessment: 'indeterminate' as const,
+            assessmentReason: 'the cross-reference chain could not be walked',
+            laterChangesAppearLtvOnly: false,
+          },
+        }),
+      }),
+      'general',
+    );
+    expect(ids(e)).toContain('POL-REVIEW-DOCMDP-INDETERMINATE');
+    expect(e.verdict).toBe('human_review_required');
+  });
+
+  it('DocMDP permitted → neither DocMDP rule fires', () => {
+    const e = evaluatePolicy(
+      facts({
+        integrity: integrity({
+          certification: {
+            fieldName: 'Sig1',
+            permission: 3,
+            permissionDescription:
+              'Form fill-in, signing, annotation creation/deletion/modification permitted',
+            violatedByLaterChanges: false,
+            violationAssessment: 'permitted' as const,
+            assessmentReason: 'every later change is of a kind P=3 permits',
+            laterChangesAppearLtvOnly: false,
+          },
+        }),
+      }),
+      'general',
+    );
+    expect(ids(e)).not.toContain('POL-REVIEW-DOCMDP-VIOLATION');
+    expect(ids(e)).not.toContain('POL-REVIEW-DOCMDP-INDETERMINATE');
+  });
+
   it('DocMDP violation → human_review_required', () => {
     const e = evaluatePolicy(
       facts({
@@ -152,6 +199,8 @@ describe('policy engine (synthetic facts)', () => {
             permission: 1,
             permissionDescription: 'No changes permitted',
             violatedByLaterChanges: true,
+            violationAssessment: 'violated' as const,
+            assessmentReason: 'P=1 permits no changes',
             laterChangesAppearLtvOnly: false,
           },
         }),
@@ -296,6 +345,8 @@ describe('V-A1: post-signing changes on non-certified signatures', () => {
           permission: 1,
           permissionDescription: 'No changes permitted',
           violatedByLaterChanges: true,
+          violationAssessment: 'violated' as const,
+          assessmentReason: 'P=1 permits no changes',
           laterChangesAppearLtvOnly: false,
         },
       }),

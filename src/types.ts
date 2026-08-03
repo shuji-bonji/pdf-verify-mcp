@@ -134,7 +134,28 @@ export interface IntegrityReport {
     fieldName: string | null;
     permission: number;
     permissionDescription: string;
+    /**
+     * `violationAssessment === 'violated'`. Kept as a boolean for callers that
+     * only branch on "is this a problem"; **`indeterminate` reads as `false`
+     * here**, so anything that must not treat "could not tell" as "fine"
+     * should read `violationAssessment` instead.
+     */
     violatedByLaterChanges: boolean;
+    /**
+     * What the later changes were, against the permissions P grants
+     * (ISO 32000-2 Table 257):
+     *
+     * - `permitted` — every later change falls inside what P allows
+     * - `violated` — at least one change is outside it
+     * - `indeterminate` — the change chain could not be read, or a changed
+     *   object's kind could not be determined. **NOT a pass.** Same discipline
+     *   as `validate_clauses` returning `needs_external_fact` rather than
+     *   defaulting a check into a pass: this server disproves, and "could not
+     *   be disproved" is a different statement from "is fine".
+     */
+    violationAssessment: DocMdpAssessment;
+    /** Why the assessment came out that way, in one line */
+    assessmentReason: string;
     /**
      * true when bytes were added after the certified range but a DSS and/or
      * document timestamp is present — the ISO 32000-2 §12.8.2.2 exception
@@ -168,6 +189,48 @@ export interface IntegrityReport {
 /** Which form of cross-reference section a revision used */
 export type XrefKind = 'table' | 'stream' | 'hybrid';
 
+/** Outcome of comparing later changes against the DocMDP permission */
+export type DocMdpAssessment = 'permitted' | 'violated' | 'indeterminate';
+
+/**
+ * What kind of change an object represents, for DocMDP (ISO 32000-2 Table 257).
+ *
+ * The table talks about **kinds of change** ("filling in forms", "annotation
+ * creation"), not about object types, so the mapping is this server's reading
+ * of the clause and is stated as such:
+ *
+ * - `form-fill` — form fields and their widgets. Table 257 P=2: "filling in forms"
+ * - `signature` — signature dictionaries, document timestamps, DSS. P=2: "signing"
+ *   (and the P=1 DSS/DTS exception in the same row)
+ * - `annotation` — a non-Widget annotation. P=3: "annotation creation, deletion,
+ *   and modification"
+ * - `housekeeping` — objects that a *permitted* change necessarily drags along:
+ *   the page whose `/Annots` gained an entry, the catalog, the `/Info`
+ *   dictionary, the XMP stream. Measured: a lawful P=3 annotation addition
+ *   touches all four. Treating them as changes in their own right would make
+ *   **every** certified document violate, which is not a usable reading
+ * - `bookkeeping` — cross-reference and object streams; every save rewrites them
+ * - `content` — the structure tree, fonts, XObjects, graphics state: changes no
+ *   P value permits
+ * - `unknown` — the object's kind could not be read. **Never folded into
+ *   `housekeeping`**; it makes the assessment `indeterminate`.
+ *
+ * ⚠️ A bare stream (`<< /Length n >>` with no `/Type`) lands in `unknown`, not
+ * `content`, and that is deliberate: the same bytes could be a form field's
+ * appearance stream (which P=2 permits) or a page's content stream (which no P
+ * permits). Reading it as `content` would report a violation that was not
+ * shown; reading it as `housekeeping` would let a real one through.
+ * "Not determined" is the only honest answer.
+ */
+export type DocMdpChangeClass =
+  | 'form-fill'
+  | 'signature'
+  | 'annotation'
+  | 'housekeeping'
+  | 'bookkeeping'
+  | 'content'
+  | 'unknown';
+
 /** One object written by a revision, relative to every older revision */
 export interface RevisionObjectChange {
   objectNumber: number;
@@ -184,6 +247,12 @@ export interface RevisionObjectChange {
   subtype: string | null;
   /** Plain-language role, e.g. `annotation (Widget)`. `null` when unknown */
   role: string | null;
+  /**
+   * Machine-readable kind, for the DocMDP assessment. `role` is prose for a
+   * reader; **this is what the rule reads** — a rule that string-matched
+   * `role` would break the moment the wording is improved.
+   */
+  changeClass: DocMdpChangeClass;
   /**
    * true for cross-reference streams and object streams: file bookkeeping that
    * every incremental update rewrites, not a change to document content

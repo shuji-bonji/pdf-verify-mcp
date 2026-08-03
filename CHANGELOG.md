@@ -2,6 +2,65 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.0] - 2026-08-04
+
+### Fixed
+
+- **DocMDP violations are now assessed against what the permission actually grants, not only
+  against P=1.** The check was a single expression —
+
+  ```ts
+  violatedByLaterChanges: permission === 1 && laterChanges && !laterChangesAppearLtvOnly
+  ```
+
+  — so **P=2 and P=3 could never be reported as violated, whatever was appended.** A document
+  certified with P=2 that gained an annotation after certification read as clean, although
+  ISO 32000-2 **Table 257** grants annotation creation only from P=3 and says of everything else
+  that it "shall invalidate the signature".
+
+  This failed open rather than closed: `evaluate_policy`'s `POL-REVIEW-DOCMDP-VIOLATION` fires on
+  this field, so such a document was not raised to `human_review_required` either — it came back
+  `use_with_caution`, which is the verdict for an ordinary unverified-signer document.
+
+  The fix is not a stricter threshold but a different question — **what kind of change was it**,
+  which the object-level diff (0.10.0) already had the material to answer. Each changed object now
+  carries a machine-readable `changeClass` (`form-fill` / `signature` / `annotation` /
+  `housekeeping` / `bookkeeping` / `content` / `unknown`) and the assessment compares those against
+  the classes the P value permits.
+
+  Objects that a *permitted* change necessarily drags along are classified as `housekeeping` and do
+  not by themselves constitute a violation: measured on a lawful P=3 annotation addition, the page
+  (whose `/Annots` grew), the catalog, the `/Info` dictionary and the XMP stream all move. Counting
+  those as changes in their own right would make **every** certified document violate.
+
+### Added
+
+- **`certification.violationAssessment`** — three-valued: `permitted` / `violated` /
+  `indeterminate`, with `certification.assessmentReason` giving the one-line why.
+
+  **`indeterminate` is not a pass.** It is returned when bytes were appended but the
+  cross-reference chain could not be walked, the chain is incomplete, or a changed object's kind
+  could not be read (objects inside an object stream, for instance). This is the same discipline as
+  `validate_clauses` returning `needs_external_fact` rather than defaulting a check into a pass:
+  this server disproves, and "could not be disproved" is a different statement from "is fine".
+
+  `violatedByLaterChanges` (boolean) is kept for compatibility and equals
+  `violationAssessment === 'violated'` — note that it therefore **collapses `indeterminate` to
+  `false`**. Read `violationAssessment` when "could not tell" must not be mistaken for "fine".
+
+- **`POL-REVIEW-DOCMDP-INDETERMINATE`** in `evaluate_policy`: an undetermined DocMDP assessment now
+  raises the verdict to `human_review_required` too. Reviewing a handful of unreadable files is the
+  cheaper error.
+
+- **`RevisionObjectChange.changeClass`** — the machine-readable counterpart to `role`. `role` is
+  prose for a reader and may be reworded; rules read `changeClass`.
+
+### Notes
+
+- Found by the C-3b signature-specimen corpus (PDFfamily `specs/25` §4.1.1): specimens certified at
+  P=1 / P=2 / P=3 with the *same* annotation appended afterwards. The 43-case boundary eval carries
+  only a P=1 specimen, so 26 full runs never touched this path.
+
 ## [0.13.0] - 2026-07-29
 
 ### Fixed

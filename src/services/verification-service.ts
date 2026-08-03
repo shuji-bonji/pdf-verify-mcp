@@ -14,10 +14,13 @@ import {
   WEAK_DIGESTS,
 } from '../constants.js';
 import type {
+  DocMdpAssessment,
+  DocMdpChangeClass,
   IntegrityReport,
   PadesLevelReport,
   ParsedPdf,
   RevisionObjectChange,
+  RevisionSummary,
   SignatureField,
   SignatureVerificationReport,
   TrustResult,
@@ -284,6 +287,148 @@ export async function verifySignatures(
   return reports;
 }
 
+/**
+ * What each DocMDP permission value allows, as classes of change.
+ *
+ * ISO 32000-2 Table 257 (12.8.2.2.2):
+ *   1 — "No changes to the document shall be permitted"
+ *   2 — "Permitted changes shall be filling in forms, instantiating page
+ *        templates, and signing; other changes shall invalidate the signature."
+ *   3 — "the same as for 2, as well as annotation creation, deletion, and
+ *        modification; other changes shall invalidate the signature."
+ *
+ * `housekeeping` and `bookkeeping` are allowed at every value: they are what a
+ * permitted change necessarily drags along (the page whose /Annots grew, the
+ * /Info dictionary's /ModDate, the cross-reference stream). Measured on a
+ * lawful P=3 annotation addition: catalog, page, /Info and XMP all move.
+ * Counting them as changes in their own right would make every certified
+ * document violate, which cannot be the reading.
+ *
+ * ⚠️ P=1 is NOT expressed here: "any change" is judged from bytes, with the
+ * §12.8.2.2 DSS/document-timestamp exception. Keeping it out of the table
+ * avoids implying that P=1 tolerates housekeeping.
+ */
+const DOCMDP_PERMITTED_CLASSES: Readonly<Record<number, ReadonlySet<DocMdpChangeClass>>> = {
+  2: new Set<DocMdpChangeClass>(['form-fill', 'signature', 'housekeeping', 'bookkeeping']),
+  3: new Set<DocMdpChangeClass>([
+    'form-fill',
+    'signature',
+    'annotation',
+    'housekeeping',
+    'bookkeeping',
+  ]),
+};
+
+/** Objects written by revisions appended after `rangeEnd`. */
+function changesAfter(
+  diff: { revisions: RevisionSummary[] } | null,
+  rangeEnd: number | null,
+): RevisionObjectChange[] {
+  if (!diff || rangeEnd === null) return [];
+  const out: RevisionObjectChange[] = [];
+  for (const revision of diff.revisions) {
+    if (revision.xrefOffset < rangeEnd || !revision.changes) continue;
+    out.push(...revision.changes);
+  }
+  return out;
+}
+
+/**
+ * Decide whether the changes made after certification stay inside what P allows.
+ *
+ * 🔴 Before 0.14.0 this was one expression — `permission === 1 && laterChanges` —
+ * so **P=2 and P=3 could never be violated**, whatever was appended. A P=2
+ * document that gained an annotation (which Table 257 grants only from P=3)
+ * read as clean, and `POL-REVIEW-DOCMDP-VIOLATION` never fired, so the 4-value
+ * verdict did not rise to human_review_required either. It failed open.
+ *
+ * The fix is not a stricter threshold but a different question: **what kind of
+ * change was it**, which the object-level diff already answers.
+ */
+function assessDocMdp(input: {
+  permission: number;
+  laterChanges: boolean;
+  laterChangesAppearLtvOnly: boolean;
+  changes: RevisionObjectChange[];
+  diffAvailable: boolean;
+  chainIncomplete: boolean;
+}): { assessment: DocMdpAssessment; reason: string } {
+  const { permission, laterChanges, laterChangesAppearLtvOnly, changes } = input;
+
+  if (!laterChanges) {
+    return { assessment: 'permitted', reason: 'nothing was appended after the certified range' };
+  }
+  if (permission === 1) {
+    return laterChangesAppearLtvOnly
+      ? {
+          assessment: 'permitted',
+          reason:
+            'a DSS and/or document timestamp is present, the ISO 32000-2 §12.8.2.2 exception for P=1',
+        }
+      : {
+          assessment: 'violated',
+          reason:
+            'P=1 permits no changes, and the later updates are not DSS/document-timestamp only',
+        };
+  }
+
+  const permitted = DOCMDP_PERMITTED_CLASSES[permission];
+  if (!permitted) {
+    return {
+      assessment: 'indeterminate',
+      reason: `permission value ${permission} is not one of the values ISO 32000-2 Table 257 defines (1, 2, 3)`,
+    };
+  }
+  // 🔴 Bytes were appended, but the chain could not be read — "could not tell",
+  // not "fine". [[revision-diff-lies-linearized-and-full-save]]: not being able
+  // to walk the chain is not evidence that nothing changed.
+  if (!input.diffAvailable) {
+    return {
+      assessment: 'indeterminate',
+      reason: 'bytes were appended but the cross-reference chain could not be walked',
+    };
+  }
+  if (input.chainIncomplete) {
+    return {
+      assessment: 'indeterminate',
+      reason: 'the revision chain is incomplete, so the later changes are not fully represented',
+    };
+  }
+  if (changes.length === 0) {
+    return {
+      assessment: 'indeterminate',
+      reason: 'bytes were appended after the certified range but no changed object could be listed',
+    };
+  }
+
+  const offending = changes.filter(
+    (c) => c.changeClass !== 'unknown' && !permitted.has(c.changeClass),
+  );
+  if (offending.length > 0) {
+    const shown = offending
+      .slice(0, 3)
+      .map((c) => `obj ${c.objectNumber} (${c.role ?? c.changeClass})`)
+      .join(', ');
+    return {
+      assessment: 'violated',
+      reason: `${offending.length} object(s) outside what P=${permission} permits: ${shown}`,
+    };
+  }
+  const unknown = changes.filter((c) => c.changeClass === 'unknown');
+  if (unknown.length > 0) {
+    return {
+      assessment: 'indeterminate',
+      reason:
+        `${unknown.length} changed object(s) could not be typed (e.g. objects inside an object ` +
+        'stream), so whether they stay inside P is not determined',
+    };
+  }
+  return {
+    assessment: 'permitted',
+    reason: `every later change is of a kind P=${permission} permits`,
+  };
+}
+
 /** Analyze document integrity (incremental updates, DocMDP) */
 export function analyzeIntegrity(parsed: ParsedPdf): IntegrityReport {
   const notes: string[] = [];
@@ -295,6 +440,20 @@ export function analyzeIntegrity(parsed: ParsedPdf): IntegrityReport {
       bytesAfterSignedRange: bytesAfterRange(parsed.fileSize, sig.byteRange) ?? 0,
     }))
     .filter((s) => s.bytesAfterSignedRange > 0);
+
+  // Issue #8 — which objects each incremental update wrote. Observation only:
+  // it refines "N bytes were appended" into "these objects were written".
+  // 🔴 Computed **before** the DocMDP assessment: P=2/P=3 cannot be judged from
+  // byte counts alone (that was the bug — see `assessDocMdp`).
+  const diff = diffRevisions({
+    bytes: parsed.bytes,
+    signedRanges: signed.flatMap((sig) => {
+      const range = sig.byteRange;
+      return range?.length === 4
+        ? [{ fieldName: sig.fieldName, endOffset: range[2] + range[3] }]
+        : [];
+    }),
+  });
 
   const certificationSig = signed.find((s) => s.docMdpPermission !== null);
   let certification: IntegrityReport['certification'] = null;
@@ -318,20 +477,36 @@ export function analyzeIntegrity(parsed: ParsedPdf): IntegrityReport {
         s.byteRange[2] + s.byteRange[3] > certRangeEnd,
     );
     const laterChangesAppearLtvOnly = laterChanges && (parsed.hasDss || laterDts);
+    const { assessment, reason } = assessDocMdp({
+      permission,
+      laterChanges,
+      laterChangesAppearLtvOnly,
+      changes: changesAfter(diff, certRangeEnd),
+      diffAvailable: diff !== null,
+      chainIncomplete: diff?.truncated === true || diff?.newestSectionUnreadable === true,
+    });
     certification = {
       fieldName: certificationSig.fieldName,
       permission,
       permissionDescription: DOCMDP_PERMISSIONS[permission] ?? `Unknown permission ${permission}`,
-      violatedByLaterChanges: permission === 1 && laterChanges && !laterChangesAppearLtvOnly,
+      violatedByLaterChanges: assessment === 'violated',
+      violationAssessment: assessment,
+      assessmentReason: reason,
       laterChangesAppearLtvOnly,
     };
-    if (certification.violatedByLaterChanges) {
+    if (assessment === 'violated') {
       notes.push(
-        'DocMDP permission is 1 (no changes permitted) but the file was modified after certification. ' +
-          'No DSS or document timestamp was found in the later updates, so the ISO 32000-2 §12.8.2.2 ' +
-          'exception (DSS/document-timestamp incremental updates) does not apply.',
+        `DocMDP permission is ${permission} (${DOCMDP_PERMISSIONS[permission] ?? 'unknown'}) and the ` +
+          `file was changed after certification in a way that value does not permit: ${reason}. ` +
+          'ISO 32000-2 Table 257 states that other changes "shall invalidate the signature".',
       );
-    } else if (permission === 1 && laterChanges) {
+    } else if (assessment === 'indeterminate') {
+      notes.push(
+        `DocMDP permission is ${permission}, but whether the later changes stay inside it could NOT be ` +
+          `determined: ${reason}. This is not a pass — read violationAssessment, not ` +
+          'violatedByLaterChanges (which is false here only because nothing could be disproved).',
+      );
+    } else if (permission === 1 && laterChanges && laterChangesAppearLtvOnly) {
       notes.push(
         'The file was modified after certification (P=1), but a DSS and/or document timestamp is present — ' +
           'ISO 32000-2 §12.8.2.2 permits DSS/document-timestamp incremental updates even when P=1. ' +
@@ -353,28 +528,9 @@ export function analyzeIntegrity(parsed: ParsedPdf): IntegrityReport {
     );
   }
 
-  // Issue #8 — which objects each incremental update wrote. Observation only:
-  // it refines "N bytes were appended" into "these objects were written", and
-  // deliberately leaves every verdict above untouched.
-  const diff = diffRevisions({
-    bytes: parsed.bytes,
-    signedRanges: signed.flatMap((sig) => {
-      const range = sig.byteRange;
-      return range?.length === 4
-        ? [{ fieldName: sig.fieldName, endOffset: range[2] + range[3] }]
-        : [];
-    }),
-  });
-
   const lastSignedEnd =
     last?.byteRange?.length === 4 ? last.byteRange[2] + last.byteRange[3] : null;
-  const objectChangesAfterLastSignature: RevisionObjectChange[] = [];
-  if (diff && lastSignedEnd !== null) {
-    for (const revision of diff.revisions) {
-      if (revision.xrefOffset < lastSignedEnd || !revision.changes) continue;
-      objectChangesAfterLastSignature.push(...revision.changes);
-    }
-  }
+  const objectChangesAfterLastSignature = changesAfter(diff, lastSignedEnd);
 
   if (diff === null && parsed.revisionCount > 1) {
     notes.push(

@@ -181,8 +181,21 @@ const RULES: RuleDef[] = [
     ruleId: 'POL-REVIEW-DOCMDP-VIOLATION',
     verdict: 'human_review_required',
     applies: (f) =>
-      f.integrity.certification?.violatedByLaterChanges
-        ? `DocMDP permission ${f.integrity.certification.permission} violated by changes after certification`
+      f.integrity.certification?.violationAssessment === 'violated'
+        ? `DocMDP permission ${f.integrity.certification.permission} violated by changes after certification: ${f.integrity.certification.assessmentReason}`
+        : null,
+  },
+  {
+    // 🔴 "Could not tell" must not read as "fine". Before 0.14.0 the assessment
+    // was a boolean, so a document whose later changes could not be classified
+    // was indistinguishable from one that was verified clean — and the verdict
+    // stayed at use_with_caution. Reviewing a handful of unreadable files is
+    // the cheaper error.
+    ruleId: 'POL-REVIEW-DOCMDP-INDETERMINATE',
+    verdict: 'human_review_required',
+    applies: (f) =>
+      f.integrity.certification?.violationAssessment === 'indeterminate'
+        ? `DocMDP permission ${f.integrity.certification.permission}: whether the later changes stay inside it could not be determined (${f.integrity.certification.assessmentReason})`
         : null,
   },
   {

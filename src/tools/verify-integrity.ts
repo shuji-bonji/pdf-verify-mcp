@@ -17,7 +17,11 @@ export function registerVerifyIntegrity(server: McpServer): void {
       title: 'Verify PDF Integrity (tamper detection)',
       description: `Analyze a PDF for modifications after signing.
 
-Reports: number of revisions (incremental updates), whether bytes were added after each signature's signed range, whether the last signature covers the entire file, DocMDP certification permissions and violations, and DSS presence. Per ISO 32000-2 §12.8.2.2, DSS/document-timestamp incremental updates after a P=1 certification are NOT reported as violations (structural detection; flagged as laterChangesAppearLtvOnly).
+Reports: number of revisions (incremental updates), whether bytes were added after each signature's signed range, whether the last signature covers the entire file, DocMDP certification permissions and violations, and DSS presence.
+
+DocMDP is assessed against what the P value actually permits (ISO 32000-2 Table 257): P=1 permits nothing, P=2 form fill-in and signing, P=3 additionally annotation creation/deletion/modification. The later changes are classified from the object-level diff (changeClass), so adding an annotation to a P=2 document is reported as a violation while the same change to a P=3 document is not. Objects a permitted change necessarily drags along — the page whose /Annots grew, the catalog, /Info, the XMP stream — are classified as housekeeping and do not by themselves constitute a violation. Per ISO 32000-2 §12.8.2.2, DSS/document-timestamp incremental updates after a P=1 certification are NOT violations (flagged as laterChangesAppearLtvOnly).
+
+violationAssessment is three-valued: "permitted" / "violated" / "indeterminate". **"indeterminate" is not a pass** — it means the chain could not be walked or a changed object's kind could not be read, so nothing could be disproved. The boolean violatedByLaterChanges collapses indeterminate to false for backward compatibility; read violationAssessment when "could not tell" must not be mistaken for "fine".
 
 Also reports an object-level diff of the incremental-update chain: for each revision, which objects were added, rewritten or freed, with the object's /Type and a plain-language role (annotation, form field widget, page object, content stream, …), plus the shortlist of objects written after the last signed range (objectChangesAfterLastSignature). Cross-reference and object streams are flagged as bookkeeping. Where the objects sit on the page is pdf-reader-mcp's answer, not this server's.
 

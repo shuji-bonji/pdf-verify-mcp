@@ -6,6 +6,7 @@ import { CHARACTER_LIMIT } from '../constants.js';
 import type {
   CmsVerificationResult,
   ConformanceReport,
+  DocMdpAssessment,
   IntegrityReport,
   PadesLevelReport,
   RevisionObjectChange,
@@ -112,7 +113,17 @@ export function formatIntegrityReport(report: IntegrityReport): string {
     lines.push('', '## Certification (DocMDP)');
     lines.push(`- Field: ${c.fieldName ?? '(unnamed)'}`);
     lines.push(`- Permission: ${c.permission} — ${c.permissionDescription}`);
-    lines.push(`- Violated by later changes: **${yesNo(c.violatedByLaterChanges)}**`);
+    // 🔴 Print the three-valued assessment, not the boolean. `indeterminate`
+    // collapses to "no" in the boolean, and "we could not tell" reported as
+    // "not violated" is exactly the failure this section had before 0.14.0.
+    const label =
+      c.violationAssessment === 'violated'
+        ? '**yes**'
+        : c.violationAssessment === 'indeterminate'
+          ? '**not determined** (could not be checked — this is not a pass)'
+          : 'no';
+    lines.push(`- Violated by later changes: ${label}`);
+    lines.push(`  - ${c.assessmentReason}`);
     if (c.laterChangesAppearLtvOnly) {
       lines.push(
         '- Later changes appear to be DSS/document-timestamp updates (permitted by ISO 32000-2 §12.8.2.2)',
@@ -191,7 +202,12 @@ interface PolicyReportForFormat {
     incrementalUpdateCount: number;
     lastSignatureCoversFile: boolean | null;
     signaturesWithLaterChanges: { fieldName: string | null; bytesAfterSignedRange: number }[];
-    certification: { permission: number; violatedByLaterChanges: boolean } | null;
+    certification: {
+      permission: number;
+      violatedByLaterChanges: boolean;
+      violationAssessment: DocMdpAssessment;
+      assessmentReason: string;
+    } | null;
     hasDss: boolean;
     padesLevels: { fieldName: string | null; level: string | null; normativeBasis?: string }[];
     conformance: { flavour: string; engine: string; compliant: boolean | null } | null;

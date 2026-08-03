@@ -76,6 +76,90 @@ describe('analyzeIntegrity', () => {
 });
 
 /**
+ * DocMDP against what P actually grants (ISO 32000-2 Table 257), not only P=1.
+ *
+ * 🔴 Until 0.14.0 the check began with `permission === 1`, so **P=2 and P=3
+ * could never be violated**. The three tests below are the same appended
+ * annotation judged at each permission — the discriminating triple.
+ */
+describe('analyzeIntegrity — DocMDP P=2 / P=3', () => {
+  const annotation = {
+    objectNumber: 8,
+    body: '<< /Type /Annot /Subtype /Text /Rect [ 400 700 420 720 ] /Contents (added after signing) >>',
+  };
+  const widget = {
+    objectNumber: 8,
+    body: '<< /Type /Annot /Subtype /Widget /FT /Tx /T (Amount) /Rect [ 100 700 200 720 ] /V (1,000) >>',
+  };
+
+  it('flags an annotation appended to a P=2 document (Table 257 grants it only from P=3)', async () => {
+    const certified = await createSignedPdf(identity, { docMdpPermission: 2 });
+    const report = analyzeIntegrity(
+      await parsePdfBytes(appendObjectRevision(certified, { objects: [annotation] })),
+    );
+    expect(report.certification?.permission).toBe(2);
+    expect(report.certification?.violationAssessment).toBe('violated');
+    expect(report.certification?.violatedByLaterChanges).toBe(true);
+    expect(report.certification?.assessmentReason).toMatch(/outside what P=2 permits/);
+  });
+
+  it('does NOT flag the same annotation on a P=3 document', async () => {
+    const certified = await createSignedPdf(identity, { docMdpPermission: 3 });
+    const report = analyzeIntegrity(
+      await parsePdfBytes(appendObjectRevision(certified, { objects: [annotation] })),
+    );
+    expect(report.certification?.permission).toBe(3);
+    expect(report.certification?.violationAssessment).toBe('permitted');
+    expect(report.certification?.violatedByLaterChanges).toBe(false);
+  });
+
+  it('does NOT flag a form-field widget on a P=2 document ("filling in forms")', async () => {
+    const certified = await createSignedPdf(identity, { docMdpPermission: 2 });
+    const report = analyzeIntegrity(
+      await parsePdfBytes(appendObjectRevision(certified, { objects: [widget] })),
+    );
+    expect(report.certification?.violationAssessment).toBe('permitted');
+  });
+
+  it('flags a page content stream on a P=3 document (no P value permits it)', async () => {
+    const certified = await createSignedPdf(identity, { docMdpPermission: 3 });
+    const report = analyzeIntegrity(
+      await parsePdfBytes(
+        appendObjectRevision(certified, {
+          objects: [
+            { objectNumber: 8, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>' },
+          ],
+        }),
+      ),
+    );
+    expect(report.certification?.violationAssessment).toBe('violated');
+  });
+
+  it('reports indeterminate — not permitted — when a changed object cannot be typed', async () => {
+    // An object whose kind cannot be read must not be counted as harmless.
+    // "Could not be disproved" is a different statement from "is fine".
+    const certified = await createSignedPdf(identity, { docMdpPermission: 2 });
+    const report = analyzeIntegrity(
+      await parsePdfBytes(
+        appendObjectRevision(certified, { objects: [{ objectNumber: 8, body: '42' }] }),
+      ),
+    );
+    expect(report.certification?.violationAssessment).toBe('indeterminate');
+    // 🔴 The boolean collapses indeterminate to false. That is exactly why the
+    // three-valued field exists, and why callers must not read the boolean alone.
+    expect(report.certification?.violatedByLaterChanges).toBe(false);
+    expect(report.notes.join(' ')).toMatch(/not a pass/);
+  });
+
+  it('reports indeterminate when bytes were appended but the chain cannot be walked', async () => {
+    const certified = await createSignedPdf(identity, { docMdpPermission: 2 });
+    // appendIncrementalUpdate writes startxref 0 — the newest section is unreadable
+    const report = analyzeIntegrity(await parsePdfBytes(appendIncrementalUpdate(certified)));
+    expect(report.certification?.violationAssessment).toBe('indeterminate');
+  });
+});
+
+/**
  * Issue #8 / family gap G-B — the object-level view of the update chain.
  * Every assertion here is about *observation*: no verdict may move because of
  * it, which the last test in this block pins down explicitly.
