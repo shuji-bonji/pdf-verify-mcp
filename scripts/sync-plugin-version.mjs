@@ -3,7 +3,7 @@
  * plugin.json の version を package.json に同期する。
  *
  * リリースのたびに plugin.json が置き去りになる事故が 2 度起きた
- * (0.11.0→0.14.0 の 8452b4f / 0.14.0→0.14.1 の 5232b20 — どちらも tag の後の追いコミット)。
+ * (0.11.0→0.14.0 の 8452b4f / 0.14.0→0.14.2 の 5232b20 — どちらも tag の後の追いコミット)。
  * `npm version` の version フックから呼ばれることで、リリースコミット =
  * tag の木に正しい plugin.json が入る。
  *
@@ -26,7 +26,9 @@ if (plugin.version === pkg.version) {
 }
 
 if (process.argv.includes('--check')) {
-  console.error(`plugin.json ${plugin.version} ≠ package.json ${pkg.version} — node scripts/sync-plugin-version.mjs で同期してください`);
+  console.error(
+    `plugin.json ${plugin.version} ≠ package.json ${pkg.version} — node scripts/sync-plugin-version.mjs で同期してください`,
+  );
   process.exit(1);
 }
 

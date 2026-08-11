@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.14.1] - 2026-08-11
+## [0.14.2] - 2026-08-11
 
 ### Fixed
 
@@ -36,7 +36,9 @@ All notable changes to this project will be documented in this file.
   against P=1.** The check was a single expression —
 
   ```ts
-  violatedByLaterChanges: permission === 1 && laterChanges && !laterChangesAppearLtvOnly
+  violatedByLaterChanges: permission === 1 &&
+    laterChanges &&
+    !laterChangesAppearLtvOnly;
   ```
 
   — so **P=2 and P=3 could never be reported as violated, whatever was appended.** A document
@@ -54,7 +56,7 @@ All notable changes to this project will be documented in this file.
   `housekeeping` / `bookkeeping` / `content` / `unknown`) and the assessment compares those against
   the classes the P value permits.
 
-  Objects that a *permitted* change necessarily drags along are classified as `housekeeping` and do
+  Objects that a _permitted_ change necessarily drags along are classified as `housekeeping` and do
   not by themselves constitute a violation: measured on a lawful P=3 annotation addition, the page
   (whose `/Annots` grew), the catalog, the `/Info` dictionary and the XMP stream all move. Counting
   those as changes in their own right would make **every** certified document violate.
@@ -84,7 +86,7 @@ All notable changes to this project will be documented in this file.
 ### Notes
 
 - Found by the C-3b signature-specimen corpus (PDFfamily `specs/25` §4.1.1): specimens certified at
-  P=1 / P=2 / P=3 with the *same* annotation appended afterwards. The 43-case boundary eval carries
+  P=1 / P=2 / P=3 with the _same_ annotation appended afterwards. The 43-case boundary eval carries
   only a P=1 specimen, so 26 full runs never touched this path.
 
 ## [0.13.0] - 2026-07-29
@@ -164,7 +166,7 @@ All notable changes to this project will be documented in this file.
 
   The trap here is that **PDF/A-4 has no conformance level.** `4b` does not exist, and the old
   code defaulted an absent level to `b` — applied to part 4 that would have sent veraPDF a
-  profile id no profile answers to. `E` and `F` are *variants*, not levels, and they are carried
+  profile id no profile answers to. `E` and `F` are _variants_, not levels, and they are carried
   in the same field because they occupy the same slot in both places that name them: the
   `pdfaid:conformance` property and the veraPDF profile id. Combinations that name nothing real
   (`pdfa-4b`, `pdfa-2e`) are rejected here rather than passed downstream, and an XMP declaration
@@ -173,7 +175,6 @@ All notable changes to this project will be documented in this file.
   Two native rules move, and **only two** — the native rule set was written from ISO 19005-1/-2,
   and ISO 19005-4 is outside this family's corpus (T2), so anything not visible from PDF 2.0
   itself is left to the oracle rather than guessed at:
-
   - `pdf-version` takes no range for part 4. PDF/A-4 is built on ISO 32000-2, so the file either
     carries a 2.0 header or it does not.
   - `output-intent` no longer applies to part 4. Whether -4 requires one unconditionally cannot
@@ -189,7 +190,7 @@ All notable changes to this project will be documented in this file.
   evidence that the -4 profile is the one running, rather than a 1.7-era profile answering to a
   new name. `pdfa-4b` is still refused. PDF/UA-1 is unmoved at 106/106.
 
-  Note on what this does *not* change: PDF/A-4 remains **T2**. veraPDF having a profile for it is
+  Note on what this does _not_ change: PDF/A-4 remains **T2**. veraPDF having a profile for it is
   not the same as this family being able to read ISO 19005-4, so a -4 result is still "veraPDF
   judged this", never "conforms to ISO 19005-4".
 
@@ -197,13 +198,13 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **`verify_integrity` now says *which objects* an incremental update wrote (V-F2 / Issue #8).**
+- **`verify_integrity` now says _which objects_ an incremental update wrote (V-F2 / Issue #8).**
   The tool could say "574 bytes were added after this signature" but not whether those bytes
   were an annotation, a form field value, or a page's content — which is the difference between
   a countersignature and a rewritten payment amount. It now walks the cross-reference chain in
   the raw bytes (`startxref` → `/Prev`, classic tables, cross-reference streams and
   hybrid-reference files) and reports, per revision, the objects added / rewritten / freed, each
-  with the `/Type` written *in that revision* and a plain-language role. Objects written after
+  with the `/Type` written _in that revision_ and a plain-language role. Objects written after
   the last signed range are also collected into `objectChangesAfterLastSignature`, the shortlist
   UC-10 hands on for locating.
 
@@ -213,10 +214,9 @@ All notable changes to this project will be documented in this file.
   one view of the document, which is precisely the information that has to be kept apart here.
 
   Three ways the naive version would have lied, and what was done about each:
-
   - **A linearised file** (ISO 32000-1 Annex F) carries two cross-reference sections for a
     single save. Following the chain turns that into "revision 2 added every object". The
-    giveaway is that the newer section sits at a *lower* offset; the two are merged back into
+    giveaway is that the newer section sits at a _lower_ offset; the two are merged back into
     the one revision they belong to. Measured on the reader's `linearized.pdf`: 2 revisions and
     10 phantom additions before, 1 revision after.
   - **A full save** ("Save As" rather than an incremental update) can rewrite six figures of
@@ -250,7 +250,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 
 - **Roughly one signature in 256 was reported as unparseable (V-P1).** `/Contents` holds the CMS
-  in a fixed-size slot padded with zero bytes, and the parser removed *every* trailing zero to
+  in a fixed-size slot padded with zero bytes, and the parser removed _every_ trailing zero to
   get the CMS back. But a DER blob may legitimately end with `0x00` — measured at 0.7% of
   signatures here — and cutting that byte truncates the structure. `fromBER` then rejects it,
   so a valid signature came back as "CMS payload is not valid BER/DER": a false alarm in the
@@ -269,7 +269,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 
 - **`validate_clauses` — constraints mapped from ISO 32000-1/-2 clauses (T1).** This is ground
-  the other tools do not cover: `validate_conformance` judges the PDF/A and PDF/UA *profiles*
+  the other tools do not cover: `validate_conformance` judges the PDF/A and PDF/UA _profiles_
   (and delegates to veraPDF for the authoritative answer), but a file can satisfy those and
   still violate the specification body. Embedding a CFF font program under `/FontFile2` —
   forbidden by Table 124 — is a real case that surfaced only as a viewer warning and was
@@ -283,15 +283,15 @@ All notable changes to this project will be documented in this file.
   rules reproducible across environments.
 
   Results keep four states rather than collapsing into pass/fail. `needs_external_fact` exists
-  because some clauses depend on facts the file does not contain — whether a font is a *subset*
+  because some clauses depend on facts the file does not contain — whether a font is a _subset_
   is known only to whoever made it — and defaulting those into a pass would manufacture silent
-  approval. Failures carrying `traceOnly` are worded as *traces*: those clauses address the PDF
+  approval. Failures carrying `traceOnly` are worded as _traces_: those clauses address the PDF
   processor, and §14.3.4 explicitly permits leaving an existing inconsistency alone, so the file
   shows that someone broke the rule, not that the last writer did.
 
   Since these are T1 clauses, a failure can be stated plainly with its clause ID — the wording
   comes from pdf-spec-mcp's `get_requirements`. The tool description, the `instructions` and
-  both READMEs say the same thing about its limit: no failures means nothing in the *bundled*
+  both READMEs say the same thing about its limit: no failures means nothing in the _bundled_
   constraints could be disproved, never that the document conforms.
 
 ## [0.8.0] - 2026-07-25
@@ -302,24 +302,23 @@ All notable changes to this project will be documented in this file.
   ([#9](https://github.com/shuji-bonji/pdf-verify-mcp/issues/9)).**
 
   `detect_pades_level` has always been structural — the tool description said so — but the
-  *output* did not. It read `Detected level: B-T`, which is indistinguishable from a verdict. So
+  _output_ did not. It read `Detected level: B-T`, which is indistinguishable from a verdict. So
   the level was being lifted into reports as "conforms to PAdES B-T", which this server has no
   standing to claim: ETSI EN 319 142 is not in the family's corpus, and unlike PDF/A there is no
   third-party validator to delegate the judgement to.
-
   - **`normativeBasis: 'T3'`** on every `PadesLevelReport`, and carried through
     `evaluate_policy`'s `facts.padesLevels`. Machine-readable, so a caller can branch on it
     instead of parsing prose.
-  - The note is now *"The structure matches PAdES B-T … This is an observation of structure, not a
-    conformance verdict"*. The markdown puts that caveat **above** the levels, because a caveat
+  - The note is now _"The structure matches PAdES B-T … This is an observation of structure, not a
+    conformance verdict"_. The markdown puts that caveat **above** the levels, because a caveat
     printed after the number is read after the number.
   - The two PAdES advisories keep their existing wording (callers match on it) and gain a clause
     saying the level is inferred from structure, not from ETSI text.
   - `evaluate_policy`'s notes gain one line, only when the document has signatures — no
     disclaimer where there is nothing to disclaim. Its `## PAdES levels` heading carries the
-    caveat too: a note in the trailing Notes section is read *after* the number it qualifies.
+    caveat too: a note in the trailing Notes section is read _after_ the number it qualifies.
 
-- **The server now sends `instructions` on `initialize`.** This server is read as *proving*
+- **The server now sends `instructions` on `initialize`.** This server is read as _proving_
   conformance and trust; it can only disprove. The instructions state that, then set out the
   three tiers (T1 quotable / T2 veraPDF decides / T3 observation only) so that a caller knows
   which vocabulary a given result licenses. They also restate the two limits that get forgotten
@@ -328,7 +327,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- `specs/09 §2` (family scope) previously defined T3 as *"hold; issue no verdict"*, which
+- `specs/09 §2` (family scope) previously defined T3 as _"hold; issue no verdict"_, which
   contradicted a tool that returns four levels. The boundary has been redrawn: **T3 forbids a
   conformance verdict, not an observation of structure.** "This signature has an RFC 3161
   timestamp and a DSS covering the signer" is a fact in the file; "this conforms to B-LT" needs
