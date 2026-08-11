@@ -37,6 +37,8 @@ export const OID = {
   MESSAGE_DIGEST: '1.2.840.113549.1.9.4',
   SIGNING_TIME: '1.2.840.113549.1.9.5',
   SIGNATURE_TIME_STAMP: '1.2.840.113549.1.9.16.2.14',
+  /** id-ct-TSTInfo — eContentType of an RFC 3161 timestamp token (RFC 3161 §2.4.2) */
+  TST_INFO: '1.2.840.113549.1.9.16.1.4',
   MD5: '1.2.840.113549.2.5',
   SHA1: '1.3.14.3.2.26',
   SHA256: '2.16.840.1.101.3.4.2.1',

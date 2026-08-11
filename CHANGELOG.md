@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.14.1] - 2026-08-11
+
+### Fixed
+
+- **Document timestamps (ETSI.RFC3161) are now actually verified.** `verify_signatures`
+  passed no external data to pkijs when the CMS content was encapsulated — but pkijs
+  re-checks the TSTInfo messageImprint against `data` even for encapsulated tokens
+  (RFC 3161 §2.4.2: eContent is the DER TSTInfo) and threw
+  `Missed detached data input array`. So **every document timestamp came back
+  INDETERMINATE, whoever produced it** — reproduced with three independent producers
+  (pyHanko, esig/dss test corpus, and the Japanese official gazette's AMANO TSA).
+  The signature-timestamp branch already passed the imprint data, which is why signature
+  timestamps from the very same TSA verified fine. The ByteRange bytes are now passed
+  for timestamp tokens.
+
+- **A TSA signature that computes false is INVALID, not INDETERMINATE.** The
+  document-timestamp branch now applies the same rule as ordinary signatures: a
+  signature that was measured and failed is a disproof; only "could not measure"
+  stays INDETERMINATE.
+
+### Tests
+
+- `tests/helpers/signed-pdf.ts` can now build document-timestamped fixtures
+  (`subFilter: 'ETSI.RFC3161'`, `mutateCms` for negative cases); three regression
+  tests cover valid / content-tampered / TSA-signature-false.
+
 ## [0.14.0] - 2026-08-04
 
 ### Fixed

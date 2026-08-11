@@ -263,11 +263,19 @@ export async function verifyCms(
       }
     } else {
       const hasEncapsulatedContent = Boolean(signedData.encapContentInfo.eContent);
+      // pkijs treats TSTInfo content specially even when encapsulated: it re-checks
+      // the TSTInfo messageImprint against `data` and throws "Missed detached data
+      // input array" without it. For a document timestamp (ETSI.RFC3161) the imprint
+      // data is exactly the ByteRange bytes, so pass them (RFC 3161 §2.4.2).
+      const isTimestampToken = signedData.encapContentInfo.eContentType === OID.TST_INFO;
       result.signatureVerified = await signedData.verify({
         signer: 0,
         checkChain: false,
-        // Detached signatures need the external data; encapsulated ones do not.
-        ...(hasEncapsulatedContent ? {} : { data: toArrayBuffer(signedBytes) }),
+        // Detached signatures need the external data; encapsulated ones do not —
+        // except timestamp tokens (see above).
+        ...(hasEncapsulatedContent && !isTimestampToken
+          ? {}
+          : { data: toArrayBuffer(signedBytes) }),
       });
     }
   } catch (error) {

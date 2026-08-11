@@ -257,7 +257,10 @@ export async function createTimestampToken(
 }
 
 export interface BuildPdfOptions {
-  subFilter?: 'ETSI.CAdES.detached' | 'adbe.pkcs7.detached';
+  /** ETSI.RFC3161 makes the field a document timestamp: /Contents becomes a
+   *  timestamp token over the ByteRange bytes (signed by `tsa`, or by the
+   *  main identity when no tsa is given). */
+  subFilter?: 'ETSI.CAdES.detached' | 'adbe.pkcs7.detached' | 'ETSI.RFC3161';
   /** Add a DocMDP certification with this permission (1-3) */
   docMdpPermission?: number;
   /** Embed an XMP metadata stream with these declarations */
@@ -266,6 +269,8 @@ export interface BuildPdfOptions {
   dss?: { certs?: Uint8Array[]; ocsps?: Uint8Array[]; crls?: Uint8Array[] };
   /** TSA identity: adds an RFC 3161 signature timestamp to the CMS */
   tsa?: TestIdentity;
+  /** Corrupt the CMS payload before embedding (for negative tests) */
+  mutateCms?: (cms: Uint8Array) => Uint8Array;
 }
 
 interface PdfTemplate {
@@ -480,7 +485,11 @@ export async function createSignedPdf(
   signedBytes.set(bytes.subarray(0, contentsStart), 0);
   signedBytes.set(bytes.subarray(contentsEnd), contentsStart);
 
-  const cms = await createCmsSignature(identity, signedBytes, options.tsa);
+  let cms =
+    options.subFilter === 'ETSI.RFC3161'
+      ? await createTimestampToken(options.tsa ?? identity, signedBytes)
+      : await createCmsSignature(identity, signedBytes, options.tsa);
+  if (options.mutateCms) cms = options.mutateCms(cms);
   if (cms.length * 2 > PLACEHOLDER_HEX_LEN) {
     throw new Error('CMS payload exceeds placeholder size');
   }

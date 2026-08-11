@@ -78,3 +78,54 @@ describe('verifySignatures', () => {
     expect(reports).toHaveLength(0);
   });
 });
+
+describe('document timestamps (ETSI.RFC3161)', () => {
+  let tsa: TestIdentity;
+
+  beforeAll(async () => {
+    tsa = await createTestIdentity();
+  });
+
+  // Regression: pkijs re-checks the TSTInfo messageImprint against `data` even for
+  // encapsulated content, and threw "Missed detached data input array" when the
+  // ByteRange bytes were not passed. All three real-world specimen families
+  // (pyHanko, esig/dss, kanpō/AMANO) hit this before the fix.
+  it('a valid document timestamp verifies', async () => {
+    const pdf = await createSignedPdf(tsa, { subFilter: 'ETSI.RFC3161' });
+    const parsed = await parsePdfBytes(pdf);
+    const [report] = await verifySignatures(parsed);
+
+    expect(report.verdict).toBe(Verdict.VALID);
+    expect(report.cms?.digestMatches).toBe(true);
+    expect(report.cms?.signatureVerified).toBe(true);
+    expect(report.cms?.error).toBeNull();
+  });
+
+  it('verdict is invalid when the timestamped bytes are tampered', async () => {
+    const pdf = await createSignedPdf(tsa, { subFilter: 'ETSI.RFC3161' });
+    const parsed = await parsePdfBytes(tamperSignedPdf(pdf));
+    const [report] = await verifySignatures(parsed);
+
+    expect(report.verdict).toBe(Verdict.INVALID);
+    expect(report.cms?.digestMatches).toBe(false);
+  });
+
+  it('verdict is invalid (not indeterminate) when the TSA signature computes false', async () => {
+    // Flip the last DER byte = tail of the TSA signature value. The imprint
+    // still matches, so this must be a disproof, not "could not measure".
+    const pdf = await createSignedPdf(tsa, {
+      subFilter: 'ETSI.RFC3161',
+      mutateCms: (cms) => {
+        const copy = cms.slice();
+        copy[copy.length - 1] ^= 0xff;
+        return copy;
+      },
+    });
+    const parsed = await parsePdfBytes(pdf);
+    const [report] = await verifySignatures(parsed);
+
+    expect(report.verdict).toBe(Verdict.INVALID);
+    expect(report.cms?.digestMatches).toBe(true);
+    expect(report.cms?.signatureVerified).toBe(false);
+  });
+});

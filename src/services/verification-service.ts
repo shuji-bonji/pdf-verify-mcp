@@ -135,6 +135,14 @@ export async function verifySignatures(
       } else if (imprintMatches === true && cms.signatureVerified) {
         report.verdict = Verdict.VALID;
         notes.push('Document timestamp verified.');
+      } else if (imprintMatches === true && !cms.signatureVerified && !cms.error) {
+        // Same rule as ordinary signatures: a signature that was computed and
+        // came back false is a disproof (INVALID); only "could not measure"
+        // stays INDETERMINATE.
+        report.verdict = Verdict.INVALID;
+        notes.push(
+          'Timestamp messageImprint matches, but the TSA signature failed cryptographic verification.',
+        );
       } else {
         notes.push('Document timestamp could not be fully verified.');
       }
