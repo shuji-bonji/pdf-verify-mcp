@@ -437,8 +437,14 @@ function assessDocMdp(input: {
   };
 }
 
-/** Analyze document integrity (incremental updates, DocMDP) */
-export function analyzeIntegrity(parsed: ParsedPdf): IntegrityReport {
+/**
+ * Analyze document integrity (incremental updates, DocMDP).
+ *
+ * Async because the object-level diff reads the cross-reference chain through
+ * normativepdf, whose section reader is async — a cross-reference stream has to
+ * be inflated before its entries exist (ISO 32000-1 §7.5.8).
+ */
+export async function analyzeIntegrity(parsed: ParsedPdf): Promise<IntegrityReport> {
   const notes: string[] = [];
   const signed = parsed.signatures.filter((s) => s.byteRange && s.contents?.length);
 
@@ -453,7 +459,7 @@ export function analyzeIntegrity(parsed: ParsedPdf): IntegrityReport {
   // it refines "N bytes were appended" into "these objects were written".
   // 🔴 Computed **before** the DocMDP assessment: P=2/P=3 cannot be judged from
   // byte counts alone (that was the bug — see `assessDocMdp`).
-  const diff = diffRevisions({
+  const diff = await diffRevisions({
     bytes: parsed.bytes,
     signedRanges: signed.flatMap((sig) => {
       const range = sig.byteRange;

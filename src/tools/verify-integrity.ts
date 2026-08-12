@@ -53,7 +53,7 @@ Examples:
     async (params: PdfToolInput) => {
       try {
         const parsed = await parsePdf(params.file_path);
-        const report = analyzeIntegrity(parsed);
+        const report = await analyzeIntegrity(parsed);
         const raw =
           params.response_format === ResponseFormat.JSON
             ? JSON.stringify(report, null, 2)

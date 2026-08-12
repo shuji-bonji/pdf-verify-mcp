@@ -2,6 +2,93 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.0] - 2026-08-13
+
+### Changed
+
+- **Cross-reference sections are now read by [normativepdf](https://www.npmjs.com/package/normativepdf) 0.2.0 instead of by this server.**
+  `revision-diff.ts` carried its own reader for classic tables (§7.5.4), cross-reference
+  streams (§7.5.8), hybrid `XRefStm` files (§7.5.8.4), the PNG predictors (§7.4.4.4) and
+  the Flate decoding underneath — 366 lines of it, written only because pdf-lib merges the
+  whole chain into one view and this module has to keep the revisions apart. That work now
+  lives in a library whose every behaviour is tied to a clause.
+
+  **The recovery policy stays here**, because it is a forensic policy rather than a reading
+  of the specification: falling back to an older `startxref` when the newest one is a lie,
+  `MAX_REVISIONS`, cycle detection, and the linearised-file fix-up. normativepdf is strict
+  by design — an unreadable section is an error there — and this server turns that error
+  into `truncated` / `newestSectionUnreadable` rather than refusing to answer.
+
+  A minor rather than a patch release: `normativepdf` is a new runtime dependency, and the
+  strictness trade below removes something. No tool schema changed.
+
+### Fixed
+
+- **`/Prev 0` was being read as "there is no previous cross-reference section".** ISO 32000-2
+  §7.5.5 Table 15 defines `Prev` as the byte offset of the previous section, and offset 0 is
+  the file header — it is a link that cannot be followed, not the end of the chain. The old
+  walker took the `0` and let a `next > 0` loop guard drop it silently, leaving the chain
+  marked complete. **A file with older revisions was therefore reported as having exactly
+  one.** Measured on `docs/specimens/dss-pades-5sigs-doctimestamp.pdf`: 8 `startxref`
+  sections, 5 signatures, reported as a single revision with the chain marked intact.
+
+  Scope, stated precisely: on a **certified** document both the old and the new code reach
+  `violationAssessment: 'indeterminate'`, so no DocMDP verdict flips. What changes is the
+  reason, and the reason is the part that was false — the old one read "no changed object
+  could be listed" (i.e. *we looked and found nothing*) where the truth is "the chain could
+  not be followed" (i.e. *there is more file to go and look at*). On a document with no
+  DocMDP certification the revision list simply came back one entry long with nothing
+  saying so.
+
+- **Files whose `%PDF-` header is not at byte 0 can now be walked.** §7.5.2: "byte offsets
+  shall be calculated from the PERCENT SIGN", so a file may carry bytes in front of its
+  header and still be well formed. Every `startxref` value was previously treated as an
+  absolute file position, so the walk landed short of the section and gave up: `revisions`
+  came back `null` — "not determined" — for a perfectly valid document. Offsets in the
+  report remain absolute, which is what a reviewer opening the file in an editor needs.
+
+### Known regressions
+
+- **A cross-reference table that deviates from §7.5.4 now yields "not determined" where it
+  previously yielded a diff.** normativepdf enforces the clause: entries exactly 20 bytes
+  with a 2-character EOL, subsection headers separated by a single SPACE, `xref` on a line
+  of its own. The old token-based reader did not care.
+
+  Measured over the 2,987 PDFs in this repository: **6 files affected, all of them veraPDF
+  corpus *fail* specimens** (deliberately malformed cross-references). Causes: `xref` not on
+  a line of its own (3), a subsection header whose entry count is not a number (1), 19-byte
+  entries (1), and a section that is neither a table nor a cross-reference stream (1).
+
+  **The direction of the loss is always toward `indeterminate`, never toward a false pass.**
+  Of these, 19-byte entries are the one shape that also occurs in the wild from lenient
+  producers; if a real damaged specimen demands it, the recovery belongs here, in this
+  server's policy layer, and not in the library.
+
+### Tests
+
+- Three regression tests pin the two fixes, with the fixtures synthesised in-test:
+  `blankNewestPrev` rewrites the newest trailer's `/Prev N` to `/Prev 0` padded so no byte
+  offset moves, and `shiftOrigin` puts bytes in front of the header. Neither case was
+  reachable by the existing suite, whose fixtures are all well-formed pdf-lib files walked
+  from byte 0.
+
+- The replacement was verified by A/B: the previous implementation was rebuilt from git and
+  run against the new one over all 2,987 PDFs in the repository. **2,974 identical, 13
+  differences** — 4 files that are now walkable at all (including the origin fix), 3 where a
+  chain that cannot be followed is now marked `truncated` / `newestSectionUnreadable` instead
+  of passing as complete, and the 6 regressions above. Both fixes in this release were found
+  by this comparison; the unit tests, all green before and after, showed nothing.
+
+### Internal
+
+- `diffRevisions` and `analyzeIntegrity` are now `async` (a cross-reference stream must be
+  inflated before its entries exist). `verify_integrity` and `evaluate_policy` are unaffected
+  from the outside.
+
+- The server `instructions` now open with the running build's name and version, so a stale
+  install is visible without a tool call — matching pdf-spec-mcp 0.4.5, reader 0.9.2 and
+  writer 0.15.1.
+
 ## [0.14.2] - 2026-08-11
 
 ### Fixed

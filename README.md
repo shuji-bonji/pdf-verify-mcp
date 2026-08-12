@@ -166,4 +166,6 @@ Test fixtures (self-signed certificate + signed PDFs) are generated programmatic
 
 MIT © shuji-bonji
 
-Dependencies: pkijs / asn1js (BSD-3-Clause), pdf-lib (MIT), @modelcontextprotocol/sdk (MIT), zod (MIT).
+Dependencies: pkijs / asn1js (BSD-3-Clause), pdf-lib (MIT), normativepdf (MIT), @shuji-bonji/pdf-constraints (MIT), @modelcontextprotocol/sdk (MIT), zod (MIT).
+
+Cross-reference sections are read by [normativepdf](https://github.com/shuji-bonji/normativepdf), a clause-driven PDF library in which every behaviour is tied to an ISO 32000 clause. It is strict — an unreadable section is an error there. The recovery policy for damaged files (falling back to an older `startxref`, capping a cyclic `/Prev` chain, folding a linearised file's two sections back into one save) stays in this server, because it is a forensic judgement rather than a reading of the specification.

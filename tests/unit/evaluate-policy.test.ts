@@ -416,7 +416,7 @@ let identity: TestIdentity;
 async function evaluateBytes(bytes: Uint8Array, profile: Parameters<typeof evaluatePolicy>[1]) {
   const parsed = await parsePdfBytes(bytes);
   const signatures = await verifySignatures(parsed);
-  const integrityReport = analyzeIntegrity(parsed);
+  const integrityReport = await analyzeIntegrity(parsed);
   const pades = await detectPadesLevels(parsed);
   return evaluatePolicy(
     { signatures, integrity: integrityReport, pades, conformance: null },

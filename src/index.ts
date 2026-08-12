@@ -25,7 +25,9 @@ import { registerAllTools } from './tools/index.js';
  * ツール説明にも書いてあるが、`instructions` はツールを 1 つも呼ばないうちに読まれる。
  * 先例は pdf-spec-mcp v0.4.5（Issue #13）/ reader v0.9.2 / writer v0.15.1。
  */
-const INSTRUCTIONS = `This server DISPROVES. It cannot prove that a document conforms or that a signature is trustworthy.
+const INSTRUCTIONS = `${SERVER_NAME} v${PACKAGE_INFO.version} — the running build identifies itself here so a stale install is visible without a tool call; compare against \`npm view ${PACKAGE_INFO.name} version\` when freshness matters.
+
+This server DISPROVES. It cannot prove that a document conforms or that a signature is trustworthy.
 
 Read every result as "what could be shown to be wrong, was looked for" — not as a certificate.
 

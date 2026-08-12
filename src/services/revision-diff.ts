@@ -23,9 +23,33 @@
  *
  * pdf-lib is not used: it merges the whole chain into one view of the document,
  * which is exactly the information this module has to keep apart.
+ *
+ * **Who parses what.** Reading one cross-reference section — classic table
+ * (§7.5.4), cross-reference stream (§7.5.8), hybrid XRefStm (§7.5.8.4), the
+ * PNG/TIFF predictors and the Flate decoding underneath — is normativepdf's
+ * job (`readXrefSectionAt`). That library reads the clause and is strict: an
+ * unreadable section is an error, not a shorter answer.
+ *
+ * What stays here is the **recovery policy**, which the library deliberately
+ * does not own (see its `readXrefSectionAt` doc comment). This module is a
+ * forensic tool pointed at files that may be damaged or hostile, so it must
+ * describe what it can instead of refusing:
+ *
+ *   - the newest `startxref` may be a lie — older entry points are tried, and
+ *     the fact is reported (`newestSectionUnreadable`);
+ *   - `MAX_REVISIONS` and cycle detection cap a malformed `/Prev` chain;
+ *   - a linearised file (Annex F) and a full "Save As" both make the naive
+ *     walk lie about what changed — see `walkChain` and
+ *     `MAX_CHANGES_PER_REVISION`.
+ *
+ * Offsets: §7.5.2 measures every offset from the PERCENT SIGN of `%PDF-`, so
+ * a file with bytes before its header has `origin > 0`. normativepdf works in
+ * that origin-relative space; every offset this module reports or peeks at is
+ * absolute (`origin + offset`), because that is what a reviewer opening the
+ * file in an editor needs.
  */
 
-import { inflateSync } from 'node:zlib';
+import { dictGet, readXrefSectionAt, type XrefEntry, type XrefSection } from 'normativepdf';
 import type {
   DocMdpChangeClass,
   RevisionObjectChange,
@@ -55,24 +79,35 @@ const PEEK_BUDGET_FACTOR = 8;
 
 const LATIN1 = new TextDecoder('latin1');
 
-/** One cross-reference entry as declared by a single revision. */
-interface XrefEntry {
-  objectNumber: number;
-  generation: number;
-  /** `n` = in use at `offset`, `f` = freed, `c` = stored in an object stream */
-  kind: 'n' | 'f' | 'c';
-  /** Byte offset for `n`, containing object-stream number for `c` */
-  offset: number | null;
-}
-
-interface XrefSection {
-  /** Byte offset of the section itself (the value a `startxref` pointed at) */
+/**
+ * One revision as this module needs it: a section normativepdf parsed, with
+ * its offset already resolved to an absolute file position and its entry map
+ * made mutable so the linearisation fix-up can fold two sections into one.
+ */
+interface Revision {
+  /** Absolute byte offset of the cross-reference section (`origin + offset`) */
   offset: number;
   kind: XrefKind;
   entries: Map<number, XrefEntry>;
-  prev: number | null;
   /** Object number of the cross-reference stream itself, when it is one */
   selfObjectNumber: number | null;
+}
+
+/**
+ * §7.5.8.3 — an entry whose type is not 0/1/2 "shall be interpreted as a
+ * reference to the null object". From a reader's point of view that is
+ * indistinguishable from a free entry, so both answer "this object number
+ * resolves to nothing here". Keeping unknown entries (rather than dropping
+ * them, as the hand-rolled parser did) matters because a newer section's
+ * unknown entry must still shadow an older definition.
+ */
+function readsAsNull(entry: XrefEntry): boolean {
+  return entry.type === 'free' || entry.type === 'unknown';
+}
+
+/** Generation number, or 0 where the format defines it implicitly (§7.5.7). */
+function generationOf(entry: XrefEntry): number {
+  return entry.type === 'in-use' || entry.type === 'free' ? entry.generation : 0;
 }
 
 /* ------------------------------------------------------------------ *
@@ -144,317 +179,71 @@ function readToken(bytes: Uint8Array, index: number): { token: string; next: num
   return { token: LATIN1.decode(bytes.subarray(start, end)), next: end };
 }
 
-/**
- * Extent of the balanced `<< ... >>` dictionary that starts at or after `from`.
- * Strings and hex strings are skipped so that a `>>` inside them cannot close
- * the dictionary early.
- */
-function dictExtent(bytes: Uint8Array, from: number): { start: number; end: number } | null {
-  let i = skipWhitespace(bytes, from);
-  if (bytes[i] !== 0x3c || bytes[i + 1] !== 0x3c) return null;
-  const start = i;
-  let depth = 0;
-  while (i < bytes.length) {
-    const b = bytes[i];
-    if (b === 0x3c && bytes[i + 1] === 0x3c) {
-      depth += 1;
-      i += 2;
-      continue;
-    }
-    if (b === 0x3e && bytes[i + 1] === 0x3e) {
-      depth -= 1;
-      i += 2;
-      if (depth === 0) return { start, end: i };
-      continue;
-    }
-    if (b === 0x28) {
-      // literal string: balanced parentheses, backslash escapes
-      let nest = 1;
-      i += 1;
-      while (i < bytes.length && nest > 0) {
-        if (bytes[i] === 0x5c) i += 2;
-        else if (bytes[i] === 0x28) {
-          nest += 1;
-          i += 1;
-        } else if (bytes[i] === 0x29) {
-          nest -= 1;
-          i += 1;
-        } else i += 1;
-      }
-      continue;
-    }
-    if (b === 0x3c) {
-      // hex string
-      while (i < bytes.length && bytes[i] !== 0x3e) i += 1;
-      i += 1;
-      continue;
-    }
-    if (b === 0x25) {
-      while (i < bytes.length && bytes[i] !== 0x0a && bytes[i] !== 0x0d) i += 1;
-      continue;
-    }
-    i += 1;
-  }
-  return null;
-}
-
-/** Integer value of a direct `/Key n` entry inside the given dictionary slice. */
-function dictInt(slice: string, key: string): number | null {
-  const match = new RegExp(`/${key}\\s+(\\d+)(?![\\d.])`).exec(slice);
-  return match ? Number.parseInt(match[1], 10) : null;
-}
-
-/** Integer array value of a direct `/Key [a b c]` entry. */
-function dictIntArray(slice: string, key: string): number[] | null {
-  const match = new RegExp(`/${key}\\s*\\[([^\\]]*)\\]`).exec(slice);
-  if (!match) return null;
-  const parts = match[1].trim().split(/\s+/).filter(Boolean);
-  const values = parts.map((p) => Number.parseInt(p, 10));
-  return values.some(Number.isNaN) ? null : values;
-}
-
 /* ------------------------------------------------------------------ *
- * cross-reference sections
+ * cross-reference sections — read by normativepdf, recovered here
  * ------------------------------------------------------------------ */
 
-/** Parse a classic `xref` table plus its trailer. */
-function parseXrefTable(bytes: Uint8Array, offset: number): XrefSection | null {
-  let i = skipWhitespace(bytes, offset);
-  const head = readToken(bytes, i);
-  if (head?.token !== 'xref') return null;
-  i = head.next;
-
-  const entries = new Map<number, XrefEntry>();
-  for (;;) {
-    const first = readToken(bytes, i);
-    if (!first) return null;
-    if (first.token === 'trailer') {
-      i = first.next;
-      break;
-    }
-    const start = Number.parseInt(first.token, 10);
-    const countToken = readToken(bytes, first.next);
-    if (!countToken) return null;
-    const count = Number.parseInt(countToken.token, 10);
-    if (Number.isNaN(start) || Number.isNaN(count)) return null;
-    i = countToken.next;
-    for (let n = 0; n < count; n += 1) {
-      const a = readToken(bytes, i);
-      const b = a ? readToken(bytes, a.next) : null;
-      const c = b ? readToken(bytes, b.next) : null;
-      if (!a || !b || !c) return null;
-      const value = Number.parseInt(a.token, 10);
-      const gen = Number.parseInt(b.token, 10);
-      if (Number.isNaN(value) || Number.isNaN(gen)) return null;
-      const objectNumber = start + n;
-      // A later subsection in the same section wins; keep the first write
-      // per section only if nothing else set it.
-      entries.set(objectNumber, {
-        objectNumber,
-        generation: gen,
-        kind: c.token === 'f' ? 'f' : 'n',
-        offset: c.token === 'f' ? null : value,
-      });
-      i = c.next;
-    }
-  }
-
-  const extent = dictExtent(bytes, i);
-  const slice = extent ? LATIN1.decode(bytes.subarray(extent.start, extent.end)) : '';
-  const prev = dictInt(slice, 'Prev');
-  const xrefStm = dictInt(slice, 'XRefStm');
-
-  const section: XrefSection = {
-    offset,
-    kind: 'table',
-    entries,
-    prev,
-    selfObjectNumber: null,
-  };
-
-  // Hybrid-reference file (ISO 32000-1 §7.5.8.4): the table is a stub and the
-  // stream holds the entries a modern reader is meant to use. Merge the stream
-  // without letting it overwrite what the table already declared.
-  if (xrefStm !== null) {
-    const stream = parseXrefStream(bytes, xrefStm);
-    if (stream) {
-      for (const [key, entry] of stream.entries) {
-        if (!section.entries.has(key)) section.entries.set(key, entry);
-      }
-      section.kind = 'hybrid';
-      section.selfObjectNumber = stream.selfObjectNumber;
-    }
-  }
-  return section;
+/**
+ * §7.5.2 — "byte offsets shall be calculated from the PERCENT SIGN" of the
+ * `%PDF-` header, which need not be at byte 0. A file with no header at all is
+ * not dismissed here (that is the validator's verdict, not this module's): the
+ * origin falls back to 0 so the chain can still be described.
+ */
+function findOrigin(bytes: Uint8Array): number {
+  return Math.max(0, indexOfBytes(bytes, '%PDF-', 0));
 }
 
-/** Undo the PNG predictors permitted by `/DecodeParms` (ISO 32000-1 §7.4.4.4). */
-function undoPngPredictor(
-  data: Uint8Array,
-  columns: number,
-  colors: number,
-  bpc: number,
-): Uint8Array {
-  const bpp = Math.max(1, Math.ceil((colors * bpc) / 8));
-  const rowLength = Math.ceil((columns * colors * bpc) / 8);
-  const rows = Math.floor(data.length / (rowLength + 1));
-  const out = new Uint8Array(rows * rowLength);
-  let prior = new Uint8Array(rowLength);
-  for (let r = 0; r < rows; r += 1) {
-    const filter = data[r * (rowLength + 1)];
-    const src = data.subarray(r * (rowLength + 1) + 1, (r + 1) * (rowLength + 1));
-    const row = new Uint8Array(rowLength);
-    for (let c = 0; c < rowLength; c += 1) {
-      const raw = src[c];
-      const left = c >= bpp ? row[c - bpp] : 0;
-      const up = prior[c];
-      const upLeft = c >= bpp ? prior[c - bpp] : 0;
-      let value: number;
-      switch (filter) {
-        case 0:
-          value = raw;
-          break;
-        case 1:
-          value = raw + left;
-          break;
-        case 2:
-          value = raw + up;
-          break;
-        case 3:
-          value = raw + Math.floor((left + up) / 2);
-          break;
-        case 4: {
-          const p = left + up - upLeft;
-          const pa = Math.abs(p - left);
-          const pb = Math.abs(p - up);
-          const pc = Math.abs(p - upLeft);
-          value = raw + (pa <= pb && pa <= pc ? left : pb <= pc ? up : upLeft);
-          break;
-        }
-        default:
-          return out;
-      }
-      row[c] = value & 0xff;
-    }
-    out.set(row, r * rowLength);
-    prior = row;
-  }
-  return out;
+/**
+ * Read the single cross-reference section addressed at `offset`, or `null` when
+ * normativepdf cannot read it. The library throws by design — an unreadable
+ * section is an error there, because merging a partial chain would silently
+ * lose objects. Here it is a fact to report, so the throw is caught and the
+ * caller turns it into `truncated` / `newestSectionUnreadable`.
+ */
+interface SectionRead {
+  revision: Revision;
+  prev: PrevLink;
 }
 
-/** Parse a cross-reference stream (ISO 32000-1 §7.5.8). */
-function parseXrefStream(bytes: Uint8Array, offset: number): XrefSection | null {
-  const objNumToken = readToken(bytes, offset);
-  const genToken = objNumToken ? readToken(bytes, objNumToken.next) : null;
-  const objToken = genToken ? readToken(bytes, genToken.next) : null;
-  if (!objNumToken || !genToken || !objToken || objToken.token !== 'obj') return null;
-  const selfObjectNumber = Number.parseInt(objNumToken.token, 10);
-
-  const extent = dictExtent(bytes, objToken.next);
-  if (!extent) return null;
-  const slice = LATIN1.decode(bytes.subarray(extent.start, extent.end));
-  if (!/\/Type\s*\/XRef\b/.test(slice)) return null;
-
-  const w = dictIntArray(slice, 'W');
-  if (!w || w.length < 3) return null;
-  const size = dictInt(slice, 'Size');
-  const index = dictIntArray(slice, 'Index') ?? (size !== null ? [0, size] : null);
-  if (!index) return null;
-  const prev = dictInt(slice, 'Prev');
-
-  const streamKeyword = indexOfBytes(bytes, 'stream', extent.end);
-  if (streamKeyword < 0) return null;
-  let dataStart = streamKeyword + 'stream'.length;
-  if (bytes[dataStart] === 0x0d) dataStart += 1;
-  if (bytes[dataStart] === 0x0a) dataStart += 1;
-  const length = dictInt(slice, 'Length');
-  let dataEnd = length !== null ? dataStart + length : -1;
-  if (dataEnd < 0 || dataEnd > bytes.length) {
-    // `/Length` may be an indirect reference; fall back to the keyword.
-    dataEnd = indexOfBytes(bytes, 'endstream', dataStart);
-    if (dataEnd < 0) return null;
-  }
-  const raw = bytes.subarray(dataStart, dataEnd);
-
-  const filter = /\/Filter\s*(?:\[\s*)?\/(\w+)/.exec(slice)?.[1] ?? null;
-  let data: Uint8Array;
-  if (filter === null) {
-    data = raw;
-  } else if (filter === 'FlateDecode') {
-    try {
-      data = new Uint8Array(inflateSync(Buffer.from(raw)));
-    } catch (error) {
-      logger.debug(CONTEXT, `xref stream at ${offset} failed to inflate: ${String(error)}`);
-      return null;
-    }
-  } else {
-    logger.debug(CONTEXT, `xref stream at ${offset} uses unsupported filter /${filter}`);
+async function readSection(
+  bytes: Uint8Array,
+  origin: number,
+  offset: number,
+): Promise<SectionRead | null> {
+  if (offset <= 0 || origin + offset >= bytes.length) return null;
+  let section: XrefSection;
+  try {
+    section = await readXrefSectionAt(bytes, offset, origin);
+  } catch (error) {
+    logger.debug(CONTEXT, `cross-reference section at ${offset} is unreadable: ${String(error)}`);
     return null;
   }
-
-  const predictor = dictInt(slice, 'Predictor');
-  if (predictor !== null && predictor >= 10) {
-    data = undoPngPredictor(
-      data,
-      dictInt(slice, 'Columns') ?? 1,
-      dictInt(slice, 'Colors') ?? 1,
-      dictInt(slice, 'BitsPerComponent') ?? 8,
-    );
-  }
-
-  const rowLength = w[0] + w[1] + w[2];
-  if (rowLength <= 0) return null;
-  const entries = new Map<number, XrefEntry>();
-  let cursor = 0;
-  const readField = (width: number, fallback: number): number => {
-    if (width === 0) return fallback;
-    let value = 0;
-    for (let i = 0; i < width; i += 1) {
-      value = value * 256 + data[cursor];
-      cursor += 1;
-    }
-    return value;
+  return {
+    revision: {
+      offset: origin + section.offset,
+      kind: section.kind,
+      entries: new Map(section.entries),
+      selfObjectNumber: section.selfObjectNumber ?? null,
+    },
+    prev: readPrev(section),
   };
-  for (let pair = 0; pair + 1 < index.length; pair += 2) {
-    const start = index[pair];
-    const count = index[pair + 1];
-    for (let n = 0; n < count; n += 1) {
-      if (cursor + rowLength > data.length) break;
-      const type = readField(w[0], 1);
-      const field2 = readField(w[1], 0);
-      const field3 = readField(w[2], 0);
-      const objectNumber = start + n;
-      if (type === 0) {
-        entries.set(objectNumber, {
-          objectNumber,
-          generation: field3,
-          kind: 'f',
-          offset: null,
-        });
-      } else if (type === 1) {
-        entries.set(objectNumber, {
-          objectNumber,
-          generation: field3,
-          kind: 'n',
-          offset: field2,
-        });
-      } else if (type === 2) {
-        entries.set(objectNumber, {
-          objectNumber,
-          generation: 0,
-          kind: 'c',
-          offset: field2,
-        });
-      }
-    }
-  }
-
-  return { offset, kind: 'stream', entries, prev, selfObjectNumber };
 }
 
-function parseSection(bytes: Uint8Array, offset: number): XrefSection | null {
-  if (offset <= 0 || offset >= bytes.length) return null;
-  return parseXrefTable(bytes, offset) ?? parseXrefStream(bytes, offset);
+/**
+ * The `/Prev` of a section's trailer (§7.5.5 Table 15; Table 17 for streams).
+ *
+ * Three outcomes, deliberately distinguished: `end` (no entry — the chain is
+ * complete), an offset to follow, or `malformed`. normativepdf rejects a
+ * non-integer `/Prev` outright; this module reports it as a chain that could
+ * not be followed to the end, which is what the DocMDP assessment has to know.
+ */
+type PrevLink = { kind: 'end' } | { kind: 'malformed' } | { kind: 'at'; offset: number };
+
+function readPrev(section: XrefSection): PrevLink {
+  const prev = dictGet(section.trailer, 'Prev');
+  if (prev === undefined) return { kind: 'end' };
+  if (prev.kind === 'integer' && prev.value > 0) return { kind: 'at', offset: prev.value };
+  return { kind: 'malformed' };
 }
 
 /** Every `startxref` value in the file, in the order they appear. */
@@ -474,13 +263,21 @@ function collectStartxrefTargets(bytes: Uint8Array): number[] {
   return targets;
 }
 
-/** Walk `startxref` → `/Prev` → … and return the sections oldest first. */
-function walkChain(bytes: Uint8Array): {
-  sections: XrefSection[];
+/**
+ * Walk `startxref` → `/Prev` → … and return the revisions oldest first.
+ *
+ * Reading each section is normativepdf's job; everything below is the recovery
+ * policy that library deliberately leaves to its consumer.
+ */
+async function walkChain(
+  bytes: Uint8Array,
+  origin: number,
+): Promise<{
+  sections: Revision[];
   truncated: boolean;
   newestSectionUnreadable: boolean;
   linearized: boolean;
-} | null {
+} | null> {
   const targets = collectStartxrefTargets(bytes);
   if (targets.length === 0) return null;
 
@@ -488,19 +285,25 @@ function walkChain(bytes: Uint8Array): {
   // at a parseable section the file still has to be described rather than
   // dismissed, so an older entry point is tried — and the fact is reported,
   // because it means the trailing bytes are NOT represented in the diff.
+  // The probe's result is kept: re-reading the entry section would decode the
+  // same (possibly Flate + predictor) cross-reference stream twice.
   let entry: number | null = null;
+  let entrySection: SectionRead | null = null;
   let newestSectionUnreadable = false;
   for (let i = targets.length - 1; i >= 0; i -= 1) {
-    if (targets[i] > 0 && parseSection(bytes, targets[i])) {
+    const probe = targets[i] > 0 ? await readSection(bytes, origin, targets[i]) : null;
+    if (probe) {
       entry = targets[i];
+      entrySection = probe;
       newestSectionUnreadable = i !== targets.length - 1;
       break;
     }
   }
   if (entry === null) return null;
   let next: number | null = entry;
+  let pending: SectionRead | null = entrySection;
 
-  const sections: XrefSection[] = [];
+  const sections: Revision[] = [];
   const visited = new Set<number>();
   let truncated = false;
   while (next !== null && next > 0) {
@@ -509,17 +312,30 @@ function walkChain(bytes: Uint8Array): {
       break;
     }
     visited.add(next);
-    const section = parseSection(bytes, next);
-    if (!section) {
+    const read: SectionRead | null = pending ?? (await readSection(bytes, origin, next));
+    pending = null;
+    if (!read) {
       truncated = true;
       break;
     }
-    sections.push(section);
+    sections.push(read.revision);
     if (sections.length >= MAX_REVISIONS) {
       truncated = true;
       break;
     }
-    next = section.prev;
+    if (read.prev.kind === 'end') {
+      next = null;
+    } else if (read.prev.kind === 'at') {
+      next = read.prev.offset;
+    } else {
+      // A `/Prev` that is present but not a direct positive integer means the
+      // chain does not end here — it just cannot be followed. Reporting that as
+      // a clean end would let `assessDocMdp` treat an unwalkable tail as "no
+      // older revisions", which is the mistake this whole module exists to
+      // avoid. [[revision-diff-lies-linearized-and-full-save]]
+      truncated = true;
+      next = null;
+    }
   }
   if (sections.length === 0) return null;
   const ordered = sections.reverse();
@@ -532,7 +348,7 @@ function walkChain(bytes: Uint8Array): {
   const linearized =
     ordered.length >= 2 &&
     ordered[ordered.length - 1].offset < ordered[ordered.length - 2].offset &&
-    /\/Linearized\b/.test(LATIN1.decode(bytes.subarray(0, LINEARIZED_HEADER_SCAN)));
+    /\/Linearized\b/.test(LATIN1.decode(bytes.subarray(origin, origin + LINEARIZED_HEADER_SCAN)));
   if (linearized) {
     const firstPage = ordered.pop();
     const main = ordered[ordered.length - 1];
@@ -770,9 +586,10 @@ export interface RevisionDiffResult {
  * chain cannot be walked — a partial answer here would be indistinguishable
  * from "nothing changed", which is the one thing this must never imply.
  */
-export function diffRevisions(input: RevisionDiffInput): RevisionDiffResult | null {
+export async function diffRevisions(input: RevisionDiffInput): Promise<RevisionDiffResult | null> {
   const { bytes, signedRanges } = input;
-  const walked = walkChain(bytes);
+  const origin = findOrigin(bytes);
+  const walked = await walkChain(bytes, origin);
   if (!walked) {
     logger.debug(CONTEXT, 'cross-reference chain could not be walked');
     return null;
@@ -785,8 +602,12 @@ export function diffRevisions(input: RevisionDiffInput): RevisionDiffResult | nu
     const eof = indexOfBytes(bytes, '%%EOF', section.offset);
     const endOffset = eof < 0 ? null : eof + '%%EOF'.length;
     /** Changed objects before typing: a full save can hold six figures of them. */
-    const raw: { entry: XrefEntry; change: RevisionObjectChange['change']; selfXref: boolean }[] =
-      [];
+    const raw: {
+      objectNumber: number;
+      entry: XrefEntry;
+      change: RevisionObjectChange['change'];
+      selfXref: boolean;
+    }[] = [];
 
     if (index > 0) {
       const objectNumbers = [...section.entries.keys()].sort((a, b) => a - b);
@@ -797,14 +618,14 @@ export function diffRevisions(input: RevisionDiffInput): RevisionDiffResult | nu
         const previous = seen.get(objectNumber);
 
         let change: RevisionObjectChange['change'];
-        if (entry.kind === 'f') {
-          if (!previous || previous.kind === 'f') continue; // freed twice, or never used
+        if (readsAsNull(entry)) {
+          if (!previous || readsAsNull(previous)) continue; // freed twice, or never used
           change = 'freed';
-        } else if (!previous || previous.kind === 'f') {
+        } else if (!previous || readsAsNull(previous)) {
           change = 'added';
         } else if (
-          previous.kind === 'n' &&
-          entry.kind === 'n' &&
+          previous.type === 'in-use' &&
+          entry.type === 'in-use' &&
           previous.offset === entry.offset
         ) {
           continue; // re-declared at the same offset: not a rewrite
@@ -813,6 +634,7 @@ export function diffRevisions(input: RevisionDiffInput): RevisionDiffResult | nu
         }
 
         raw.push({
+          objectNumber,
           entry,
           change,
           // A revision's own cross-reference stream is bookkeeping, not content.
@@ -828,25 +650,22 @@ export function diffRevisions(input: RevisionDiffInput): RevisionDiffResult | nu
     // taken in object-number order with the section's own cross-reference
     // stream pushed to the back, since that one is always bookkeeping.
     const candidates = raw
-      .sort(
-        (a, b) =>
-          Number(a.selfXref) - Number(b.selfXref) || a.entry.objectNumber - b.entry.objectNumber,
-      )
+      .sort((a, b) => Number(a.selfXref) - Number(b.selfXref) || a.objectNumber - b.objectNumber)
       .slice(0, MAX_CHANGES_PER_REVISION * PEEK_BUDGET_FACTOR);
-    const typed = candidates.map(({ entry, change, selfXref }) => {
-      const peeked =
-        entry.kind === 'n' && entry.offset !== null ? peekObject(bytes, entry.offset) : null;
+    const typed = candidates.map(({ objectNumber, entry, change, selfXref }) => {
+      // §7.5.2 — the entry's offset is measured from the header, not byte 0.
+      const peeked = entry.type === 'in-use' ? peekObject(bytes, origin + entry.offset) : null;
       const bookkeeping = selfXref || peeked?.type === 'XRef' || peeked?.type === 'ObjStm';
       const item: RevisionObjectChange = {
-        objectNumber: entry.objectNumber,
-        generation: entry.generation,
+        objectNumber,
+        generation: generationOf(entry),
         change,
         type: peeked?.type ?? null,
         subtype: peeked?.subtype ?? null,
         role: describeRole(peeked),
         changeClass: classifyChange(peeked, bookkeeping),
         bookkeeping,
-        inObjectStream: entry.kind === 'c',
+        inObjectStream: entry.type === 'compressed',
       };
       return item;
     });

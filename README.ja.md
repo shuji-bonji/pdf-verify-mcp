@@ -161,4 +161,6 @@ npm run test:fixtures  # 署名済み/改ざん済みサンプル PDF を tests/
 
 MIT © shuji-bonji
 
-依存: pkijs / asn1js（BSD-3-Clause）、pdf-lib（MIT）、@modelcontextprotocol/sdk（MIT）、zod（MIT）。
+依存: pkijs / asn1js（BSD-3-Clause）、pdf-lib（MIT）、normativepdf（MIT）、@shuji-bonji/pdf-constraints（MIT）、@modelcontextprotocol/sdk（MIT）、zod（MIT）。
+
+相互参照セクションの読み取りは [normativepdf](https://github.com/shuji-bonji/normativepdf) が担当します。すべての挙動を ISO 32000 の条項に紐づけたライブラリで、読めないセクションはエラーとして扱う厳格な設計です。壊れたファイルに対する回復方針（古い `startxref` への後退・巡回する `/Prev` の打ち切り・線形化ファイルの 2 セクションを 1 セーブに畳み戻す）は、条文の読み取りではなく法医学的な判断なので本サーバに残しています。

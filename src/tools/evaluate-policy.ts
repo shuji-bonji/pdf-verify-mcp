@@ -111,7 +111,7 @@ Examples:
           trustAnchorPaths: params.trust_anchors,
           revocationMode: params.check_revocation,
         });
-        const integrity = analyzeIntegrity(parsed);
+        const integrity = await analyzeIntegrity(parsed);
         const pades = await detectPadesLevels(parsed);
 
         let conformance: ConformanceValidationReport | null = null;
