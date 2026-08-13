@@ -177,6 +177,28 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
 
 ## B. Feature（V-F\*）
 
+- [ ] **V-F5. `verify_integrity` の説明が「歩き切れなかったチェーン」を `revisions: null` の場合しか書いていない**（2026-08-13 起票・**0.15.1 予定**）
+
+  現在の説明はこの 1 行だけ。
+
+  > `revisions: null` means the cross-reference chain could not be walked — "not determined", NOT "nothing changed".
+
+  **`revisions` が非 null でも、リストが完全とは限らない。** チェーンが途中で切れた場合
+  （`truncated`）と、最新セクションが読めず古い入口から入った場合（`newestSectionUnreadable`）は、
+  リストは返るが**そのファイルの全リビジョンではない**。両方とも `notes` には出るが、
+  ツール説明が `null` の場合しか警告していないため「リストがあるなら全件」と読める。
+
+  **0.15.0 でこれが実害になった。** 同版で `/Prev 0` を追えないリンクとして正しく報告する
+  ようになった結果、**打ち切りが立つ検体が増えた**（それ以前は黙って「完全なチェーン」に
+  化けていた）。信号を直したのに説明を直していないのは片手落ち。
+
+  0.15.0 のタグ直前に発見。説明文の変更はツール出力が変わる（V-F）ので、公開直前の駆け込みを
+  避けて次版に回した。**0.15.1 の内容はこれ 1 件**。
+
+  - [ ] `src/tools/verify-integrity.ts` の Limits に 1 行追加
+  - [ ] `pdf-trust` skill 側の対応（`legal.md` / `contract.md` の「全履歴」の扱い）は
+        skill 0.5.1 で先に入れている。説明と skill の言い回しを揃える
+
 - [x] **V-F1. `validate_conformance` に PDF/A-4 flavour を追加**（2026-07-25 起票・**v0.11.0**・2026-07-27）
       **writer 側の依頼番号は M-9。writer B-20（PDF/A-4 正規化）の前提タスク。**
       ロードマップ: `Document-Note/mcps/PDFfamily/specs/16-pdfa4-roadmap.md` 第一段階 §1。

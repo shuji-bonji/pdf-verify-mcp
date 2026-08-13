@@ -86,8 +86,14 @@ All notable changes to this project will be documented in this file.
   from the outside.
 
 - The server `instructions` now open with the running build's name and version, so a stale
-  install is visible without a tool call — matching pdf-spec-mcp 0.4.5, reader 0.9.2 and
-  writer 0.15.1.
+  install is visible without a tool call.
+
+  **Correction (2026-08-13).** This entry as published said "matching pdf-spec-mcp 0.4.5,
+  reader 0.9.2 and writer 0.15.1". That was false: those three releases are where each
+  server began *sending* `instructions` at all, which is a different thing from naming its
+  own version inside them. At the time this shipped, **this server was the only one that
+  named its version** — the other three had the change written but unreleased. writer
+  followed in 0.19.0, reader in 0.11.2 and spec in 0.4.6.
 
 ## [0.14.2] - 2026-08-11
 
