@@ -26,7 +26,7 @@ import { decryptDocumentBytes } from './decrypt-document.js';
 import { loadPdfDocument, parsePdfBytes } from './pdf-parser.js';
 import { type PdfaFlavour, resolveFlavour, validatePdfaNative } from './pdfa-validator.js';
 import { type PdfuaFlavour, resolvePdfuaFlavour, validatePdfuaNative } from './pdfua-validator.js';
-import { resolveVeraPdf, runVeraPdf } from './verapdf.js';
+import { resolveVeraPdf, runVeraPdf, veraPdfVersion } from './verapdf.js';
 
 export interface ConformanceViolation {
   ruleId: string;
@@ -47,7 +47,18 @@ export interface ConformanceViolation {
  * installed here" (anti-pattern: passing over what was not performed).
  */
 export type AuthoritativeValidation =
-  | { performed: true; validator: 'verapdf'; path: string }
+  | {
+      performed: true;
+      validator: 'verapdf';
+      path: string;
+      /**
+       * What the validator answers to `--version`, or null when it could not
+       * be read. **Not derivable from `path`** —— measured 2026-08-18:
+       * Homebrew's directory says `1.30.2` while veraPDF says `1.30.0`.
+       * A rule count is only comparable across runs of the same build.
+       */
+      version: string | null;
+    }
   | {
       performed: false;
       validator: 'verapdf';
@@ -139,7 +150,12 @@ async function resolveAuthoritativeValidation(
   }
   const availability = await resolveVeraPdf();
   if (availability.available) {
-    return { performed: true, validator: 'verapdf', path: availability.path };
+    return {
+      performed: true,
+      validator: 'verapdf',
+      path: availability.path,
+      version: await veraPdfVersion(availability.path),
+    };
   }
   if (availability.reason === 'configured_path_unusable') {
     return {
@@ -155,6 +171,18 @@ async function resolveAuthoritativeValidation(
     reason: 'not_installed',
     detail: `veraPDF was not found (${VERAPDF_ENV} is unset and no executable is on PATH).`,
   };
+}
+
+/**
+ * The prose form of "this was performed, by which build".
+ *
+ * The version is part of the sentence rather than a footnote: a rule count
+ * ("146 / 146") only means something alongside the build that counted them.
+ */
+function veraPdfNote(status: AuthoritativeValidation): string {
+  if (!status.performed) return '';
+  const build = status.version === null ? 'version unknown' : `version ${status.version}`;
+  return `Validated by veraPDF (${status.path}, ${build}) — authoritative result.`;
 }
 
 /**
@@ -246,7 +274,7 @@ export async function validateConformance(
         description: v.description,
         detail: v.failedChecks > 0 ? `${v.failedChecks} failed check(s)` : null,
       })),
-      notes: [...notes, `Validated by veraPDF (${veraPath}) — authoritative result.`],
+      notes: [...notes, veraPdfNote(status)],
     };
   }
 
@@ -375,7 +403,7 @@ async function validatePdfua(
       })),
       notes: [
         ...notes,
-        `Validated by veraPDF (${veraPath}) — authoritative result.`,
+        veraPdfNote(status),
         'Machine validation cannot judge whether alt text and reading order are semantically appropriate; human review remains necessary.',
       ],
     };

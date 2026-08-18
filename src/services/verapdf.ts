@@ -137,9 +137,66 @@ export async function findVeraPdf(): Promise<string | null> {
   return availability.available ? availability.path : null;
 }
 
+/**
+ * Pull the version out of `verapdf --version` output.
+ *
+ * 🔴 **Not the first line.** The JVM writes warnings before it (measured with
+ * veraPDF 1.30.0 on Homebrew, 2026-08-18):
+ *
+ * ```
+ * WARNING: Final field flavour in class org.verapdf... has been mutated reflectively
+ * WARNING: Use --enable-final-field-mutation=ALL-UNNAMED to avoid a warning
+ * WARNING: Mutating final fields will be blocked in a future release...
+ * veraPDF 1.30.0
+ * Built: Wed Jun 03 13:47:00 JST 2026
+ * ```
+ *
+ * Returns null when no such line is there — an unrecognised build is recorded
+ * as "unknown", never guessed.
+ */
+export function parseVeraPdfVersion(output: string): string | null {
+  for (const line of output.split(/\r?\n/)) {
+    const match = /^\s*veraPDF\s+(\S+)\s*$/.exec(line);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+const cachedVersions = new Map<string, string | null>();
+
+/**
+ * The version of a resolved veraPDF executable, or null when it cannot be read.
+ *
+ * **Why this is asked for at all.** The file header says which veraPDF ran is
+ * part of the provenance of a verdict, and the path alone does not answer it:
+ * on the machine this was measured, Homebrew's directory says `1.30.2` while
+ * veraPDF answers `1.30.0`. A rule count is only comparable across runs of the
+ * *same* build, so the number that decided a verdict has to travel with it.
+ *
+ * Cached per executable: one extra process per server lifetime, not per file.
+ */
+export async function veraPdfVersion(executable: string): Promise<string | null> {
+  const cached = cachedVersions.get(executable);
+  if (cached !== undefined) return cached;
+
+  let version: string | null = null;
+  try {
+    const { stdout, stderr } = await execFileAsync(executable, ['--version'], { timeout: 15000 });
+    // The warnings may land on either stream depending on the JVM; read both.
+    version = parseVeraPdfVersion(stdout) ?? parseVeraPdfVersion(stderr);
+  } catch (error) {
+    // A validator that cannot say its version still validates. Record "unknown"
+    // rather than refusing the verdict.
+    logger.debug(CONTEXT, `could not read the veraPDF version: ${String(error)}`);
+  }
+  cachedVersions.set(executable, version);
+  return version;
+}
+
 /** Reset the cached lookup (for tests) */
 export function resetVeraPdfCache(): void {
   cachedAvailability = undefined;
+  cachedVersions.clear();
 }
 
 interface VeraPdfJsonRuleSummary {
