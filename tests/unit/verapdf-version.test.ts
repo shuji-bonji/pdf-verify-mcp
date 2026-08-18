@@ -9,7 +9,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { veraPdfNote } from '../../src/services/conformance-validation.js';
 import { parseVeraPdfVersion } from '../../src/services/verapdf.js';
+import { formatConformanceValidation } from '../../src/utils/formatter.js';
 
 /** 実測した veraPDF 1.30.0（Homebrew・2026-08-18）の `--version` 出力そのまま */
 const REAL_OUTPUT = [
@@ -56,5 +58,77 @@ describe('parseVeraPdfVersion', () => {
 
   it('does not match a line that merely mentions veraPDF', () => {
     expect(parseVeraPdfVersion('Validated by veraPDF (/usr/bin/verapdf) — ok')).toBeNull();
+  });
+});
+
+/**
+ * 版が **数の前** に出るか。
+ *
+ * `veraPdfNote` の doc コメントは「版は脚注ではなく文の一部である —— 規則の数
+ * （146 / 146）は、それを数えたビルドと並んで初めて意味を持つ」と書いている。
+ * 既定の出力形式は markdown なので、そこで版が `## Notes` にしか出ないなら
+ * **書いてある意図と出力が一致していない**。実測（2026-08-18）ではそうなっていた:
+ *
+ * ```
+ * - Rules: 146 checked, 146 passed, 0 failed
+ *
+ * ## Notes
+ * - Validated by veraPDF (..., version 1.30.0) — authoritative result.
+ * ```
+ */
+describe('formatConformanceValidation の版の位置', () => {
+  const base = {
+    engine: 'verapdf' as const,
+    flavour: 'PDF/A-2b',
+    compliant: true,
+    checkedRules: 146,
+    passedRules: 146,
+    failedRules: 0,
+    violations: [],
+  };
+
+  function render(version: string | null, extraNotes: string[] = []): string {
+    const authoritativeValidation = {
+      performed: true as const,
+      validator: 'verapdf' as const,
+      path: '/opt/homebrew/bin/verapdf',
+      version,
+    };
+    return formatConformanceValidation({
+      ...base,
+      authoritativeValidation,
+      notes: [...extraNotes, veraPdfNote(authoritativeValidation)],
+    });
+  }
+
+  it('🔴 版の行が Rules の行より前に出る', () => {
+    const text = render('1.30.0');
+    const note = text.indexOf('version 1.30.0');
+    const rules = text.indexOf('- Rules:');
+    expect(note).toBeGreaterThan(-1);
+    expect(rules).toBeGreaterThan(-1);
+    expect(note).toBeLessThan(rules);
+  });
+
+  it('🔴 同じ文を 2 度出さない（Notes には残さない）', () => {
+    const text = render('1.30.0');
+    const occurrences = text.split('Validated by veraPDF').length - 1;
+    expect(occurrences).toBe(1);
+  });
+
+  it('他の注記は Notes に残る', () => {
+    const text = render('1.30.0', ['Document also declares PDF/UA.']);
+    expect(text).toContain('## Notes');
+    expect(text).toContain('- Document also declares PDF/UA.');
+  });
+
+  it('版が読めなくても位置は変わらない', () => {
+    const text = render(null);
+    expect(text).toContain('version unknown');
+    expect(text.indexOf('version unknown')).toBeLessThan(text.indexOf('- Rules:'));
+  });
+
+  it('注記が veraPDF の 1 本だけなら Notes の見出しは出ない', () => {
+    expect(render('1.30.0')).not.toContain('## Notes');
   });
 });

@@ -3,6 +3,7 @@
  */
 
 import { CHARACTER_LIMIT } from '../constants.js';
+import { veraPdfNote } from '../services/conformance-validation.js';
 import type {
   CmsVerificationResult,
   ConformanceReport,
@@ -320,7 +321,17 @@ export function formatConformanceValidation(
   // Before the numbers, not after them. A reader who meets "24 checked, 24
   // passed" first has already formed a verdict by the time a note at the bottom
   // says the authoritative validator never ran.
-  if (!report.authoritativeValidation.performed) {
+  //
+  // 🔴 **The performed case gets the same placement.** It used to reach the
+  // reader only through `## Notes` at the bottom, so the build that produced
+  // "146 checked, 146 passed" arrived after the numbers it qualifies — the
+  // footnote position this field exists to avoid. The note is moved rather than
+  // duplicated: `veraPdfNote` builds the same string, so it is dropped from the
+  // Notes list below.
+  const performedNote = veraPdfNote(report.authoritativeValidation);
+  if (report.authoritativeValidation.performed) {
+    lines.push(`- ${performedNote}`);
+  } else {
     lines.push(
       `- **Authoritative validation (veraPDF): NOT PERFORMED** — ${report.authoritativeValidation.detail} The subset below can disprove conformance but cannot certify it.`,
     );
@@ -346,9 +357,11 @@ export function formatConformanceValidation(
       if (v.detail) lines.push(`  - ${v.detail}`);
     }
   }
-  if (report.notes.length > 0) {
+  // 上へ移した注記は繰り返さない（同じ文が 2 度出ると、どちらが本文か決められない）
+  const rest = report.notes.filter((note) => note !== performedNote);
+  if (rest.length > 0) {
     lines.push('', '## Notes');
-    for (const note of report.notes) lines.push(`- ${note}`);
+    for (const note of rest) lines.push(`- ${note}`);
   }
   return lines.join('\n');
 }

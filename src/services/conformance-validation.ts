@@ -178,8 +178,13 @@ async function resolveAuthoritativeValidation(
  *
  * The version is part of the sentence rather than a footnote: a rule count
  * ("146 / 146") only means something alongside the build that counted them.
+ *
+ * Exported so the markdown formatter can recognise this exact note among
+ * `report.notes` and move it above the counts instead of printing it twice.
+ * Comparing the built string is deliberate — a flag saying "this note is the
+ * veraPDF one" would be a second source of truth for the same fact.
  */
-function veraPdfNote(status: AuthoritativeValidation): string {
+export function veraPdfNote(status: AuthoritativeValidation): string {
   if (!status.performed) return '';
   const build = status.version === null ? 'version unknown' : `version ${status.version}`;
   return `Validated by veraPDF (${status.path}, ${build}) — authoritative result.`;
