@@ -177,9 +177,9 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
 
 ## B. Feature（V-F\*）
 
-- [ ] **V-F5. `verify_integrity` の説明が「歩き切れなかったチェーン」を `revisions: null` の場合しか書いていない**（2026-08-13 起票・**0.15.1 予定**）
+- [ ] **V-F5. `verify_integrity` の説明が「歩き切れなかったチェーン」を `revisions: null` の場合しか書いていない**（2026-08-13 起票・**0.15.2 予定**）
 
-  **着手用の引き継ぎ: [`handoff/0.15.1-V-F5.md`](handoff/0.15.1-V-F5.md)**（別セッションが 1 枚読めば始められる形）
+  **着手用の引き継ぎ: [`handoff/0.15.2-V-F5.md`](handoff/0.15.2-V-F5.md)**（別セッションが 1 枚読めば始められる形）
 
   現在の説明はこの 1 行だけ。
 
@@ -195,7 +195,8 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
   化けていた）。信号を直したのに説明を直していないのは片手落ち。
 
   0.15.0 のタグ直前に発見。説明文の変更はツール出力が変わる（V-F）ので、公開直前の駆け込みを
-  避けて次版に回した。**0.15.1 の内容はこれ 1 件**。
+  避けて次版に回した。**0.15.2 の内容はこれ 1 件**。
+  （当初は 0.15.1 の予定。0.15.1 には veraPDF の版の記録が入ったので 1 件動かした）
 
   - [ ] `src/tools/verify-integrity.ts` の Limits に 1 行追加
   - [ ] `pdf-trust` skill 側の対応（`legal.md` / `contract.md` の「全履歴」の扱い）は
