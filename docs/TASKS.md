@@ -177,7 +177,7 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
 
 ## B. Feature（V-F\*）
 
-- [ ] **V-F5. `verify_integrity` の説明が「歩き切れなかったチェーン」を `revisions: null` の場合しか書いていない**（2026-08-13 起票・**0.15.2 予定**）
+- [x] **V-F5. `verify_integrity` の説明が「歩き切れなかったチェーン」を `revisions: null` の場合しか書いていない**（2026-08-13 起票・**v0.15.2**・2026-08-18）
 
   **着手用の引き継ぎ: [`handoff/0.15.2-V-F5.md`](handoff/0.15.2-V-F5.md)**（別セッションが 1 枚読めば始められる形）
 
@@ -198,9 +198,33 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
   避けて次版に回した。**0.15.2 の内容はこれ 1 件**。
   （当初は 0.15.1 の予定。0.15.1 には veraPDF の版の記録が入ったので 1 件動かした）
 
-  - [ ] `src/tools/verify-integrity.ts` の Limits に 1 行追加
-  - [ ] `pdf-trust` skill 側の対応（`legal.md` / `contract.md` の「全履歴」の扱い）は
-        skill 0.5.1 で先に入れている。説明と skill の言い回しを揃える
+  - [x] `src/tools/verify-integrity.ts` の Limits に 1 行追加
+  - [x] `pdf-trust` skill 側の対応（`legal.md` / `contract.md` の「全履歴」の扱い）は
+        skill 0.5.1 で先に入れている。説明と skill の言い回しを揃えた
+  - [x] 回帰テスト 1 本。**打ち切ったチェーンでは `revisions` が非 null・非空で返り、
+        残った 1 件が「元版」扱いになって `changeCount: 0` / `changes: null` になる**ことを固定した
+        —— 機械が読めるフィールドは全部「何も足されていない」と言う。信号は `notes` にしか無い
+
+- [ ] **V-F6. 打ち切りが `notes` の散文にしか出ない**（2026-08-18 起票・V-F5 の作業中に判明）
+
+  `diffRevisions` は `truncated` / `newestSectionUnreadable` を返しているが、
+  **`IntegrityReport` には載っていない**（`verification-service.ts` の返り値リテラルに無い）。
+  呼び出し側に届くのは `notes` の英文 2 種だけである。
+
+  > The cross-reference chain ended before reaching the original revision …
+  > The last "startxref" does not point at a parseable cross-reference section …
+
+  つまり **機械が分岐するには英文を正規表現で見るしかない**。しかも
+  「歩き切れた」と言う note は無いので、完全性は**この 2 文が無いこと**でしか表せない。
+  pdf-trust の legal / medical は「全履歴」を約束するかどうかをここで決めるので、
+  判定の根拠が散文の一致になっている。
+
+  V-F5 では**説明文だけを直した**（引き継ぎの「0.15.2 の内容はこれ 1 件」に従った）。
+  出力にフィールドを足すのは別の版で行う。
+
+  - [ ] `IntegrityReport` に `revisionChain: { complete: boolean; reason: 'truncated' | 'newest-section-unreadable' | null }` 相当を足す（形は要検討）
+  - [ ] `notes` の 2 文は残す（人が読む面）。フィールドは機械が読む面
+  - [ ] pdf-trust skill の `legal.md` / `contract.md` を、note の読み取りからフィールドの読み取りへ寄せる
 
 - [x] **V-F1. `validate_conformance` に PDF/A-4 flavour を追加**（2026-07-25 起票・**v0.11.0**・2026-07-27）
       **writer 側の依頼番号は M-9。writer B-20（PDF/A-4 正規化）の前提タスク。**

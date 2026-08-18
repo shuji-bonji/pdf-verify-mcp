@@ -28,6 +28,7 @@ Also reports an object-level diff of the incremental-update chain: for each revi
 Limits of the diff — it is an observation, never a verdict:
   - Incremental updates are legal in PDF (ISO 32000-2 §7.5.6). A rewritten object says what to review, not that the file was tampered with. No verdict moves because of it.
   - revisions: null means the cross-reference chain could not be walked — "not determined", NOT "nothing changed".
+  - A non-null revisions list is not necessarily the whole history, and there is no boolean field saying so — read notes. Two cases put a short list there: the chain ended before reaching the original revision (damaged or cyclic /Prev), which drops the OLDEST revisions; and the last startxref not pointing at a parseable section, so an older entry point was used, which drops whatever was appended LAST. revisions are listed oldest first. There is no note saying the chain WAS complete — completeness is the absence of those two notes, so check for them before treating "no such change appears in the list" as "that change was not made".
   - Objects stored inside an object stream are listed with inObjectStream: true and no type.
   - Linearised files (ISO 32000-1 Annex F) carry two cross-reference sections for one save; they are merged back into one revision rather than reported as an update.
 

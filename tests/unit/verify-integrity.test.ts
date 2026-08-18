@@ -339,6 +339,43 @@ describe('analyzeIntegrity — how the cross-reference chain is walked', () => {
     expect(report.certification?.assessmentReason).toMatch(/revision chain is incomplete/);
   });
 
+  /**
+   * V-F5. The tool description used to warn only about `revisions: null`, so a
+   * returned list read as the whole history. It is not: when the chain is cut,
+   * the list comes back **non-null and non-empty**, and the revision that
+   * survives is reported as the ORIGINAL one — `changeCount: 0`, `changes: null`.
+   * Every machine-readable field then says "nothing was appended" about a file
+   * that demonstrably had an append.
+   *
+   * There is no boolean on the report for this. The only signal is in `notes`,
+   * which is why the description now sends the reader there.
+   */
+  it('a returned revisions list is not evidence that nothing was appended', async () => {
+    const chain = appendObjectRevision(signedPdf, { objects: [annotation] });
+
+    const intact = await analyzeIntegrity(await parsePdfBytes(chain));
+    expect(intact.revisions).toHaveLength(2);
+    expect(intact.revisions?.[1].changes).toEqual([
+      expect.objectContaining({ objectNumber: annotation.objectNumber, change: 'added' }),
+    ]);
+
+    const cut = await analyzeIntegrity(await parsePdfBytes(blankNewestPrev(chain)));
+
+    // 🔴 Not null, not empty — "a list came back" is not "the whole file was read".
+    expect(cut.revisions).not.toBeNull();
+    expect(cut.revisions).toHaveLength(1);
+    // The append is gone from every field: the surviving revision is treated as
+    // the original, so there is nothing to compare it against.
+    expect(cut.revisions?.[0].changeCount).toBe(0);
+    expect(cut.revisions?.[0].changes).toBeNull();
+    expect(cut.objectChangesAfterLastSignature).toEqual([]);
+
+    // No boolean says the chain was cut. Only the note does.
+    expect(cut).not.toHaveProperty('truncated');
+    expect(cut).not.toHaveProperty('newestSectionUnreadable');
+    expect(cut.notes.join(' ')).toMatch(/chain ended before reaching the original revision/);
+  });
+
   it('walks a file whose header does not start at byte 0 (§7.5.2)', async () => {
     const lead = '%!PS-Adobe-3.0\n% wrapper bytes before the PDF header\n';
     const shifted = shiftOrigin(signedPdf, lead);
