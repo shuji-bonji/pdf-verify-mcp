@@ -232,9 +232,14 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
         `reason` が単数では表せず、`complete` は他から導ける冗長フィールドになる。
         3 値にしたので `unwalkable` を `partial` の一種と読み違えられない
   - [x] `notes` の 2 文は残す（人が読む面 = 原因）。フィールドは機械が読む面（結果）
-  - [ ] pdf-trust skill を、note の読み取りからフィールドの読み取りへ寄せる
-        （`SKILL.md` の 3 箇所 + `references/` の legal / contract / medical / government / financial）。
-        **verify 0.16.0 の公開後**に行う —— 未公開の版を要求する skill は出せない
+  - [x] pdf-trust skill を、note の読み取りからフィールドの読み取りへ寄せた
+        （**skill v0.6.0**・2026-08-18。verify 0.16.0 の公開を確認してから着手した ——
+        未公開の版を要求する skill は出せないため）。
+        **版による退避を 1 箇所にまとめた**: それまで 5 つのプロファイル文書が
+        「`notes` を読め」をそれぞれ書いており、直すたびに 5 箇所を揃える必要があった。
+        判定の仕方と旧版（0.16.0 未満 / 0.15.0 未満）の退避は `SKILL.md`「Phase 2.5」の 2 に置き、
+        `references/` にはプロファイル固有の帰結だけを残した。
+        `references/` に残る `notes` の言及は financial の weak digest 1 件のみ（別件）
 
 - [ ] **V-F7. リビジョン数が食い違う理由を、機械が読めない**（2026-08-18 起票・V-F6 の作業中に判明）
 
