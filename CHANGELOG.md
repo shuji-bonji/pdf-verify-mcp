@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.1] - 2026-08-18
+
+### Added
+
+- **`validate_conformance` now reports which veraPDF build produced the verdict.**
+  `authoritativeValidation` gained a `version` field, and the provenance line reads
+  `Validated by veraPDF (<path>, version 1.30.0) — authoritative result.`
+
+  A rule count is only comparable across runs of the *same* build. Without the version,
+  a change from `146 / 146` to anything else cannot be attributed to the document rather
+  than to the validator, and the reports this server feeds
+  (`pdf-writer-mcp`'s `docs/CONFORMANCE.md`) carry exactly such counts.
+
+  **The executable path is not a substitute.** Measured on the development machine
+  (2026-08-18): Homebrew's Cellar directory says `1.30.2` while veraPDF itself answers
+  `1.30.0`.
+
+  The version is read from `verapdf --version` and cached per executable — one extra
+  process per server lifetime, not per file. It is **not the first line** of that output:
+  the JVM writes warnings ahead of it, and which stream they land on is JVM-dependent,
+  so both are read. A build whose output carries no recognisable version line is recorded
+  as `version: null` and described as `version unknown` — never guessed, because
+  "could not be read" and "was not validated" are different statements.
+
+### Fixed
+
+- **The version reached the reader after the numbers it qualifies.** In the default
+  markdown output the provenance line was printed under `## Notes` at the bottom, so a
+  reader met `Rules: 146 checked, 146 passed` first and had already formed a verdict by
+  the time the build appeared. The formatter already placed the *not performed* case
+  above the counts for that exact reason; the performed case now gets the same position.
+
+  The line is moved rather than duplicated — it no longer appears in `## Notes`.
+  JSON output is unchanged: `authoritativeValidation` was always structured there.
+
 ## [0.15.0] - 2026-08-13
 
 ### Changed

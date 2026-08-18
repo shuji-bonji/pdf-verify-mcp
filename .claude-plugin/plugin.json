@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/anthropics/claude-code/main/.claude-plugin/plugin.schema.json",
   "name": "pdf-verify-mcp",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "description": "PDF 真正性検証 MCP server。電子署名の暗号学的検証 (CMS/PKCS#7)・改ざん検知 (ByteRange/インクリメンタル更新解析。リビジョン間のオブジェクト単位差分を含む)・DocMDP 証明署名の権限判定 (ISO 32000-2 Table 257 に沿って P=1/2/3 ごとに変更の種類を照合。判定できない場合は indeterminate = pass ではない)・PAdES レベル判定 (B-B/B-T/B-LT/B-LTA)・PDF/A (ISO 19005) / PDF/UA (ISO 14289) 適合性検証・ISO 32000 本体条文の制約検査 (validate_clauses = フォント埋め込み / メタデータ / 注釈の 3 ドメイン・26 制約。veraPDF が見ない領域)・決定論的トラストポリシー判定 (evaluate_policy) を提供する。npx @shuji-bonji/pdf-verify-mcp で起動。",
   "author": {
     "name": "shuji-bonji",
@@ -26,7 +26,10 @@
   "mcpServers": {
     "pdf-verify": {
       "command": "npx",
-      "args": ["-y", "@shuji-bonji/pdf-verify-mcp@latest"]
+      "args": [
+        "-y",
+        "@shuji-bonji/pdf-verify-mcp@latest"
+      ]
     }
   }
 }
