@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.2] - 2026-08-18
+
+### Changed
+
+- **`verify_integrity`'s tool description now says that a returned `revisions` list can be
+  a part of the history rather than all of it.** It warned only about `revisions: null`, so a
+  non-null list read as the whole file. Two things put a short list there: the chain ending
+  before it reaches the original revision (a damaged or cyclic `/Prev`), which drops the
+  **oldest** revisions; and the last `startxref` not pointing at a parseable cross-reference
+  section, so an older entry point is used and whatever was appended **last** is dropped.
+
+  **0.15.0 made this consequential.** That release started reporting an unfollowable `/Prev`
+  as what it is instead of swallowing it, so more files now report a cut chain. Correcting the
+  signal without correcting the description left the wrong reading in the place a caller reads
+  first — a tool description is read *before* the tool is called, `notes` only after.
+
+  🔴 **There is no boolean to test.** Both cases reach the caller through `notes` alone, and
+  no note says the chain WAS complete — completeness is the *absence* of those two notes. The
+  description now sends the reader to `notes` rather than naming a field that does not exist.
+  Making them machine-readable is filed as **V-F6**.
+
+  No `inputSchema` changed.
+
+- A regression test pins what a cut chain actually returns. `revisions` comes back **non-null
+  and non-empty**, and the single revision that survives is treated as the original one:
+  `changeCount: 0`, `changes: null`, `objectChangesAfterLastSignature: []`. Every
+  machine-readable field says "nothing was appended" about a file that demonstrably had an
+  append — which is why the description has to carry the warning.
+
 ## [0.15.1] - 2026-08-18
 
 ### Added
