@@ -2,6 +2,55 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.0] - 2026-08-18
+
+### Added
+
+- **`verify_integrity` now says whether the revision list is the whole history, as a field
+  (V-F6).** `revisionChain: { status, missing }`:
+
+  | `status` | meaning |
+  |---|---|
+  | `complete` | walked from the newest cross-reference section back to the original revision |
+  | `partial` | a list came back, but `missing` names the end that is absent |
+  | `unwalkable` | no section could be read at all; `revisions` is `null` |
+
+  `missing` holds `'oldest'` when the chain ended before the original revision (a damaged or
+  cyclic `/Prev`, or the revision cap) and `'newest'` when the last `startxref` did not point
+  at a parseable section, so an older entry point was used and the last append is not listed.
+  Both can be absent at once; `missing` is empty **only** when `status` is `complete`, and
+  `unwalkable` names both, because saying `missing: []` there would read as "nothing is missing".
+
+  **Why this is a minor release and not a patch.** 0.15.2 corrected the tool *description* to
+  warn that a returned list may be partial, but left the only signal in English prose —
+  `pdf-trust`'s `legal` and `medical` profiles decided whether they could promise a full
+  history by matching sentences in `notes`. A dependent that starts requiring this field
+  cannot rest on a patch.
+
+  🔴 **Only `complete` makes "no such change appears in the list" mean "that change was not
+  made".** With a cut chain the surviving revision is reported as the original one —
+  `changeCount: 0`, `changes: null`, `objectChangesAfterLastSignature` empty — so every other
+  machine-readable field reads as "nothing was appended" about a file that demonstrably had one.
+
+  The status is derived in one place (`chainCoverage`). Recomputing "is this the whole history"
+  anywhere else would be a second source of truth for the same fact, which is what the prose
+  matching already was.
+
+- The markdown report carries the same statement **directly under the revision count**, not in
+  `## Notes` at the bottom. A reader who meets `Revisions: 2` first has already formed a view
+  by the time a footnote says the chain was cut, and the object-level section is skipped
+  entirely when the cut leaves a single revision — so this line is the only place it appears.
+
+### Unchanged
+
+- **The two `notes` sentences stay.** They carry the *cause* (a damaged or cyclic `/Prev`, the
+  revision cap, an unparseable newest section); the field carries the consequence. A human
+  reads the first, a machine branches on the second.
+- No verdict moves. `evaluate_policy` already reached `violationAssessment: 'indeterminate'`
+  through the same flags internally, and no `POL-*` rule was added: whether a profile promises
+  a full history is the `pdf-trust` skill's judgement, not this server's.
+- No `inputSchema` changed.
+
 ## [0.15.2] - 2026-08-18
 
 ### Changed
