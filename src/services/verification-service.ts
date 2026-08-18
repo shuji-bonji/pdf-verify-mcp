@@ -19,6 +19,8 @@ import type {
   IntegrityReport,
   PadesLevelReport,
   ParsedPdf,
+  RevisionChainCoverage,
+  RevisionChainEnd,
   RevisionObjectChange,
   RevisionSummary,
   SignatureField,
@@ -604,9 +606,33 @@ export async function analyzeIntegrity(parsed: ParsedPdf): Promise<IntegrityRepo
     lastSignatureCoversFile: lastCovers,
     hasDss: parsed.hasDss,
     revisions: diff?.revisions ?? null,
+    revisionChain: chainCoverage(diff),
     objectChangesAfterLastSignature,
     notes,
   };
+}
+
+/**
+ * Turn the walker's two flags into the one thing a caller branches on.
+ *
+ * 🔴 **Derived in exactly one place.** The three cases used to be reconstructed
+ * by whoever read the report — by matching English sentences in `notes`, since
+ * there was no field at all (V-F6). Anything that recomputes "is this the whole
+ * history" somewhere else is a second source of truth for the same fact.
+ *
+ * `null` in means the chain could not be entered at all: nothing was read, so
+ * **both** ends are absent. Saying `missing: []` there would read as "nothing
+ * is missing", which is the exact misreading this field exists to remove.
+ */
+function chainCoverage(
+  diff: { truncated: boolean; newestSectionUnreadable: boolean } | null,
+): RevisionChainCoverage {
+  if (!diff) return { status: 'unwalkable', missing: ['oldest', 'newest'] };
+  const missing: RevisionChainEnd[] = [];
+  // Ordered oldest-end first, matching the order `revisions` is listed in.
+  if (diff.truncated) missing.push('oldest');
+  if (diff.newestSectionUnreadable) missing.push('newest');
+  return { status: missing.length === 0 ? 'complete' : 'partial', missing };
 }
 
 function isPadesSubFilter(sig: SignatureField): boolean {

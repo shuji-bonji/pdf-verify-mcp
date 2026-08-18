@@ -10,6 +10,7 @@ import type {
   DocMdpAssessment,
   IntegrityReport,
   PadesLevelReport,
+  RevisionChainCoverage,
   RevisionObjectChange,
   SignatureVerificationReport,
 } from '../types.js';
@@ -92,12 +93,41 @@ export function formatSignatureReports(reports: SignatureVerificationReport[]): 
   return lines.join('\n');
 }
 
+/**
+ * One line saying how much of the history the revision list covers.
+ *
+ * The wording names **which end** is absent rather than the cause; the cause
+ * stays in `notes`, where there is room for it.
+ */
+function revisionChainLine(coverage: RevisionChainCoverage): string {
+  if (coverage.status === 'unwalkable') {
+    return 'Revision history: **NOT DETERMINED** — no cross-reference section could be read, so no revision is listed. This is not "nothing changed".';
+  }
+  if (coverage.status === 'complete') {
+    return 'Revision history: complete (walked back to the original revision)';
+  }
+  const ends = coverage.missing
+    .map((end) =>
+      end === 'oldest'
+        ? 'the oldest revisions (the chain ended before the original one)'
+        : 'the newest revision (the last "startxref" was unreadable, so an older entry point was used)',
+    )
+    .join(' and ');
+  return `Revision history: **PARTIAL** — ${ends} ${coverage.missing.length > 1 ? 'are' : 'is'} not in the list below`;
+}
+
 export function formatIntegrityReport(report: IntegrityReport): string {
   const lines: string[] = ['# Integrity Analysis', ''];
   lines.push(`- File size: ${report.fileSize} bytes`);
   lines.push(
     `- Revisions: ${report.revisionCount} (incremental updates: ${report.incrementalUpdateCount})`,
   );
+  // Immediately under the count, for the same reason the conformance report puts
+  // the validator above the rule totals: a reader who meets "Revisions: 2" first
+  // has already formed a view of the file by the time a note at the bottom says
+  // the chain was cut. The object-level section below is skipped entirely when
+  // the cut leaves a single revision, so this line is the only place it appears.
+  lines.push(`- ${revisionChainLine(report.revisionChain)}`);
   lines.push(`- Signatures: ${report.signatureCount}`);
   lines.push(`- Last signature covers entire file: ${yesNo(report.lastSignatureCoversFile)}`);
   lines.push(`- DSS present: ${yesNo(report.hasDss)}`);

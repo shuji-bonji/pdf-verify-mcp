@@ -205,7 +205,7 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
         残った 1 件が「元版」扱いになって `changeCount: 0` / `changes: null` になる**ことを固定した
         —— 機械が読めるフィールドは全部「何も足されていない」と言う。信号は `notes` にしか無い
 
-- [ ] **V-F6. 打ち切りが `notes` の散文にしか出ない**（2026-08-18 起票・V-F5 の作業中に判明）
+- [x] **V-F6. 打ち切りが `notes` の散文にしか出ない**（2026-08-18 起票・**v0.16.0**・2026-08-18）
 
   `diffRevisions` は `truncated` / `newestSectionUnreadable` を返しているが、
   **`IntegrityReport` には載っていない**（`verification-service.ts` の返り値リテラルに無い）。
@@ -222,9 +222,19 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
   V-F5 では**説明文だけを直した**（引き継ぎの「0.15.2 の内容はこれ 1 件」に従った）。
   出力にフィールドを足すのは別の版で行う。
 
-  - [ ] `IntegrityReport` に `revisionChain: { complete: boolean; reason: 'truncated' | 'newest-section-unreadable' | null }` 相当を足す（形は要検討）
-  - [ ] `notes` の 2 文は残す（人が読む面）。フィールドは機械が読む面
-  - [ ] pdf-trust skill の `legal.md` / `contract.md` を、note の読み取りからフィールドの読み取りへ寄せる
+  🔴 **実装中の実測で 1 件分かった。** `tests/fixtures/generated/appended.pdf` は
+  **もともと `partial`（`missing: ['newest']`）**である —— 最後の `startxref` が
+  読めるセクションを指しておらず、古い入口から入っている。それまでは `notes` にしか
+  出ていなかったので、この検体が「完全なチェーン」だと思われていた可能性がある。
+
+  - [x] `IntegrityReport` に `revisionChain: { status: 'complete' | 'partial' | 'unwalkable'; missing: ('oldest' | 'newest')[] }` を足した。
+        起票時の案（`complete: boolean` + `reason`）は採らなかった —— **2 つの端は同時に欠けうる**ので
+        `reason` が単数では表せず、`complete` は他から導ける冗長フィールドになる。
+        3 値にしたので `unwalkable` を `partial` の一種と読み違えられない
+  - [x] `notes` の 2 文は残す（人が読む面 = 原因）。フィールドは機械が読む面（結果）
+  - [ ] pdf-trust skill を、note の読み取りからフィールドの読み取りへ寄せる
+        （`SKILL.md` の 3 箇所 + `references/` の legal / contract / medical / government / financial）。
+        **verify 0.16.0 の公開後**に行う —— 未公開の版を要求する skill は出せない
 
 - [x] **V-F1. `validate_conformance` に PDF/A-4 flavour を追加**（2026-07-25 起票・**v0.11.0**・2026-07-27）
       **writer 側の依頼番号は M-9。writer B-20（PDF/A-4 正規化）の前提タスク。**

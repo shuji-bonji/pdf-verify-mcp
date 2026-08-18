@@ -347,8 +347,11 @@ describe('analyzeIntegrity — how the cross-reference chain is walked', () => {
    * Every machine-readable field then says "nothing was appended" about a file
    * that demonstrably had an append.
    *
-   * There is no boolean on the report for this. The only signal is in `notes`,
-   * which is why the description now sends the reader there.
+   * V-F6 (0.16.0) gave this a field. Before it, the only signal was English
+   * prose in `notes`, so a caller had to match strings to decide whether it
+   * could promise a full history — `pdf-trust`'s legal / medical profiles did
+   * exactly that. The prose stays (a human reads the cause there); the field
+   * carries the consequence, which is what a machine branches on.
    */
   it('a returned revisions list is not evidence that nothing was appended', async () => {
     const chain = appendObjectRevision(signedPdf, { objects: [annotation] });
@@ -370,10 +373,42 @@ describe('analyzeIntegrity — how the cross-reference chain is walked', () => {
     expect(cut.revisions?.[0].changes).toBeNull();
     expect(cut.objectChangesAfterLastSignature).toEqual([]);
 
-    // No boolean says the chain was cut. Only the note does.
-    expect(cut).not.toHaveProperty('truncated');
-    expect(cut).not.toHaveProperty('newestSectionUnreadable');
+    // The one field a caller branches on. `partial` — not `complete`, and not
+    // the `unwalkable` that a null list would give.
+    expect(cut.revisionChain).toEqual({ status: 'partial', missing: ['oldest'] });
+    // The cause stays in the prose.
     expect(cut.notes.join(' ')).toMatch(/chain ended before reaching the original revision/);
+
+    // 🔴 The same file read as complete before the cut. If this stopped being
+    // `complete`, the field would be reporting the flag rather than the fact.
+    expect(intact.revisionChain).toEqual({ status: 'complete', missing: [] });
+  });
+
+  /**
+   * `unwalkable` is a third state, not a flavour of `partial`. A caller that
+   * treats "missing is empty" as "nothing is missing" would read a file whose
+   * chain could not be entered at all as a complete history, which is the
+   * misreading `violationAssessment: 'indeterminate'` exists to prevent
+   * elsewhere in this report.
+   */
+  it('names both ends absent when no cross-reference section could be read', async () => {
+    const chain = appendObjectRevision(signedPdf, { objects: [annotation] });
+    const text = Buffer.from(chain).toString('latin1');
+    // Point every `startxref` at an offset with no cross-reference section,
+    // padded so that nothing else in the file moves (§7.2.3: white space is a
+    // separator). Measured on tests/fixtures/generated/appended.pdf: this is
+    // what makes `walkChain` return null.
+    const wrecked = Buffer.from(
+      text.replace(/startxref\s*\r?\n\d+/g, (m) => 'startxref\n1'.padEnd(m.length, ' ')),
+      'latin1',
+    );
+    expect(wrecked.length).toBe(chain.length);
+
+    const report = await analyzeIntegrity(await parsePdfBytes(new Uint8Array(wrecked)));
+
+    expect(report.revisions).toBeNull();
+    expect(report.revisionChain.status).toBe('unwalkable');
+    expect(report.revisionChain.missing).toEqual(['oldest', 'newest']);
   });
 
   it('walks a file whose header does not start at byte 0 (§7.5.2)', async () => {

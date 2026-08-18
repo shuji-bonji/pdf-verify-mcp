@@ -178,6 +178,34 @@ export interface IntegrityReport {
    */
   revisions: RevisionSummary[] | null;
   /**
+   * Whether `revisions` above is the whole history (v0.16+, V-F6).
+   *
+   * 🔴 **A returned list is not evidence of completeness.** When the chain is
+   * cut, `revisions` still comes back non-null and non-empty, and the single
+   * revision that survives is reported as the original one — `changeCount: 0`,
+   * `changes: null`. Every other machine-readable field then says "nothing was
+   * appended" about a file that demonstrably had an append. Until 0.15.2 the
+   * only signal was English prose in `notes`, so a caller had to match strings
+   * to decide whether it could promise a full history.
+   *
+   * `status` is the one thing to branch on, and it is derived in a single
+   * place so the three cases cannot drift apart:
+   *
+   * - `complete` — walked from the newest cross-reference section back to the
+   *   original revision. Only here does "no such change appears in the list"
+   *   mean "that change was not made".
+   * - `partial` — walked, but `missing` names the ends that are absent.
+   * - `unwalkable` — no section could be read at all; `revisions` is `null`.
+   *   **NOT a pass**, the same discipline as `violationAssessment`'s
+   *   `indeterminate`: "could not be read" and "nothing there" are different
+   *   statements.
+   *
+   * The *cause* stays in `notes` (a damaged or cyclic `/Prev`, the revision
+   * cap, an unparseable newest section). The field carries the consequence,
+   * because that is what a caller branches on.
+   */
+  revisionChain: RevisionChainCoverage;
+  /**
    * Objects written by revisions that were appended after the last signed
    * range ended — the shortlist UC-10 hands to a reader for locating.
    * Empty when there is no signature or nothing followed it.
@@ -185,6 +213,29 @@ export interface IntegrityReport {
   objectChangesAfterLastSignature: RevisionObjectChange[];
   notes: string[];
 }
+
+/**
+ * How much of the revision history `revisions` actually covers.
+ *
+ * `missing` names **which end** of the history is absent rather than why:
+ *
+ * - `oldest` — the walk back stopped before reaching the original revision, so
+ *   the earliest revisions are not listed.
+ * - `newest` — the file's last `startxref` did not point at a parseable
+ *   cross-reference section, so an older entry point was used and whatever was
+ *   appended last is not listed.
+ *
+ * Both can be absent at once. `missing` is empty **only** when `status` is
+ * `complete`; when `status` is `unwalkable` both ends are named, because
+ * nothing at all was read.
+ */
+export interface RevisionChainCoverage {
+  status: 'complete' | 'partial' | 'unwalkable';
+  missing: RevisionChainEnd[];
+}
+
+/** Which end of the revision history is absent from `revisions` */
+export type RevisionChainEnd = 'oldest' | 'newest';
 
 /** Which form of cross-reference section a revision used */
 export type XrefKind = 'table' | 'stream' | 'hybrid';
