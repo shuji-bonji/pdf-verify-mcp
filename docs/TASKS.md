@@ -236,6 +236,38 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
         （`SKILL.md` の 3 箇所 + `references/` の legal / contract / medical / government / financial）。
         **verify 0.16.0 の公開後**に行う —— 未公開の版を要求する skill は出せない
 
+- [ ] **V-F7. リビジョン数が食い違う理由を、機械が読めない**（2026-08-18 起票・V-F6 の作業中に判明）
+
+  V-F6 と同型で、残っているもう 1 件。`diffRevisions` は `linearized` を返しているが
+  **`IntegrityReport` には載っていない**（`verification-service.ts` の返り値リテラルに無い）。
+
+  `revisionCount`（`startxref` の個数）と `revisions.length` は**合法に食い違う**。
+  いま出るのはこの note だけである:
+
+  > The cross-reference chain yields N revision(s) while M "startxref" keyword(s) are present.
+  > The two counts differ legitimately in linearised files and in files carrying a
+  > cross-reference section no chain points at.
+
+  🔴 **この文は原因を 2 つ並べていて、どちらなのかを言っていない。**
+  V-F6 の 2 文は「読めば分かるが機械が読めない」だったが、こちらは
+  **人が読んでも分からない**。`linearized` は `diffRevisions` の中では決まっているのに、
+  出口で捨てている。
+
+  SKILL.md も「**数字ではなく notes と `revisions[]` を読む**」と書いており、
+  その notes が答えを持っていない。
+
+  - [ ] `linearized` を `IntegrityReport` に載せる。形は V-F6 の `revisionChain` に
+        揃えるか（`revisionCount` の食い違いの理由を名指す 1 フィールド）、
+        独立の boolean にするかを決める
+  - [ ] note の文を、**判明している原因を名指す**形に書き直す
+        （線形化と分かっているなら「線形化のため」と書く。分からないときだけ 2 つ並べる）
+  - [ ] pdf-trust SKILL.md の「数字ではなく notes と `revisions[]` を読む」を追随させる
+
+  **先に受け皿が 1 つ足りない**: 🔴 **線形化した検体が `tests/` にも `docs/` にも無い**
+  （`grep -rl 'Linearized'` が 0 件）。`linearized` の分岐は**一度も測られていない**。
+  検体を用意してから着手する —— 無い状態で足すと、緑になっても何も測っていない
+  （[[green-tests-can-be-vacuous]]）。
+
 - [x] **V-F1. `validate_conformance` に PDF/A-4 flavour を追加**（2026-07-25 起票・**v0.11.0**・2026-07-27）
       **writer 側の依頼番号は M-9。writer B-20（PDF/A-4 正規化）の前提タスク。**
       ロードマップ: `Document-Note/mcps/PDFfamily/specs/16-pdfa4-roadmap.md` 第一段階 §1。
