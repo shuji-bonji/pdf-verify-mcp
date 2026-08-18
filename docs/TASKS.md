@@ -179,6 +179,8 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
 
 - [ ] **V-F5. `verify_integrity` の説明が「歩き切れなかったチェーン」を `revisions: null` の場合しか書いていない**（2026-08-13 起票・**0.15.1 予定**）
 
+  **着手用の引き継ぎ: [`handoff/0.15.1-V-F5.md`](handoff/0.15.1-V-F5.md)**（別セッションが 1 枚読めば始められる形）
+
   現在の説明はこの 1 行だけ。
 
   > `revisions: null` means the cross-reference chain could not be walked — "not determined", NOT "nothing changed".
