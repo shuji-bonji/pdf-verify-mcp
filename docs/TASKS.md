@@ -3,7 +3,7 @@
 | 項目 | 内容 |
 | --- | --- |
 | 作成日 | 2026-07-25 |
-| 最終更新 | 2026-08-04（**v0.14.0 = V-P2**（DocMDP の違反判定が P=1 しか見ていなかった欠陥の是正。`changeClass` + 3 値の `violationAssessment`）。**ホストの test / check → publish 待ち**。V-D1 は未着手） |
+| 最終更新 | 2026-08-22（**v0.17.0 = V-F7**（`revisionCountAgreement`。npm 公開済み・npx 検証 PASS）。0.15.0〜0.16.0 = V-F4/V-F5/V-F6（`revisionChain`）。以下の記述は 2026-08-04 時点） 旧: 2026-08-04（**v0.14.0 = V-P2**（DocMDP の違反判定が P=1 しか見ていなかった欠陥の是正。`changeClass` + 3 値の `violationAssessment`）。**ホストの test / check → publish 待ち**。V-D1 は未着手） |
 | 現状 | **v0.14.0**（2026-08-04・**publish 待ち**）= **V-P2 = DocMDP の違反判定が P=1 しか見ていなかった欠陥の是正**（ISO 32000-2 Table 257 に沿って P ごとに判定。オブジェクト差分に **`changeClass`** を足し、**`violationAssessment` は 3 値**（`permitted` / `violated` / **`indeterminate` = pass ではない**）。`evaluate_policy` に **`POL-REVIEW-DOCMDP-INDETERMINATE`**）。**fail open だったものを塞いだ**。**出所は C-3b の署名検体**（P=1/2/3 × 同じ注釈の追加）。テスト 128 件・検体 12 点で実測。**v0.13.0**（2026-07-29・**公開済み**。境界遵守 eval の **E-6b が 3/3 PASS** = 「未実施を報告が持ち帰るか」の初の実測）= **V-A3 = `PDF_VERIFY_VERAPDF` が実行可能かを検査せず採用していた欠陥の是正**（不正な env は PATH の別バイナリで代替せず、`auto` は native + **未実施の明示**、`verapdf` 指定は **`VERAPDF_NOT_AVAILABLE`**）＋ レポートに **`authoritativeValidation`**（`performed` / `reason` / `detail`。markdown では規則数より上に出す）＋ `evaluate_policy` の advisory（**verdict 不変**）。**出所は family の境界遵守 eval の E-6**。**v0.12.0**（2026-07-28・**公開済み・npx 検証 PASS**）= **`validate_clauses` が第 3 ドメイン「注釈」（CT-ANNOT-1〜15・ISO 32000-2 §12.5）を持つ**（`@shuji-bonji/pdf-constraints` の pin を **0.1.0 → 0.3.0**）＋ **failure の Context 行**（制約が持つ文脈をレポートまで運ぶ。CT-ANNOT-9 = QuadPoints の反時計回りは業界がほぼ一様に逸脱しているため、文脈なしでは欠陥として誤読される）。**ドメイン一覧はパッケージから読むので `domains` と description は自動追随**。**手順の順序**（constraints → verify の 2 リリース）は実行済み。**v0.11.0**（2026-07-27・公開済み）= **V-F1（M-9）= `validate_conformance` に PDF/A-4（`pdfa-4` / `pdfa-4e` / `pdfa-4f`）**。実 veraPDF 1.30.0 で 109 規則を回すことを実測（`pdfa-4b` は拒否）。**v0.10.0**（2026-07-27・**公開済み**）= **V-F2（#8）= `verify_integrity` にリビジョン間オブジェクト単位差分**（`revisions` / `objectChangesAfterLastSignature`。**verdict 不変**。ローカル MCP で実検体試用 PASS）。v0.9.0（2026-07-26）= **V-P1 修正**（/Contents の padding 除去が DER 末尾の 0x00 を削り、約 1/256 の署名を「解析不能」と誤報告していた。DER ヘッダの長さで切り出すよう是正・600 検体中 4 件が該当し全て通過）+ **`validate_clauses` 追加**（ISO 32000 本体条文 = T1。判定は `@shuji-bonji/pdf-constraints@0.1.0` に委譲・exact pin・レポートに版を明記）。**7 ツール**。v0.8.0（2026-07-25）= V-F3（#9）で PAdES を観測として明示（`normativeBasis: 'T3'`）＋ **`instructions` 導入**。v0.7.1 = V-A1 / V-A2 の advisory 穴を封鎖（**verdict 不変**）。ツールは `verify_signatures` / `verify_integrity` / `detect_pades_level` / `identify_conformance` / `validate_conformance` / `validate_clauses` / `evaluate_policy`。veraPDF 委譲 + native サブセット（PDF/A 15 規則 / PDF/UA 12 規則）のハイブリッド |
 | 基準 | `docs/PROJECT_PLAN.md`（v0.1 時点の計画。**現状と乖離あり**）／ `docs/family-standards-alignment.md`（family 共通規約への整合）／ `docs/FINDINGS-2026-07-20.md`（④ 実連携で発見した穴 2 件・解決済み）／ PDFfamily `specs/01-pdf-verify-mcp.md` |
 
@@ -321,10 +321,13 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
   `--warning-exit-0` を付けて是正（警告があっても線形化ファイルは書かれており、
   このテストが読むのはそれだけ）。是正後ホスト 153/153 を取り直すこと。
 
-  - [ ] **残件: pdf-trust SKILL.md の追随。** 「linearized PDF は `Revisions:` の数字が +1 に見える
-        …… **数字ではなく notes と `revisions[]` を読む**」を `revisionCountAgreement` の読み取りへ
-        寄せる。**verify 0.17.0 が npm に出てから着手する** —— V-F6 と同じ運びで、
-        未公開の版を要求する skill は出せない
+  - [x] **残件: pdf-trust SKILL.md の追随**（**skill v0.7.0**・2026-08-22）。
+        0.17.0 の npm 公開を `npm view` で確認し、公開版を npx で叩いて
+        `revisionCountAgreement` の返却を実測してから着手した（V-F6 と同じ運び）。
+        「数字ではなく notes と `revisions[]` を読む」を **`revisionCountAgreement` の読み取り**へ寄せ、
+        Phase 2.5 の 2 に読み方の表（agree / accounted / unaccounted）と v0.17.0 未満の退避を置いた。
+        「無い」と「分からない」の区別表に `unaccounted` の行を追加。README（en/ja）の verify 行も
+        v0.17.0 推奨へ更新
 
 - [x] **V-F1. `validate_conformance` に PDF/A-4 flavour を追加**（2026-07-25 起票・**v0.11.0**・2026-07-27）
       **writer 側の依頼番号は M-9。writer B-20（PDF/A-4 正規化）の前提タスク。**
