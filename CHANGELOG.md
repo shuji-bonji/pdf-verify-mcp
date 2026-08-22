@@ -2,6 +2,66 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.0] - 2026-08-18
+
+### Added
+
+- **`verify_integrity` now says why the two revision counts differ, as a field (V-F7).**
+  `revisionCountAgreement: { status, causes }`:
+
+  | `status` | meaning |
+  |---|---|
+  | `agree` | `revisionCount` and `revisions.length` are equal |
+  | `accounted` | they differ, and every entry in `causes` says why |
+  | `unaccounted` | they differ and nothing read from the file explains it |
+
+  `causes` holds `'linearised'` (the file is linearised, so its first-page and main
+  cross-reference sections were folded back into the one save they describe) and/or
+  `'chain-incomplete'` (the chain did not reach every section). **Which end of the history is
+  absent is not repeated here** — that is `revisionChain.missing`.
+
+  `causes` states facts about the file rather than about the subtraction, so it can be
+  non-empty while `status` is `agree`.
+
+  **What was wrong.** The two counts measure different things and differ lawfully:
+  `revisionCount` counts `startxref` keywords in the byte stream, `revisions` lists the
+  cross-reference sections the chain reached. The walker determined which of the two lawful
+  causes applied and then dropped it at the exit — `linearized` was computed in
+  `diffRevisions` and never reached `IntegrityReport`. All a caller got was one sentence in
+  `notes` naming **both** causes and claiming neither:
+
+  > The two counts differ legitimately in linearised files and in files carrying a
+  > cross-reference section no chain points at.
+
+  🔴 `unaccounted` is the state that had nowhere to live. A caller could not distinguish
+  "this file is linearised, so the higher count is expected" from "this file holds a
+  `startxref` the walked chain does not reach", which is the one worth opening the file over.
+
+- **The note now names the cause it determined**, and says "nothing read from the file accounts
+  for the difference" only when that is true. The linearisation note is unchanged: prose
+  carries the cause, the field carries the consequence, the same split as 0.16.0.
+
+- The markdown report prints the reconciliation **directly under the revision count**, and only
+  when the counts differ.
+
+### Fixed
+
+- **The linearisation branch had no test fixture.** Nothing under `tests/` or `docs/` contained
+  the string `Linearized`, so the code that folds a linearised file's two cross-reference
+  sections into one revision — the code the field above reports on — had never been executed by
+  a test. Two fixtures now cover it:
+
+  - `tests/helpers/linearized-pdf.ts` builds a one-page linearised PDF byte by byte, in the part
+    order of ISO 32000-2 Annex F, with every entry of Table F.1 filled in from measured offsets.
+    It runs everywhere. The primary hint stream's **contents** are a placeholder and are
+    documented as such — nothing in this server reads hint data (`qpdf --check` reports
+    `File is linearized` and warns only about the hint table).
+  - `qpdf --linearize` output is read in the same test file where qpdf is installed (CI installs
+    it), so this repository's reading of Annex F is checked against a real linearizer.
+
+- Linearisation is cited as **ISO 32000-2** Annex F rather than ISO 32000-1, matching the edition
+  the rest of the server quotes. The clause is unchanged between the two.
+
 ## [0.16.0] - 2026-08-18
 
 ### Added
