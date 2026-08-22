@@ -340,7 +340,7 @@ async function walkChain(
   if (sections.length === 0) return null;
   const ordered = sections.reverse();
 
-  // A linearised file (ISO 32000-1 Annex F) carries TWO cross-reference
+  // A linearised file (ISO 32000-2 Annex F) carries TWO cross-reference
   // sections for a single save: the first-page section near the top of the
   // file, whose /Prev points at the main section at the bottom. Walking the
   // chain naively turns one save into two "revisions" and reports every object
@@ -574,7 +574,7 @@ export interface RevisionDiffResult {
    */
   newestSectionUnreadable: boolean;
   /**
-   * true when the file is linearised (ISO 32000-1 Annex F): its first-page and
+   * true when the file is linearised (ISO 32000-2 Annex F): its first-page and
    * main cross-reference sections were merged back into the one revision they
    * belong to, instead of being reported as an incremental update.
    */

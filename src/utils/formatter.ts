@@ -116,6 +116,32 @@ function revisionChainLine(coverage: RevisionChainCoverage): string {
   return `Revision history: **PARTIAL** — ${ends} ${coverage.missing.length > 1 ? 'are' : 'is'} not in the list below`;
 }
 
+/**
+ * One line reconciling the two revision counts, printed only when they differ.
+ *
+ * Same placement argument as `revisionChainLine`: the reader has just been told
+ * "Revisions: 2" and the object-level section below lists one. Leaving the
+ * reconciliation to `## Notes` at the bottom means they form a view of the file
+ * first and meet the correction afterwards.
+ */
+function revisionCountLine(report: IntegrityReport): string | null {
+  const agreement = report.revisionCountAgreement;
+  if (agreement.status === 'agree') return null;
+  const listed = report.revisions?.length ?? 0;
+  const counted = `the count above is "startxref" keywords; the chain reached ${listed} cross-reference section(s)`;
+  if (agreement.status === 'unaccounted') {
+    return `Revision count: **UNEXPLAINED DIFFERENCE** — ${counted}, and nothing read from the file accounts for the gap`;
+  }
+  const causes = agreement.causes
+    .map((cause) =>
+      cause === 'linearised'
+        ? 'the file is linearised (two cross-reference sections for one save)'
+        : 'the chain was not followed in full (see the line above)',
+    )
+    .join('; ');
+  return `Revision count: ${counted} — ${causes}`;
+}
+
 export function formatIntegrityReport(report: IntegrityReport): string {
   const lines: string[] = ['# Integrity Analysis', ''];
   lines.push(`- File size: ${report.fileSize} bytes`);
@@ -128,6 +154,8 @@ export function formatIntegrityReport(report: IntegrityReport): string {
   // the chain was cut. The object-level section below is skipped entirely when
   // the cut leaves a single revision, so this line is the only place it appears.
   lines.push(`- ${revisionChainLine(report.revisionChain)}`);
+  const countLine = revisionCountLine(report);
+  if (countLine) lines.push(`- ${countLine}`);
   lines.push(`- Signatures: ${report.signatureCount}`);
   lines.push(`- Last signature covers entire file: ${yesNo(report.lastSignatureCoversFile)}`);
   lines.push(`- DSS present: ${yesNo(report.hasDss)}`);

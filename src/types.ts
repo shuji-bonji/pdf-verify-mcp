@@ -206,6 +206,33 @@ export interface IntegrityReport {
    */
   revisionChain: RevisionChainCoverage;
   /**
+   * Why `revisionCount` and `revisions.length` differ, when they do
+   * (v0.17+, V-F7).
+   *
+   * The two count different things and **differ lawfully**: `revisionCount`
+   * counts `startxref` keywords in the byte stream, `revisions` lists the
+   * cross-reference sections the chain actually reached. A linearised file
+   * (ISO 32000-2 Annex F) writes two sections for one save; a chain that could
+   * not be followed in full reaches fewer sections than there are keywords.
+   *
+   * Until 0.17.0 the report carried neither the linearisation flag nor this
+   * reconciliation: `notes` said the counts differ "in linearised files and in
+   * files carrying a cross-reference section no chain points at" — two causes
+   * side by side, with nothing saying which one this file is.
+   *
+   * `status` is the arithmetic; `causes` are the facts read from the file:
+   *
+   * - `agree` — the two counts are equal.
+   * - `accounted` — they differ and every `causes` entry says why.
+   * - `unaccounted` — they differ and nothing read from the file explains it.
+   *   **This is the case to look at**: the file holds a `startxref` the walked
+   *   chain does not reach.
+   *
+   * `causes` is about the file, not about the subtraction, so it can be
+   * non-empty while `status` is `agree`.
+   */
+  revisionCountAgreement: RevisionCountAgreement;
+  /**
    * Objects written by revisions that were appended after the last signed
    * range ended — the shortlist UC-10 hands to a reader for locating.
    * Empty when there is no signature or nothing followed it.
@@ -236,6 +263,33 @@ export interface RevisionChainCoverage {
 
 /** Which end of the revision history is absent from `revisions` */
 export type RevisionChainEnd = 'oldest' | 'newest';
+
+/**
+ * How `revisionCount` (the `startxref` keywords) and `revisions.length` (the
+ * cross-reference sections the chain reached) relate to each other.
+ *
+ * Derived in one place, for the reason `RevisionChainCoverage` is: a caller
+ * that recombines `revisionCount`, `revisions.length` and the linearisation
+ * flag to answer "is this difference explained" is a second source of truth
+ * for the same fact.
+ */
+export interface RevisionCountAgreement {
+  status: 'agree' | 'accounted' | 'unaccounted';
+  causes: RevisionCountCause[];
+}
+
+/**
+ * A fact read from the file that makes the two revision counts differ.
+ *
+ * - `linearised` — the file is linearised (ISO 32000-2 Annex F). Its
+ *   first-page and main cross-reference sections belong to one save and were
+ *   folded back into the one revision they describe, so one `startxref` has no
+ *   revision of its own.
+ * - `chain-incomplete` — the chain did not reach every section, so sections
+ *   that exist are not listed. **Which end is absent is `revisionChain.missing`
+ *   and is not repeated here.**
+ */
+export type RevisionCountCause = 'linearised' | 'chain-incomplete';
 
 /** Which form of cross-reference section a revision used */
 export type XrefKind = 'table' | 'stream' | 'hybrid';

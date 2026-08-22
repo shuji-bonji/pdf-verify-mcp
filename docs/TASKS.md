@@ -241,37 +241,90 @@ family 側のギャップ台帳は **`Document-Note/mcps/PDFfamily/specs/12-use-
         `references/` にはプロファイル固有の帰結だけを残した。
         `references/` に残る `notes` の言及は financial の weak digest 1 件のみ（別件）
 
-- [ ] **V-F7. リビジョン数が食い違う理由を、機械が読めない**（2026-08-18 起票・V-F6 の作業中に判明）
+- [x] **V-F7. リビジョン数が食い違う理由を、機械が読めない**（2026-08-18 起票・**v0.17.0**・2026-08-18）
 
-  V-F6 と同型で、残っているもう 1 件。`diffRevisions` は `linearized` を返しているが
-  **`IntegrityReport` には載っていない**（`verification-service.ts` の返り値リテラルに無い）。
-
-  `revisionCount`（`startxref` の個数）と `revisions.length` は**合法に食い違う**。
-  いま出るのはこの note だけである:
+  V-F6 と同型で、残っていたもう 1 件。`diffRevisions` は `linearized` を返しているのに
+  `IntegrityReport` には載っておらず（`verification-service.ts` の返り値リテラルに無い）、
+  出ていたのはこの note 1 文だけだった:
 
   > The cross-reference chain yields N revision(s) while M "startxref" keyword(s) are present.
   > The two counts differ legitimately in linearised files and in files carrying a
   > cross-reference section no chain points at.
 
-  🔴 **この文は原因を 2 つ並べていて、どちらなのかを言っていない。**
-  V-F6 の 2 文は「読めば分かるが機械が読めない」だったが、こちらは
-  **人が読んでも分からない**。`linearized` は `diffRevisions` の中では決まっているのに、
-  出口で捨てている。
+  🔴 **原因を 2 つ並べて、どちらなのかを言っていない。** 歩いた側は決めているのに出口で捨てていた。
 
-  SKILL.md も「**数字ではなく notes と `revisions[]` を読む**」と書いており、
-  その notes が答えを持っていない。
+  ### 先に受け皿を作った（🔴 線形化した検体が 1 つも無かった）
 
-  - [ ] `linearized` を `IntegrityReport` に載せる。形は V-F6 の `revisionChain` に
-        揃えるか（`revisionCount` の食い違いの理由を名指す 1 フィールド）、
-        独立の boolean にするかを決める
-  - [ ] note の文を、**判明している原因を名指す**形に書き直す
-        （線形化と分かっているなら「線形化のため」と書く。分からないときだけ 2 つ並べる）
-  - [ ] pdf-trust SKILL.md の「数字ではなく notes と `revisions[]` を読む」を追随させる
+  `grep -rl 'Linearized'` が 0 件で、**併合の分岐は一度も実行されていなかった**
+  （[[green-tests-can-be-vacuous]]）。2 つ用意した。
 
-  **先に受け皿が 1 つ足りない**: 🔴 **線形化した検体が `tests/` にも `docs/` にも無い**
-  （`grep -rl 'Linearized'` が 0 件）。`linearized` の分岐は**一度も測られていない**。
-  検体を用意してから着手する —— 無い状態で足すと、緑になっても何も測っていない
-  （[[green-tests-can-be-vacuous]]）。
+  | 検体 | 走る条件 | 何を測るか |
+  | --- | --- | --- |
+  | `tests/helpers/linearized-pdf.ts`（手組み） | 常時 | Annex F の部品順・F.3.4 の先頭ページ表と `/Prev`・F.3.11 の主表・Table F.1 を実測値で埋めた線形化辞書 |
+  | `qpdf --linearize` の出力 | qpdf がある時（CI は apt で入れる） | **本物の線形化器**の出力を同じ読み方で読めるか |
+
+  手組みは 2 パス（10 桁固定幅で埋めてから実測値を書き戻す）で組み、
+  **パス間で長さが変わったら例外**にしてある。`qpdf --check` は `File is linearized` を返し、
+  警告は hint stream の**中身**についてのみ出る —— **`/H` が指す先の長さは正しく、
+  ページオフセット hint 表としての中身だけが placeholder**。これは helper の冒頭に書いた
+  （このサーバは hint を読まない。読むのは xref セクション）。
+
+  ### 決定: 独立 boolean ではなく**派生フィールド 1 つ**（V-F6 に揃える）
+
+  `revisionCountAgreement: { status: 'agree' | 'accounted' | 'unaccounted'; causes: ('linearised' | 'chain-incomplete')[] }`
+
+  `linearized: boolean` を素で載せる案は採らなかった。**V-F6 が `truncated` /
+  `newestSectionUnreadable` を素で出さず `revisionChain` に畳んだのと同じ理由**で、
+  素の観測を配ると「この食い違いは説明が付いているか」を呼び出し側が
+  `revisionCount` × `revisions.length` × 線形化フラグの 3 項で組み直すことになり、
+  同じ事実の 2 つ目の出所ができる。
+
+  **`unaccounted` はどこにも居場所が無かった状態**である —— 歩き切っていて線形化でもないのに
+  数が合わない ＝ 歩いたチェーンが辿り着かない `startxref` がファイルにある。
+  これが実際に開いて見るべき場合で、boolean 案では呼び出し側の導出に落ちていた。
+
+  `causes` は**ファイルについての事実**であって引き算についての事実ではないので、
+  `status` が `agree` でも空でないことがありうる（型の doc comment に書いた）。
+  どちらの端が欠けているかは `revisionChain.missing` の担当で、ここでは繰り返さない。
+
+  ### 変えたところ
+
+  | # | 箇所 | 変更後 |
+  | --- | --- | --- |
+  | 1 | `types.ts` | `RevisionCountAgreement` / `RevisionCountCause` を追加。`IntegrityReport` に 1 フィールド |
+  | 2 | `verification-service.ts` | 導出は `reconcileRevisionCount()` **1 箇所**（`chainCoverage` の隣） |
+  | 3 | 食い違いの note | 判明した原因を名指す。**両方分からないときだけ**「何も説明していない」と書く |
+  | 4 | `formatter.ts` | 食い違う時だけ、**リビジョン数の直下**に 1 行（`revisionChain` の行と同じ理由） |
+  | 5 | `verify-integrity.ts` の説明文 | `revisionCountAgreement` の 3 値を書いた |
+  | 6 | 引用 | 線形化の出典を `ISO 32000-1 Annex F` → **`ISO 32000-2 Annex F`**（条文は同じ。他の引用に揃えた） |
+
+  ### 受け入れ実測（2026-08-18・サンドボックス）
+
+  `npm test` **153 passed / 14 files**、`npm run typecheck` 緑、`npm run check` 緑
+  （`check:fix` で新規テストの整形 2 件）。
+
+  | 検体 | `revisionCount` | `revisions` | `revisionChain` | `revisionCountAgreement` |
+  | --- | --- | --- | --- | --- |
+  | 手組み線形化 | 2 | 1 | `complete` | `accounted` / `['linearised']` |
+  | `qpdf --linearize` | 2 | 1 | `complete` | `accounted` / `['linearised']` |
+  | `signed.pdf`（普通の 1 版） | 1 | 1 | `complete` | **`agree` / `[]`**（空振り検査） |
+  | `/Prev 0` で切った 2 版 | 2 | 1 | `partial` / `['oldest']` | `accounted` / `['chain-incomplete']` |
+  | `startxref` を 1 つ足した | 2 | 1 | `complete` | **`unaccounted` / `[]`** |
+
+  **`linearised` を出さないように潰して測り直すと 3 件落ちる**（手組み・qpdf・markdown の配置）。
+  緑が分岐を通っていることの確認 —— 0 件の検査には空振り検査を対にする（[[zero-findings-can-mean-silence]]）。
+
+  **ホスト実測（2026-08-22）で qpdf の版差 1 件が出た。** ホストの qpdf はこの検体の
+  ページに `/Resources` が無いことを警告して修復し（`operation succeeded with warnings`）、
+  **警告ありの終了コード 3** を返す —— サンドボックスの 11.9.0 と CI 相当の 10.6.3 は
+  同じファイルに何も言わないので、テストがコードではなく qpdf の版で落ちる状態だった。
+  `--warning-exit-0` を付けて是正（警告があっても線形化ファイルは書かれており、
+  このテストが読むのはそれだけ）。是正後ホスト 153/153 を取り直すこと。
+
+  - [ ] **残件: pdf-trust SKILL.md の追随。** 「linearized PDF は `Revisions:` の数字が +1 に見える
+        …… **数字ではなく notes と `revisions[]` を読む**」を `revisionCountAgreement` の読み取りへ
+        寄せる。**verify 0.17.0 が npm に出てから着手する** —— V-F6 と同じ運びで、
+        未公開の版を要求する skill は出せない
 
 - [x] **V-F1. `validate_conformance` に PDF/A-4 flavour を追加**（2026-07-25 起票・**v0.11.0**・2026-07-27）
       **writer 側の依頼番号は M-9。writer B-20（PDF/A-4 正規化）の前提タスク。**

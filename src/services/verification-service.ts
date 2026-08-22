@@ -21,6 +21,8 @@ import type {
   ParsedPdf,
   RevisionChainCoverage,
   RevisionChainEnd,
+  RevisionCountAgreement,
+  RevisionCountCause,
   RevisionObjectChange,
   RevisionSummary,
   SignatureField,
@@ -568,15 +570,33 @@ export async function analyzeIntegrity(parsed: ParsedPdf): Promise<IntegrityRepo
   }
   if (diff?.linearized) {
     notes.push(
-      'The file is linearised (ISO 32000-1 Annex F): its first-page and main cross-reference ' +
+      'The file is linearised (ISO 32000-2 Annex F): its first-page and main cross-reference ' +
         'sections belong to one save and were counted as one revision, not as an incremental update.',
     );
   }
   if (diff && diff.revisions.length !== parsed.revisionCount) {
+    // 🔴 V-F7: this used to end with "the two counts differ legitimately in
+    // linearised files and in files carrying a cross-reference section no chain
+    // points at" — both causes listed, neither claimed. The walker knows which
+    // one applies, so the sentence names it, and only says "not determined"
+    // when nothing read from the file accounts for the difference.
+    const counted =
+      `The cross-reference chain yields ${diff.revisions.length} revision(s) while ` +
+      `${parsed.revisionCount} "startxref" keyword(s) are present.`;
+    const because: string[] = [];
+    if (diff.linearized) {
+      because.push("the file's linearisation (two cross-reference sections for one save)");
+    }
+    if (diff.truncated || diff.newestSectionUnreadable) {
+      because.push('the chain not being followed in full (see revisionChain)');
+    }
     notes.push(
-      `The cross-reference chain yields ${diff.revisions.length} revision(s) while ${parsed.revisionCount} ` +
-        '"startxref" keyword(s) are present. The two counts differ legitimately in linearised files ' +
-        'and in files carrying a cross-reference section no chain points at.',
+      because.length > 0
+        ? `${counted} What accounts for the difference: ${because.join('; ')}.`
+        : `${counted} Nothing read from the file accounts for the difference: the chain was walked ` +
+            'in full and the file is not linearised. The two counts measure different things — every ' +
+            '"startxref" keyword in the byte stream against the cross-reference sections the chain ' +
+            'reached — and in this file they do not line up.',
     );
   }
   const truncatedRevisions = diff?.revisions.filter((r) => r.changesTruncated) ?? [];
@@ -607,6 +627,7 @@ export async function analyzeIntegrity(parsed: ParsedPdf): Promise<IntegrityRepo
     hasDss: parsed.hasDss,
     revisions: diff?.revisions ?? null,
     revisionChain: chainCoverage(diff),
+    revisionCountAgreement: reconcileRevisionCount(diff, parsed.revisionCount),
     objectChangesAfterLastSignature,
     notes,
   };
@@ -633,6 +654,37 @@ function chainCoverage(
   if (diff.truncated) missing.push('oldest');
   if (diff.newestSectionUnreadable) missing.push('newest');
   return { status: missing.length === 0 ? 'complete' : 'partial', missing };
+}
+
+/**
+ * Reconcile the two revision counts the report carries (V-F7).
+ *
+ * 🔴 **Derived in exactly one place**, for the reason `chainCoverage` is: the
+ * alternative is every caller recombining `revisionCount`, `revisions.length`
+ * and a linearisation flag, and each of them being a second source of truth for
+ * the same fact. `pdf-trust`'s guidance had already given up on the numbers and
+ * told readers to read the prose instead.
+ *
+ * `causes` states what was read from the file, so it can be non-empty while
+ * `status` is `agree` — a fact about the file does not stop being true because
+ * two numbers happen to land on the same value. `null` in means no section was
+ * read at all: nothing is listed, which `chain-incomplete` accounts for.
+ */
+function reconcileRevisionCount(
+  diff: {
+    revisions: unknown[];
+    linearized: boolean;
+    truncated: boolean;
+    newestSectionUnreadable: boolean;
+  } | null,
+  startxrefCount: number,
+): RevisionCountAgreement {
+  const causes: RevisionCountCause[] = [];
+  if (diff?.linearized) causes.push('linearised');
+  if (!diff || diff.truncated || diff.newestSectionUnreadable) causes.push('chain-incomplete');
+  const listed = diff?.revisions.length ?? 0;
+  if (listed === startxrefCount) return { status: 'agree', causes };
+  return { status: causes.length > 0 ? 'accounted' : 'unaccounted', causes };
 }
 
 function isPadesSubFilter(sig: SignatureField): boolean {

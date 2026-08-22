@@ -31,14 +31,15 @@ Limits of the diff — it is an observation, never a verdict:
   - A non-null revisions list is not necessarily the whole history. revisionChain.status says which it is: 'complete' (walked from the newest cross-reference section back to the original revision), 'partial' (a list came back but revisionChain.missing names the end that is absent), or 'unwalkable' (the case above). revisionChain.missing holds 'oldest' when the chain ended before the original revision, and 'newest' when the last startxref did not point at a parseable section so an older entry point was used and the last append is not listed; both can be absent at once.
   - **Only 'complete' makes "no such change appears in the list" mean "that change was not made."** With a cut chain the surviving revision is reported as the original one — changeCount: 0, changes: null, objectChangesAfterLastSignature empty — so every other field reads as "nothing was appended". revisions are listed oldest first. Why the chain was cut (a damaged or cyclic /Prev, the revision cap, an unparseable section) stays in notes.
   - Objects stored inside an object stream are listed with inObjectStream: true and no type.
-  - Linearised files (ISO 32000-1 Annex F) carry two cross-reference sections for one save; they are merged back into one revision rather than reported as an update.
+  - revisionCount counts "startxref" keywords; revisions lists the cross-reference sections the chain reached. The two differ lawfully, so revisionCountAgreement says whether the difference is explained: 'agree', 'accounted' (causes names 'linearised' and/or 'chain-incomplete'), or 'unaccounted' — the file holds a startxref the walked chain does not reach, which is the case worth looking at.
+  - Linearised files (ISO 32000-2 Annex F) carry two cross-reference sections for one save; they are merged back into one revision rather than reported as an update, so revisionCount is one higher than the number of saves.
 
 Args:
   - file_path (string): Absolute path to a local PDF file
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
 
 Returns:
-  Integrity report, including revisionChain: { status, missing } — read it before treating the revision list as the file's whole history. Note that incremental updates after signing are legal in PDF (adding signatures, DSS/LTV data) — findings indicate what to review, not automatically tampering.
+  Integrity report, including revisionChain: { status, missing } — read it before treating the revision list as the file's whole history — and revisionCountAgreement: { status, causes } — read it before quoting revisionCount as the number of times the file was saved. Note that incremental updates after signing are legal in PDF (adding signatures, DSS/LTV data) — findings indicate what to review, not automatically tampering.
 
 Examples:
   - Check whether a signed document was modified after signing

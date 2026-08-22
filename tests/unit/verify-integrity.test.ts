@@ -2,9 +2,15 @@
  * verify_integrity core logic tests.
  */
 
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { parsePdfBytes } from '../../src/services/pdf-parser.js';
 import { analyzeIntegrity } from '../../src/services/verification-service.js';
+import { formatIntegrityReport } from '../../src/utils/formatter.js';
+import { createLinearizedPdf } from '../helpers/linearized-pdf.js';
 import {
   appendIncrementalUpdate,
   appendObjectRevision,
@@ -430,5 +436,180 @@ describe('analyzeIntegrity — how the cross-reference chain is walked', () => {
     expect(report.revisions?.[0].xrefOffset).toBe(
       (unshifted.revisions?.[0].xrefOffset ?? 0) + lead.length,
     );
+  });
+});
+
+/**
+ * V-F7. `revisionCount` counts `startxref` keywords; `revisions` lists the
+ * cross-reference sections the chain reached. The two differ lawfully, and
+ * until 0.17.0 the report said only that they "differ legitimately in
+ * linearised files and in files carrying a cross-reference section no chain
+ * points at" — both causes side by side, neither claimed, in prose. The walker
+ * had already decided which one applied and dropped the answer at the exit.
+ *
+ * 🔴 The linearisation branch had no fixture at all before this: nothing under
+ * `tests/` or `docs/` contained the string `Linearized`, so the merge of the
+ * first-page and main sections was never executed by a test.
+ */
+describe('analyzeIntegrity — the two revision counts', () => {
+  const linearized = createLinearizedPdf();
+
+  it('names the linearisation as what accounts for the difference', async () => {
+    const parsed = await parsePdfBytes(linearized);
+    const report = await analyzeIntegrity(parsed);
+
+    // Two `startxref` keywords (F.3.4 writes one after the first-page trailer,
+    // F.3.11 one at the end) describing ONE save.
+    expect(parsed.revisionCount).toBe(2);
+    expect(report.revisions).toHaveLength(1);
+    // Nothing is missing: the merge is a correction, not a loss.
+    expect(report.revisionChain).toEqual({ status: 'complete', missing: [] });
+
+    expect(report.revisionCountAgreement).toEqual({
+      status: 'accounted',
+      causes: ['linearised'],
+    });
+    // 🔴 The prose used to stop at "linearised files and files carrying a
+    // cross-reference section no chain points at". It now says which.
+    expect(report.notes.join(' ')).toMatch(
+      /What accounts for the difference: the file's linearisation/,
+    );
+    expect(report.notes.join(' ')).not.toMatch(/no chain points at/);
+  });
+
+  /**
+   * The counter-check for the one above: a file with no linearisation and a
+   * chain that was walked in full has to come back `agree` with nothing named,
+   * and the note must not appear at all. Without this, `status: 'accounted'`
+   * would still pass if the field were hard-wired to it.
+   */
+  it('says the counts agree for an ordinary single-revision file', async () => {
+    const report = await analyzeIntegrity(await parsePdfBytes(signedPdf));
+
+    expect(report.revisionCount).toBe(1);
+    expect(report.revisions).toHaveLength(1);
+    expect(report.revisionCountAgreement).toEqual({ status: 'agree', causes: [] });
+    expect(report.notes.join(' ')).not.toMatch(/"startxref" keyword\(s\) are present/);
+  });
+
+  it('names an incomplete chain as what accounts for the difference', async () => {
+    // Two revisions, then the newest trailer's `/Prev` blanked: the chain stops
+    // after one section while both `startxref` keywords are still in the file.
+    const chain = appendObjectRevision(signedPdf, {
+      objects: [{ objectNumber: 8, body: '<< /Type /Annot /Subtype /Text /Rect [ 0 0 1 1 ] >>' }],
+    });
+    const text = Buffer.from(chain).toString('latin1');
+    const match = [...text.matchAll(/\/Prev (\d+)/g)].pop();
+    if (!match?.index) throw new Error('fixture has no /Prev to blank');
+    const cut = new Uint8Array(
+      Buffer.from(
+        text.slice(0, match.index) +
+          '/Prev 0'.padEnd(match[0].length, ' ') +
+          text.slice(match.index + match[0].length),
+        'latin1',
+      ),
+    );
+
+    const report = await analyzeIntegrity(await parsePdfBytes(cut));
+
+    expect(report.revisionCount).toBe(2);
+    expect(report.revisions).toHaveLength(1);
+    expect(report.revisionCountAgreement).toEqual({
+      status: 'accounted',
+      causes: ['chain-incomplete'],
+    });
+    // Which end is absent is `revisionChain`'s answer and is not repeated.
+    expect(report.revisionChain).toEqual({ status: 'partial', missing: ['oldest'] });
+  });
+
+  /**
+   * The third state, and the reason this is a field rather than a boolean:
+   * the counts differ, the chain was walked in full, and the file is not
+   * linearised. Nothing read from the file accounts for it — which is the case
+   * a reviewer should go and look at, and the one a `linearized: boolean`
+   * would have left to the caller to work out from three other fields.
+   */
+  it('says so when nothing read from the file accounts for the difference', async () => {
+    // A second `startxref` pointing at the section the first one already names.
+    // The keyword count goes up; the chain still reaches exactly one section.
+    const offset = Buffer.from(signedPdf)
+      .toString('latin1')
+      .match(/startxref\s*\r?\n(\d+)/)?.[1];
+    if (!offset) throw new Error('fixture has no startxref');
+    const extra = Buffer.from(`startxref\n${offset}\n%%EOF\n`, 'latin1');
+    const doubled = new Uint8Array(signedPdf.length + extra.length);
+    doubled.set(signedPdf, 0);
+    doubled.set(extra, signedPdf.length);
+
+    const report = await analyzeIntegrity(await parsePdfBytes(doubled));
+
+    expect(report.revisionCount).toBe(2);
+    expect(report.revisions).toHaveLength(1);
+    expect(report.revisionChain).toEqual({ status: 'complete', missing: [] });
+    expect(report.revisionCountAgreement).toEqual({ status: 'unaccounted', causes: [] });
+    expect(report.notes.join(' ')).toMatch(
+      /Nothing read from the file accounts for the difference/,
+    );
+  });
+
+  it('puts the reconciliation next to the count in the markdown report', async () => {
+    const report = await analyzeIntegrity(await parsePdfBytes(linearized));
+    const lines = formatIntegrityReport(report).split('\n');
+
+    const countAt = lines.findIndex((line) => line.startsWith('- Revisions:'));
+    const reconciledAt = lines.findIndex((line) => line.startsWith('- Revision count:'));
+    // Same reason as `revisionChain`'s line: a reader who meets "Revisions: 2"
+    // has formed a view of the file before a note at the bottom corrects it.
+    expect(countAt).toBeGreaterThanOrEqual(0);
+    expect(reconciledAt).toBe(countAt + 2);
+    expect(lines[reconciledAt]).toMatch(/the file is linearised/);
+
+    // Nothing to reconcile, nothing printed.
+    const ordinary = await analyzeIntegrity(await parsePdfBytes(signedPdf));
+    expect(formatIntegrityReport(ordinary)).not.toMatch(/- Revision count:/);
+  });
+});
+
+/**
+ * The builder above is this repository's reading of Annex F. A real linearizer
+ * is the check on that reading: if qpdf's output and the hand-built one give
+ * different answers, the fixture is what is wrong, not the file.
+ *
+ * Skips where qpdf is absent; CI installs it (`.github/workflows/ci.yml`).
+ */
+const describeQpdf = (() => {
+  try {
+    execFileSync('qpdf', ['--version'], { stdio: 'ignore' });
+    return describe;
+  } catch {
+    return describe.skip;
+  }
+})();
+
+describeQpdf('analyzeIntegrity — a linearised file from a real linearizer', () => {
+  it('reads a qpdf --linearize output the same way as the hand-built fixture', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pdf-verify-linearized-'));
+    await writeFile(join(dir, 'plain.pdf'), signedPdf);
+    // 🔴 --warning-exit-0: qpdf exits with 3 when it emits a warning, and what
+    // it warns about differs by version — qpdf 12 repairs this fixture's
+    // missing page /Resources ("operation succeeded with warnings") where 10.6
+    // and 11.9 say nothing, so without the flag this test passes or fails on
+    // the qpdf version, not on the code. A warned run still writes the
+    // linearised file, which is all this test reads.
+    execFileSync('qpdf', ['--warning-exit-0', '--linearize', 'plain.pdf', 'linearized.pdf'], {
+      cwd: dir,
+    });
+    const bytes = new Uint8Array(await readFile(join(dir, 'linearized.pdf')));
+
+    const parsed = await parsePdfBytes(bytes);
+    const report = await analyzeIntegrity(parsed);
+
+    expect(parsed.revisionCount).toBe(2);
+    expect(report.revisions).toHaveLength(1);
+    expect(report.revisionChain).toEqual({ status: 'complete', missing: [] });
+    expect(report.revisionCountAgreement).toEqual({
+      status: 'accounted',
+      causes: ['linearised'],
+    });
   });
 });

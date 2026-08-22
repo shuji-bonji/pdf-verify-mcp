@@ -6,6 +6,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createLinearizedPdf } from '../helpers/linearized-pdf.js';
 import {
   appendIncrementalUpdate,
   appendObjectRevision,
@@ -55,6 +56,11 @@ async function main(): Promise<void> {
 
   const legacy = await createSignedPdf(identity, { subFilter: 'adbe.pkcs7.detached' });
   await writeFile(join(outDir, 'legacy-adbe.pdf'), legacy);
+
+  // The one shape no other fixture has: two cross-reference sections for a
+  // single save (ISO 32000-2 Annex F), which is what makes `revisionCount`
+  // disagree with the revision list. Unsigned — the chain is what it is for.
+  await writeFile(join(outDir, 'linearized.pdf'), createLinearizedPdf());
 
   const pdfa = await createSignedPdf(identity, {
     xmp: { pdfaPart: '2', pdfaConformance: 'B', pdfuaPart: '1' },
