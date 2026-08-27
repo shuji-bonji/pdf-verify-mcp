@@ -5,26 +5,28 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { ResponseFormat } from '../constants.js';
-import { PdfToolInputSchema } from '../schemas/common.js';
+import { PdfToolInputShape } from '../schemas/common.js';
 import { listClauseDomains, validateClauses } from '../services/clause-validation.js';
 import { handleStructuredError } from '../utils/error-handler.js';
 import { formatClauseValidation, truncateIfNeeded } from '../utils/formatter.js';
 
-const ValidateClausesSchema = {
-  ...PdfToolInputSchema,
-  domains: z
-    .array(z.string())
-    .optional()
-    .describe(
-      `Constraint domains to apply. Omit to apply all bundled domains (${listClauseDomains().join(', ')}).`,
-    ),
-  given: z
-    .record(z.union([z.boolean(), z.string(), z.number()]))
-    .optional()
-    .describe(
-      'Facts that are NOT in the file but are needed to decide some clauses, e.g. { "isSubset": true }. A clause whose applicability depends on a missing fact is reported as needs_external_fact — it is never defaulted into a pass.',
-    ),
-};
+const ValidateClausesSchema = z
+  .object({
+    ...PdfToolInputShape,
+    domains: z
+      .array(z.string())
+      .optional()
+      .describe(
+        `Constraint domains to apply. Omit to apply all bundled domains (${listClauseDomains().join(', ')}).`,
+      ),
+    given: z
+      .record(z.string(), z.union([z.boolean(), z.string(), z.number()]))
+      .optional()
+      .describe(
+        'Facts that are NOT in the file but are needed to decide some clauses, e.g. { "isSubset": true }. A clause whose applicability depends on a missing fact is reported as needs_external_fact — it is never defaulted into a pass.',
+      ),
+  })
+  .strict();
 
 type ValidateClausesInput = {
   file_path: string;

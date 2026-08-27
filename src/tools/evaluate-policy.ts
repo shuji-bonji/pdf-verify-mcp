@@ -10,7 +10,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { ResponseFormat, RevocationMode, ValidationEngine } from '../constants.js';
-import { PdfToolInputSchema } from '../schemas/common.js';
+import { PdfToolInputShape } from '../schemas/common.js';
 import { extractPdfaId } from '../services/conformance.js';
 import type { ConformanceValidationReport } from '../services/conformance-validation.js';
 import { validateConformance } from '../services/conformance-validation.js';
@@ -33,33 +33,35 @@ const CONTEXT = 'evaluate-policy';
 
 const PROFILE_IDS = Object.keys(POLICY_PROFILES) as [PolicyProfileId, ...PolicyProfileId[]];
 
-const EvaluatePolicySchema = {
-  ...PdfToolInputSchema,
-  profile: z
-    .enum(PROFILE_IDS)
-    .default('general')
-    .describe(
-      'Judgment profile: "general" (default thresholds), "contract" (signature required, identity-focused), "financial" (long-term preservation checks), "legal", "medical" (most conservative; caution escalates to review), "government" (long-term checks, unsigned tolerated).',
-    ),
-  trust_anchors: z
-    .array(z.string())
-    .optional()
-    .describe(
-      'Absolute paths to trust anchor certificates (PEM or DER). Merged with the PDF_VERIFY_TRUST_ANCHORS environment variable. Without anchors, valid signatures are capped at use_with_caution (identity not evaluated).',
-    ),
-  check_revocation: z
-    .nativeEnum(RevocationMode)
-    .default(RevocationMode.EMBEDDED)
-    .describe(
-      'Revocation checking: "none", "embedded" (default), or "online" (queries OCSP/CRL endpoints over HTTP).',
-    ),
-  password: z
-    .string()
-    .optional()
-    .describe(
-      'Password for an encrypted PDF. Omit for permission-encrypted PDFs (an empty user password is tried automatically).',
-    ),
-};
+const EvaluatePolicySchema = z
+  .object({
+    ...PdfToolInputShape,
+    profile: z
+      .enum(PROFILE_IDS)
+      .default('general')
+      .describe(
+        'Judgment profile: "general" (default thresholds), "contract" (signature required, identity-focused), "financial" (long-term preservation checks), "legal", "medical" (most conservative; caution escalates to review), "government" (long-term checks, unsigned tolerated).',
+      ),
+    trust_anchors: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Absolute paths to trust anchor certificates (PEM or DER). Merged with the PDF_VERIFY_TRUST_ANCHORS environment variable. Without anchors, valid signatures are capped at use_with_caution (identity not evaluated).',
+      ),
+    check_revocation: z
+      .enum(RevocationMode)
+      .default(RevocationMode.EMBEDDED)
+      .describe(
+        'Revocation checking: "none", "embedded" (default), or "online" (queries OCSP/CRL endpoints over HTTP).',
+      ),
+    password: z
+      .string()
+      .optional()
+      .describe(
+        'Password for an encrypted PDF. Omit for permission-encrypted PDFs (an empty user password is tried automatically).',
+      ),
+  })
+  .strict();
 
 type EvaluatePolicyInput = {
   file_path: string;

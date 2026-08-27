@@ -5,33 +5,35 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { ResponseFormat, RevocationMode } from '../constants.js';
-import { PdfToolInputSchema } from '../schemas/common.js';
+import { PdfToolInputShape } from '../schemas/common.js';
 import { parsePdf } from '../services/pdf-parser.js';
 import { verifySignatures } from '../services/verification-service.js';
 import { handleStructuredError } from '../utils/error-handler.js';
 import { formatSignatureReports, truncateIfNeeded } from '../utils/formatter.js';
 
-const VerifySignaturesSchema = {
-  ...PdfToolInputSchema,
-  trust_anchors: z
-    .array(z.string())
-    .optional()
-    .describe(
-      'Absolute paths to trust anchor certificates (PEM or DER). Merged with the PDF_VERIFY_TRUST_ANCHORS environment variable (a directory of *.pem/*.crt/*.cer/*.der files). When omitted and the env var is unset, trust is reported as not_evaluated.',
-    ),
-  check_revocation: z
-    .nativeEnum(RevocationMode)
-    .default(RevocationMode.EMBEDDED)
-    .describe(
-      'Revocation checking: "none", "embedded" (OCSP/CRL data inside the PDF/CMS, default), or "online" (additionally query OCSP responders and CRL distribution points over HTTP).',
-    ),
-  password: z
-    .string()
-    .optional()
-    .describe(
-      'Password for an encrypted PDF. Omit for permission-encrypted PDFs (an empty user password is tried automatically).',
-    ),
-};
+const VerifySignaturesSchema = z
+  .object({
+    ...PdfToolInputShape,
+    trust_anchors: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Absolute paths to trust anchor certificates (PEM or DER). Merged with the PDF_VERIFY_TRUST_ANCHORS environment variable (a directory of *.pem/*.crt/*.cer/*.der files). When omitted and the env var is unset, trust is reported as not_evaluated.',
+      ),
+    check_revocation: z
+      .enum(RevocationMode)
+      .default(RevocationMode.EMBEDDED)
+      .describe(
+        'Revocation checking: "none", "embedded" (OCSP/CRL data inside the PDF/CMS, default), or "online" (additionally query OCSP responders and CRL distribution points over HTTP).',
+      ),
+    password: z
+      .string()
+      .optional()
+      .describe(
+        'Password for an encrypted PDF. Omit for permission-encrypted PDFs (an empty user password is tried automatically).',
+      ),
+  })
+  .strict();
 
 type VerifySignaturesInput = {
   file_path: string;

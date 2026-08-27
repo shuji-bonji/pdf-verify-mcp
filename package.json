@@ -74,7 +74,7 @@
     "normativepdf": "0.2.0",
     "pdf-lib": "^1.17.1",
     "pkijs": "^3.4.0",
-    "zod": "^3.23.8"
+    "zod": "^4.2.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",

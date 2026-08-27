@@ -5,7 +5,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { ResponseFormat, ValidationEngine } from '../constants.js';
-import { PdfToolInputSchema } from '../schemas/common.js';
+import { PdfToolInputShape } from '../schemas/common.js';
 import { validateConformance } from '../services/conformance-validation.js';
 import { parsePdf } from '../services/pdf-parser.js';
 import { PDFA_NATIVE_RULE_COUNT } from '../services/pdfa-validator.js';
@@ -13,27 +13,29 @@ import { PDFUA_NATIVE_RULE_COUNT } from '../services/pdfua-validator.js';
 import { handleStructuredError } from '../utils/error-handler.js';
 import { formatConformanceValidation, truncateIfNeeded } from '../utils/formatter.js';
 
-const ValidateConformanceSchema = {
-  ...PdfToolInputSchema,
-  flavour: z
-    .string()
-    .optional()
-    .describe(
-      'Flavour to validate against. PDF/A: "pdfa-1b", "pdfa-1a", "pdfa-2b", "pdfa-2u", "pdfa-3b", etc. PDF/A-4 takes no conformance level — use "pdfa-4", or "pdfa-4e" / "pdfa-4f" for the variants ("pdfa-4b" does not exist). PDF/UA: "pdfua-1", "pdfua-2". Omit to use the document\'s XMP declaration (PDF/A takes precedence when both are declared; falls back to pdfa-2b).',
-    ),
-  engine: z
-    .nativeEnum(ValidationEngine)
-    .default(ValidationEngine.AUTO)
-    .describe(
-      'Validation engine: "auto" (veraPDF when installed, else native subset), "verapdf" (require veraPDF), "native" (built-in rule subset).',
-    ),
-  password: z
-    .string()
-    .optional()
-    .describe(
-      'Password for an encrypted PDF (PDF/UA validation only — the document is decrypted before checking structure-dependent rules). Omit for permission-encrypted PDFs (an empty user password is tried automatically).',
-    ),
-};
+const ValidateConformanceSchema = z
+  .object({
+    ...PdfToolInputShape,
+    flavour: z
+      .string()
+      .optional()
+      .describe(
+        'Flavour to validate against. PDF/A: "pdfa-1b", "pdfa-1a", "pdfa-2b", "pdfa-2u", "pdfa-3b", etc. PDF/A-4 takes no conformance level — use "pdfa-4", or "pdfa-4e" / "pdfa-4f" for the variants ("pdfa-4b" does not exist). PDF/UA: "pdfua-1", "pdfua-2". Omit to use the document\'s XMP declaration (PDF/A takes precedence when both are declared; falls back to pdfa-2b).',
+      ),
+    engine: z
+      .enum(ValidationEngine)
+      .default(ValidationEngine.AUTO)
+      .describe(
+        'Validation engine: "auto" (veraPDF when installed, else native subset), "verapdf" (require veraPDF), "native" (built-in rule subset).',
+      ),
+    password: z
+      .string()
+      .optional()
+      .describe(
+        'Password for an encrypted PDF (PDF/UA validation only — the document is decrypted before checking structure-dependent rules). Omit for permission-encrypted PDFs (an empty user password is tried automatically).',
+      ),
+  })
+  .strict();
 
 type ValidateConformanceInput = {
   file_path: string;
