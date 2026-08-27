@@ -1,8 +1,7 @@
 /**
  * validate_conformance - PDF/A conformance validation (hybrid engine).
  */
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { ResponseFormat, ValidationEngine } from '../constants.js';
 import { PdfToolInputShape } from '../schemas/common.js';

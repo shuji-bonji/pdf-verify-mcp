@@ -1,8 +1,7 @@
 /**
  * Tool registration.
  */
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { registerDetectPadesLevel } from './detect-pades-level.js';
 import { registerEvaluatePolicy } from './evaluate-policy.js';
 import { registerIdentifyConformance } from './identify-conformance.js';

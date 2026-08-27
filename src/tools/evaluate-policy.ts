@@ -6,8 +6,7 @@
  * validate_conformance) and folds the facts through the rule engine in
  * services/policy-engine.ts. The judge is code; the narrative is the LLM.
  */
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { ResponseFormat, RevocationMode, ValidationEngine } from '../constants.js';
 import { PdfToolInputShape } from '../schemas/common.js';

@@ -1,8 +1,7 @@
 /**
  * identify_conformance - PDF/A / PDF/UA declaration identification.
  */
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { ResponseFormat } from '../constants.js';
 import { type PdfToolInput, PdfToolInputSchema } from '../schemas/common.js';
 import { identifyConformance } from '../services/conformance.js';

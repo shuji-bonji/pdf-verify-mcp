@@ -13,8 +13,7 @@
 // ESM hoists imports, so the guard lives in a side-effect module that must
 // be listed first to run before dependency modules are evaluated.
 import './utils/stdout-guard.js';
-
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { PACKAGE_INFO, SERVER_NAME } from './config.js';
 import { buildServer } from './server.js';
 

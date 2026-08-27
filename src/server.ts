@@ -6,8 +6,7 @@
  * 外部に出るツールの仕様（名前・引数・必須キー・additionalProperties）を固定する。
  * index.ts は stdio に繋ぐ入口だけを持つ。
  */
-
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { PACKAGE_INFO, SERVER_NAME } from './config.js';
 import { registerAllTools } from './tools/index.js';
 

@@ -1,8 +1,7 @@
 /**
  * verify_signatures - Cryptographic verification of PDF digital signatures.
  */
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { ResponseFormat, RevocationMode } from '../constants.js';
 import { PdfToolInputShape } from '../schemas/common.js';

@@ -1,8 +1,7 @@
 /**
  * validate_clauses — ISO 32000 本体条文（T1）の検査。
  */
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { ResponseFormat } from '../constants.js';
 import { PdfToolInputShape } from '../schemas/common.js';
