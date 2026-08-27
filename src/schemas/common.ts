@@ -27,10 +27,11 @@ export const PdfToolInputShape = {
  * 共通入力だけを取るツールに渡す ZodObject。
  *
  * `.strict()` を明示している理由: zod 3 の JSON Schema 変換は素の ZodObject にも
- * `additionalProperties: false` を付けていたため、書かなくても広告は `false` だった。
- * zod 4 は付けない。書かないまま zod を上げると、宣言していない引数を受け付ける
- * 広告に黙って変わる（2026-08-27 に 7 ツールすべてで実測）。
- * 広告を `false` に保つのは family 規約の既定である。
+ * `additionalProperties: false` を付けていたため、書かなくても `tools/list` の
+ * `inputSchema` には `false` が入っていた。zod 4 は付けない。書かないまま zod を
+ * 上げると、`tools/list` から `additionalProperties: false` が消え、クライアントは
+ * 「宣言に無いキーも渡してよい」と読む（2026-08-27 に 7 ツールすべてで実測）。
+ * `additionalProperties: false` を返すのは family 規約の既定である。
  */
 export const PdfToolInputSchema = z.object(PdfToolInputShape).strict();
 

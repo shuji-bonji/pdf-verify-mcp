@@ -1,11 +1,13 @@
 /**
- * 外部に見えるツールの面（external spec）のスナップショット。
+ * 外部に出るツールの仕様（external spec）のスナップショット。
  *
  * この検査が無かったあいだに何が起きたか（2026-08-27 の実測）:
  * zod 3 の JSON Schema 変換は素の ZodObject にも `additionalProperties: false` を
- * 付けていたため、`.strict()` を 1 つも書いていないのに 7 ツールとも `false` を
- * 広告していた。zod 4 は付けない。つまり **zod を上げるだけで、宣言していない
- * 引数を受け付ける広告に黙って変わる**。型検査もテストも通ったままである。
+ * 付けていたため、`.strict()` を 1 つも書いていないのに、7 ツールとも
+ * `tools/list` の `inputSchema` に `false` が入っていた。zod 4 は付けない。
+ * つまり **zod を上げるだけで `tools/list` から `additionalProperties: false` が消え、
+ * クライアントは「宣言に無いキーも渡してよい」と読む**。
+ * 型検査もテストも通ったままである。
  * 同じ形の無音の変化は SDK v2 移行でも起こりうる（移行ガイドは zod 3.x で
  * 「登録時の無音失敗」、zod 4.0–4.1 で「description が削除される」と書いている）。
  *
@@ -18,7 +20,7 @@
  *
  * 定義表ではなくプロトコル越しに測る。スキーマは zod から生成されるので、
  * ソースを読む検査は「その検査が守るはずの変更」と一緒に書き換わってしまう。
- * 線の上を通るものが契約である。
+ * クライアントが実際に受け取る応答が契約である。
  */
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -130,13 +132,13 @@ describe('tool registry (external spec)', () => {
   });
 
   // 4. additionalProperties
-  it('どのツールも additionalProperties: false を広告する', () => {
+  it('どのツールも additionalProperties: false を返す', () => {
     // `.strict()` が効いているかはここにしか出ない。
     // 「false」と「そもそも無い」を区別するため、値の一致ではなくキーの有無から見る。
     for (const tool of listed) {
       expect(
         Object.hasOwn(tool.inputSchema, 'additionalProperties'),
-        `${tool.name}: additionalProperties が広告に無い（.strict() が外れている）`,
+        `${tool.name}: inputSchema に additionalProperties が無い（.strict() が外れている）`,
       ).toBe(true);
       expect(tool.inputSchema.additionalProperties, tool.name).toBe(false);
     }
@@ -159,9 +161,10 @@ describe('tool registry (external spec)', () => {
 });
 
 describe('入力検証の境界', () => {
-  it('広告に無い引数を渡すと拒否する（広告と動作が一致していること）', async () => {
-    // `.strict()` を入れる前は、広告は false なのに zod 3 の既定が strip だったため
-    // 宣言に無い引数は黙って捨てられ、ツールは成功を返していた。
+  it('スキーマに無い引数を渡すと拒否する（tools/list の記述と動作が一致していること）', async () => {
+    // `.strict()` を入れる前は、tools/list は additionalProperties: false と書いて
+    // いたのに、zod 3 の既定が strip だったため、宣言に無い引数は受け取ったうえで
+    // 黙って捨てられ、ツールは成功を返していた。
     const client = await connect();
 
     const res = await client.callTool({

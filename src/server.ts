@@ -3,7 +3,7 @@
  *
  * index.ts から切り離してある理由は、トランスポートを立てずにサーバを組めるようにするため。
  * `tests/unit/registry.test.ts` が InMemoryTransport 越しにここを駆動して、
- * 外部に見えるツールの面（名前・引数・必須キー・additionalProperties）を固定する。
+ * 外部に出るツールの仕様（名前・引数・必須キー・additionalProperties）を固定する。
  * index.ts は stdio に繋ぐ入口だけを持つ。
  */
 
