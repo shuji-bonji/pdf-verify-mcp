@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.0] - 2026-08-27
+
+Infrastructure only: no tool gained or lost a capability, and no verdict
+changed. Three things reach callers — read **Changed** before upgrading.
+
+### Changed
+
+- **MCP SDK v1 → v2** (`@modelcontextprotocol/sdk@^1.6.1` →
+  `@modelcontextprotocol/server@^2.0.0`). One difference reaches callers: a
+  `tools/call` naming a tool this server does not have now comes back as a
+  **JSON-RPC error** (code `-32602`), where v1 returned a tool result with
+  `isError: true`. Client code that only reads `isError` will not see it, and
+  `await client.callTool(...)` throws instead of resolving. Failures of input
+  validation — a missing required argument, a key the schema does not declare —
+  still arrive as `isError: true`. This one was found by `registry.test.ts`
+  going red, not by the migration guide, which does not mention it.
+- **Arguments the input schema does not declare are now rejected.** All 7 tools
+  take a `.strict()` object, so an undeclared key fails the call with
+  `-32602 Unrecognized key`. Until now such a key was silently dropped and the
+  call ran: `tools/list` already stated `additionalProperties: false`, but that
+  statement was produced by zod 3's JSON Schema conversion and nothing enforced
+  it — zod 3's default for an object is *strip*, not *strict*. Measured on 0.17.0
+  with `{file_path, response_format, no_such_arg}`: the call returned a result.
+  The statement and the behaviour now agree.
+- **`inputSchema` in `tools/list`**: `$schema` is now
+  `https://json-schema.org/draft/2020-12/schema` (was draft-07) for all 7 tools.
+  `additionalProperties: false` is unchanged in the response — what changed is
+  that it is now true of the running server. Tool names, descriptions and
+  `required` are unchanged — measured tool by tool against 0.17.0 with
+  `scripts/tools-list-snapshot.mjs`, which speaks raw JSON-RPC over stdio rather
+  than using an SDK client.
+- `zod` moves from `^3.23.8` to `^4.2.0` — the version all four servers in the
+  family now share.
+
+### Added
+
+- `npm run check:public-types` fails if a type from the MCP SDK or from zod
+  appears in the published `.d.ts`. The published surface must not force a
+  consumer onto our versions of those.
+
+### Notes
+
+- `engines.node` is unchanged: `>=20`.
+- `pdf-lib` is still a dependency. Removing it is tracked in
+  `docs/handoff/pdflib-removal.md`.
+
 ## [0.17.0] - 2026-08-18
 
 ### Added
