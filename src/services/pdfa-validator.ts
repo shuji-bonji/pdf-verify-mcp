@@ -8,10 +8,11 @@
  * When veraPDF is available it should be preferred (see verapdf.ts).
  */
 
-import { PDFArray, PDFBool, PDFDict, type PDFDocument, PDFName, PDFRef } from 'pdf-lib';
+import type { CosDict, PdfDocument } from 'normativepdf';
 import type { ParsedPdf } from '../types.js';
 import { logger } from '../utils/logger.js';
 import { extractPdfaId } from './conformance.js';
+import { asArray, asDict, boolOf, enumerateDicts, get, has, nameOf, resolved } from './cos.js';
 
 const CONTEXT = 'pdfa-validator';
 
@@ -57,8 +58,15 @@ export interface NativeValidationReport {
 
 interface RuleContext {
   parsed: ParsedPdf;
-  doc: PDFDocument;
+  doc: PdfDocument;
   flavour: PdfaFlavour;
+  /**
+   * 間接オブジェクトのうち**辞書だけ**。1 度だけ数え上げて全規則で使い回す。
+   * 🔴 ストリームの辞書は含めない —— pdf-lib 版の `instanceof PDFDict` と同じ範囲である。
+   * 範囲を変えると、いままで見ていなかった辞書が規則の対象に入って判定が動く。
+   */
+  dicts: CosDict[];
+  catalog: CosDict | null;
 }
 
 interface Rule {
@@ -67,27 +75,21 @@ interface Rule {
   description: string;
   /** Restrict to certain parts (e.g. transparency ban is PDF/A-1 only) */
   appliesToParts?: number[];
-  check: (ctx: RuleContext) => { passed: boolean; detail: string | null };
-}
-
-function enumerateDicts(doc: PDFDocument): PDFDict[] {
-  const dicts: PDFDict[] = [];
-  for (const [, object] of doc.context.enumerateIndirectObjects()) {
-    if (object instanceof PDFDict) dicts.push(object);
-  }
-  return dicts;
+  check: (ctx: RuleContext) => Promise<{ passed: boolean; detail: string | null }>;
 }
 
 /** Collect names used in /Filter entries across all streams */
-function collectFilterNames(doc: PDFDocument): Set<string> {
+function collectFilterNames(dicts: CosDict[]): Set<string> {
   const filters = new Set<string>();
-  for (const dict of enumerateDicts(doc)) {
-    const filter = dict.get(PDFName.of('Filter'));
-    if (filter instanceof PDFName) filters.add(filter.decodeText());
-    if (filter instanceof PDFArray) {
-      for (let i = 0; i < filter.size(); i++) {
-        const item = filter.get(i);
-        if (item instanceof PDFName) filters.add(item.decodeText());
+  for (const dict of dicts) {
+    const filter = get(dict, 'Filter');
+    const single = nameOf(filter);
+    if (single !== null) filters.add(single);
+    const array = asArray(filter);
+    if (array) {
+      for (const item of array.items) {
+        const name = nameOf(item);
+        if (name !== null) filters.add(name);
       }
     }
   }
@@ -112,33 +114,28 @@ const STANDARD_14 = new Set([
 ]);
 
 /** Check that every font has an embedded font program */
-function checkFontsEmbedded(ctx: RuleContext): { passed: boolean; detail: string | null } {
+async function checkFontsEmbedded(
+  ctx: RuleContext,
+): Promise<{ passed: boolean; detail: string | null }> {
   const missing: string[] = [];
-  for (const dict of enumerateDicts(ctx.doc)) {
-    const type = dict.get(PDFName.of('Type'));
-    if (!(type instanceof PDFName) || type.decodeText() !== 'Font') continue;
-    const subtype = dict.get(PDFName.of('Subtype'));
-    const subtypeName = subtype instanceof PDFName ? subtype.decodeText() : '';
+  for (const dict of ctx.dicts) {
+    if (nameOf(get(dict, 'Type')) !== 'Font') continue;
+    const subtypeName = nameOf(get(dict, 'Subtype')) ?? '';
     // Type0 composite fonts delegate to descendant fonts (checked separately);
     // Type3 fonts have glyph procedures instead of font programs.
     if (subtypeName === 'Type0' || subtypeName === 'Type3') continue;
 
-    const descriptorRef = dict.get(PDFName.of('FontDescriptor'));
-    const descriptor =
-      descriptorRef instanceof PDFRef ? ctx.doc.context.lookup(descriptorRef) : descriptorRef;
-    const baseFont = dict.get(PDFName.of('BaseFont'));
-    const baseFontName = baseFont instanceof PDFName ? baseFont.decodeText() : '(unknown)';
+    const descriptor = asDict(await resolved(ctx.doc, get(dict, 'FontDescriptor')));
+    const baseFontName = nameOf(get(dict, 'BaseFont')) ?? '(unknown)';
 
-    if (!(descriptor instanceof PDFDict)) {
+    if (!descriptor) {
       missing.push(
         `${baseFontName} (no FontDescriptor${STANDARD_14.has(baseFontName) ? '; standard-14 fonts must be embedded in PDF/A' : ''})`,
       );
       continue;
     }
     const hasProgram =
-      descriptor.has(PDFName.of('FontFile')) ||
-      descriptor.has(PDFName.of('FontFile2')) ||
-      descriptor.has(PDFName.of('FontFile3'));
+      has(descriptor, 'FontFile') || has(descriptor, 'FontFile2') || has(descriptor, 'FontFile3');
     if (!hasProgram) missing.push(baseFontName);
   }
   return {
@@ -151,11 +148,11 @@ function checkFontsEmbedded(ctx: RuleContext): { passed: boolean; detail: string
 }
 
 /** Search all dicts for any of the given keys */
-function findDictsWithKey(doc: PDFDocument, keys: string[]): number {
+function findDictsWithKey(dicts: CosDict[], keys: string[]): number {
   let count = 0;
-  for (const dict of enumerateDicts(doc)) {
+  for (const dict of dicts) {
     for (const key of keys) {
-      if (dict.has(PDFName.of(key))) {
+      if (has(dict, key)) {
         count++;
         break;
       }
@@ -165,13 +162,11 @@ function findDictsWithKey(doc: PDFDocument, keys: string[]): number {
 }
 
 /** Search for action dictionaries with prohibited /S values */
-function findProhibitedActions(doc: PDFDocument, actions: string[]): string[] {
+function findProhibitedActions(dicts: CosDict[], actions: string[]): string[] {
   const found = new Set<string>();
-  for (const dict of enumerateDicts(doc)) {
-    const s = dict.get(PDFName.of('S'));
-    if (s instanceof PDFName && actions.includes(s.decodeText())) {
-      found.add(s.decodeText());
-    }
+  for (const dict of dicts) {
+    const s = nameOf(get(dict, 'S'));
+    if (s !== null && actions.includes(s)) found.add(s);
   }
   return [...found];
 }
@@ -181,7 +176,7 @@ const RULES: Rule[] = [
     ruleId: 'no-encryption',
     clause: 'ISO 19005-1, 6.1.3',
     description: 'The trailer dictionary shall not contain an Encrypt entry',
-    check: (ctx) => ({
+    check: async (ctx) => ({
       passed: !ctx.parsed.isEncrypted,
       detail: ctx.parsed.isEncrypted ? 'Document is encrypted (/Encrypt present)' : null,
     }),
@@ -190,10 +185,10 @@ const RULES: Rule[] = [
     ruleId: 'file-id',
     clause: 'ISO 19005-1, 6.1.3',
     description: 'The trailer dictionary shall contain an ID entry',
-    check: (ctx) => {
-      const id = ctx.doc.context.trailerInfo.ID;
+    check: async (ctx) => {
+      const id = has(ctx.doc.trailer, 'ID');
       return {
-        passed: Boolean(id),
+        passed: id,
         detail: id ? null : 'Trailer /ID is missing',
       };
     },
@@ -202,8 +197,8 @@ const RULES: Rule[] = [
     ruleId: 'no-lzw',
     clause: 'ISO 19005-1, 6.1.10',
     description: 'The LZWDecode filter shall not be used',
-    check: (ctx) => {
-      const filters = collectFilterNames(ctx.doc);
+    check: async (ctx) => {
+      const filters = collectFilterNames(ctx.dicts);
       const used = filters.has('LZWDecode');
       return { passed: !used, detail: used ? 'LZWDecode filter in use' : null };
     },
@@ -212,8 +207,8 @@ const RULES: Rule[] = [
     ruleId: 'no-crypt-filter',
     clause: 'ISO 19005-2, 6.1.7',
     description: 'The Crypt filter shall not be used',
-    check: (ctx) => {
-      const filters = collectFilterNames(ctx.doc);
+    check: async (ctx) => {
+      const filters = collectFilterNames(ctx.dicts);
       const used = filters.has('Crypt');
       return { passed: !used, detail: used ? 'Crypt filter in use' : null };
     },
@@ -223,7 +218,7 @@ const RULES: Rule[] = [
     clause: 'ISO 19005-1, 6.1.2 / 19005-2, 6.1.2 / 19005-4, 6.1',
     description:
       'PDF version shall be within the allowed range (A-1: ≤1.4, A-2/A-3: ≤1.7, A-4: 2.0)',
-    check: (ctx) => {
+    check: async (ctx) => {
       const version = Number.parseFloat(ctx.parsed.pdfVersion ?? '0');
       // PDF/A-4 is built on ISO 32000-2, so it does not take a range: the file
       // is a PDF 2.0 file or it is not one.
@@ -250,7 +245,7 @@ const RULES: Rule[] = [
     ruleId: 'xmp-declaration',
     clause: 'ISO 19005-1, 6.7.11',
     description: 'XMP metadata shall declare the PDF/A identification (pdfaid)',
-    check: (ctx) => {
+    check: async (ctx) => {
       const declared = ctx.parsed.xmpMetadata?.includes('pdfaid:part') ?? false;
       return {
         passed: declared,
@@ -267,16 +262,13 @@ const RULES: Rule[] = [
     // the -1..-3 requirement for -4 would manufacture a failure out of a guess,
     // so the question is left to the oracle (veraPDF) instead.
     appliesToParts: [1, 2, 3],
-    check: (ctx) => {
-      const intents = ctx.doc.catalog.lookup(PDFName.of('OutputIntents'));
-      if (intents instanceof PDFArray) {
-        for (let i = 0; i < intents.size(); i++) {
-          const intent = intents.lookup(i);
-          if (intent instanceof PDFDict) {
-            const s = intent.get(PDFName.of('S'));
-            if (s instanceof PDFName && s.decodeText() === 'GTS_PDFA1') {
-              return { passed: true, detail: null };
-            }
+    check: async (ctx) => {
+      const intents = asArray(await resolved(ctx.doc, get(ctx.catalog, 'OutputIntents')));
+      if (intents) {
+        for (const item of intents.items) {
+          const intent = asDict(await resolved(ctx.doc, item));
+          if (intent && nameOf(get(intent, 'S')) === 'GTS_PDFA1') {
+            return { passed: true, detail: null };
           }
         }
       }
@@ -293,8 +285,8 @@ const RULES: Rule[] = [
     ruleId: 'no-javascript',
     clause: 'ISO 19005-1, 6.6.1',
     description: 'JavaScript actions shall not be used',
-    check: (ctx) => {
-      const count = findDictsWithKey(ctx.doc, ['JS', 'JavaScript']);
+    check: async (ctx) => {
+      const count = findDictsWithKey(ctx.dicts, ['JS', 'JavaScript']);
       return {
         passed: count === 0,
         detail: count > 0 ? `${count} dictionary(ies) with /JS or /JavaScript` : null,
@@ -305,8 +297,8 @@ const RULES: Rule[] = [
     ruleId: 'no-prohibited-actions',
     clause: 'ISO 19005-1, 6.6.1',
     description: 'Launch, Sound, Movie, ImportData and ResetForm actions shall not be used',
-    check: (ctx) => {
-      const found = findProhibitedActions(ctx.doc, [
+    check: async (ctx) => {
+      const found = findProhibitedActions(ctx.dicts, [
         'Launch',
         'Sound',
         'Movie',
@@ -324,10 +316,10 @@ const RULES: Rule[] = [
     clause: 'ISO 19005-1, 6.1.11',
     description: 'Embedded files shall not be present (PDF/A-1; A-2 restricts, A-3 allows)',
     appliesToParts: [1],
-    check: (ctx) => {
-      const count = findDictsWithKey(ctx.doc, ['EF']);
-      const names = ctx.doc.catalog.lookup(PDFName.of('Names'));
-      const hasEfTree = names instanceof PDFDict && names.has(PDFName.of('EmbeddedFiles'));
+    check: async (ctx) => {
+      const count = findDictsWithKey(ctx.dicts, ['EF']);
+      const names = asDict(await resolved(ctx.doc, get(ctx.catalog, 'Names')));
+      const hasEfTree = names !== null && has(names, 'EmbeddedFiles');
       const violated = count > 0 || hasEfTree;
       return {
         passed: !violated,
@@ -342,13 +334,11 @@ const RULES: Rule[] = [
     clause: 'ISO 19005-1, 6.4',
     description: 'Transparency shall not be used (PDF/A-1 only)',
     appliesToParts: [1],
-    check: (ctx) => {
+    check: async (ctx) => {
       let violations = 0;
-      for (const dict of enumerateDicts(ctx.doc)) {
-        const smask = dict.get(PDFName.of('SMask'));
-        if (smask && !(smask instanceof PDFName && smask.decodeText() === 'None')) {
-          violations++;
-        }
+      for (const dict of ctx.dicts) {
+        const smask = get(dict, 'SMask');
+        if (smask !== undefined && nameOf(smask) !== 'None') violations++;
       }
       return {
         passed: violations === 0,
@@ -360,9 +350,9 @@ const RULES: Rule[] = [
     ruleId: 'no-xfa',
     clause: 'ISO 19005-2, 6.6.2',
     description: 'XFA forms shall not be present',
-    check: (ctx) => {
-      const acroForm = ctx.doc.catalog.lookup(PDFName.of('AcroForm'));
-      const hasXfa = acroForm instanceof PDFDict && acroForm.has(PDFName.of('XFA'));
+    check: async (ctx) => {
+      const acroForm = asDict(await resolved(ctx.doc, get(ctx.catalog, 'AcroForm')));
+      const hasXfa = acroForm !== null && has(acroForm, 'XFA');
       return { passed: !hasXfa, detail: hasXfa ? 'AcroForm contains /XFA' : null };
     },
   },
@@ -370,13 +360,10 @@ const RULES: Rule[] = [
     ruleId: 'no-need-appearances',
     clause: 'ISO 19005-1, 6.9',
     description: 'AcroForm NeedAppearances shall be false or absent',
-    check: (ctx) => {
-      const acroForm = ctx.doc.catalog.lookup(PDFName.of('AcroForm'));
-      if (acroForm instanceof PDFDict) {
-        const na = acroForm.lookup(PDFName.of('NeedAppearances'));
-        if (na instanceof PDFBool && na.asBoolean()) {
-          return { passed: false, detail: 'AcroForm /NeedAppearances is true' };
-        }
+    check: async (ctx) => {
+      const acroForm = asDict(await resolved(ctx.doc, get(ctx.catalog, 'AcroForm')));
+      if (acroForm && boolOf(await resolved(ctx.doc, get(acroForm, 'NeedAppearances'))) === true) {
+        return { passed: false, detail: 'AcroForm /NeedAppearances is true' };
       }
       return { passed: true, detail: null };
     },
@@ -385,8 +372,8 @@ const RULES: Rule[] = [
     ruleId: 'no-aa-catalog',
     clause: 'ISO 19005-1, 6.6.2',
     description: 'The document catalog shall not contain an AA (additional actions) entry',
-    check: (ctx) => {
-      const hasAa = ctx.doc.catalog.has(PDFName.of('AA'));
+    check: async (ctx) => {
+      const hasAa = has(ctx.catalog, 'AA');
       return { passed: !hasAa, detail: hasAa ? 'Catalog contains /AA' : null };
     },
   },
@@ -415,19 +402,21 @@ export function resolveFlavour(parsed: ParsedPdf, requested?: string): PdfaFlavo
 }
 
 /** Run the native rule subset against a parsed document */
-export function validatePdfaNative(
+export async function validatePdfaNative(
   parsed: ParsedPdf,
-  doc: PDFDocument,
+  doc: PdfDocument,
   flavour: PdfaFlavour,
-): NativeValidationReport {
-  const ctx: RuleContext = { parsed, doc, flavour };
+): Promise<NativeValidationReport> {
+  const { dicts } = await enumerateDicts(doc);
+  const catalog = asDict(await doc.getCatalog().catch(() => null));
+  const ctx: RuleContext = { parsed, doc, flavour, dicts, catalog };
   const results: RuleResult[] = [];
 
   for (const rule of RULES) {
     if (rule.appliesToParts && !rule.appliesToParts.includes(flavour.part)) continue;
     let outcome: { passed: boolean; detail: string | null };
     try {
-      outcome = rule.check(ctx);
+      outcome = await rule.check(ctx);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.debug(CONTEXT, `rule ${rule.ruleId} threw: ${message}`);

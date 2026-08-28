@@ -17,12 +17,13 @@ import { randomBytes } from 'node:crypto';
 import { unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PDFDict } from 'pdf-lib';
+import type { CosDict } from 'normativepdf';
 import { ValidationEngine, VERAPDF_ENV } from '../constants.js';
 import type { ParsedPdf } from '../types.js';
 import { PdfVerifyError } from '../utils/error-handler.js';
 import { extractPdfaId, extractPdfuaPart } from './conformance.js';
 import { decryptDocumentBytes } from './decrypt-document.js';
+
 import { loadPdfDocument, parsePdfBytes } from './pdf-parser.js';
 import { type PdfaFlavour, resolveFlavour, validatePdfaNative } from './pdfa-validator.js';
 import { type PdfuaFlavour, resolvePdfuaFlavour, validatePdfuaNative } from './pdfua-validator.js';
@@ -285,7 +286,7 @@ export async function validateConformance(
 
   // Native subset
   const doc = await loadPdfDocument(parsed.bytes);
-  const native = validatePdfaNative(parsed, doc, flavour);
+  const native = await validatePdfaNative(parsed, doc, flavour);
   const failed = native.results.filter((r) => !r.passed);
 
   return {
@@ -331,12 +332,12 @@ async function validatePdfua(
   let validationPath = filePath;
   let tempFile: string | null = null;
   let undecrypted = false;
-  let encryptDict: PDFDict | null = null;
+  let encryptDict: CosDict | null = null;
 
   if (parsed.isEncrypted) {
-    const originalDoc = await loadPdfDocument(parsed.bytes);
-    const enc = originalDoc.context.lookup(originalDoc.context.trailerInfo.Encrypt);
-    encryptDict = enc instanceof PDFDict ? enc : null;
+    // §7.6.2 が `/Encrypt` 辞書を暗号化の対象から除いているので、鍵が導けなくても読める。
+    // 復号前の文書について ISO 14289-1 7.16 を判定するのはこれ 1 つで足りる。
+    encryptDict = parsed.scope.encryptDict;
 
     const plain = await decryptDocumentBytes(parsed.bytes, options.password ?? '');
     if (plain && plain !== parsed.bytes) {
@@ -415,7 +416,7 @@ async function validatePdfua(
   }
 
   const doc = await loadPdfDocument(target.bytes);
-  const native = validatePdfuaNative(target, doc, flavour, {
+  const native = await validatePdfuaNative(target, doc, flavour, {
     undecrypted,
     wasEncrypted: parsed.isEncrypted,
     encryptDict,

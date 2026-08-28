@@ -479,4 +479,9 @@ export interface ParsedPdf {
   } | null;
   xmpMetadata: string | null;
   pdfVersion: string | null;
+  /**
+   * どこまで読めたか（判定ではない）。ライブラリがそのまま読めたのか、
+   * verify の回復方針で組み立てたのかを含む。出力に載せるかは道具ごとに決める。
+   */
+  scope: import('./services/document.js').DocumentScope;
 }

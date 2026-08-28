@@ -6,11 +6,12 @@
  * introduced in isolation to pin the rule that catches it.
  */
 
+import type { CosDict } from 'normativepdf';
 import { type PDFDict, PDFDocument, PDFName } from 'pdf-lib';
 import { describe, expect, it } from 'vitest';
 import { ValidationEngine } from '../../src/constants.js';
 import { validateConformance } from '../../src/services/conformance-validation.js';
-import { parsePdfBytes } from '../../src/services/pdf-parser.js';
+import { loadPdfDocument, parsePdfBytes } from '../../src/services/pdf-parser.js';
 import { validatePdfuaNative } from '../../src/services/pdfua-validator.js';
 import { buildUaPdf, type UaFixtureOptions as FixtureOptions } from '../helpers/ua-pdf.js';
 
@@ -152,12 +153,23 @@ describe('PDF/UA native validation', () => {
     const bytes = await buildUaPdf();
     const parsed = await parsePdfBytes(bytes);
 
+    // §7.6.2 は `/Encrypt` 辞書を暗号化の対象から除いているので、鍵が導けなくても読める。
+    // 規則が見るのはこの辞書だけなので、辞書そのものを渡して測る。
     const check = async (p?: number) => {
-      const doc = await PDFDocument.load(bytes, { updateMetadata: false });
-      doc.context.trailerInfo.Encrypt = doc.context.register(
-        doc.context.obj(p === undefined ? {} : { P: p }),
+      const encryptDict: CosDict = {
+        kind: 'dict',
+        entries: new Map(p === undefined ? [] : [['P', { kind: 'integer', value: p }]]),
+      };
+      const doc = await loadPdfDocument(bytes);
+      const report = await validatePdfuaNative(
+        { ...parsed, isEncrypted: true },
+        doc,
+        { part: 1 },
+        {
+          wasEncrypted: true,
+          encryptDict,
+        },
       );
-      const report = validatePdfuaNative({ ...parsed, isEncrypted: true }, doc, { part: 1 });
       return report.results.find((r) => r.ruleId === 'ua-no-encryption-barrier');
     };
 

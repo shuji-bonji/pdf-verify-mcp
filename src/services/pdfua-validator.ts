@@ -10,19 +10,11 @@
  * Prefer veraPDF (`--flavour ua1`) when available; see verapdf.ts.
  */
 
-import {
-  PDFArray,
-  PDFBool,
-  PDFDict,
-  type PDFDocument,
-  PDFHexString,
-  PDFName,
-  PDFNumber,
-  PDFString,
-} from 'pdf-lib';
+import { type CosDict, type CosObject, type PdfDocument, readPageTree } from 'normativepdf';
 import type { ParsedPdf } from '../types.js';
 import { logger } from '../utils/logger.js';
 import { extractPdfuaPart } from './conformance.js';
+import { asArray, asDict, boolOf, get, nameOf, numberOf, resolved, textOf } from './cos.js';
 
 const CONTEXT = 'pdfua-validator';
 
@@ -60,10 +52,10 @@ export interface PdfuaValidationReport {
 
 interface RuleContext {
   parsed: ParsedPdf;
-  doc: PDFDocument;
+  doc: PdfDocument;
   flavour: PdfuaFlavour;
   /** Structure elements collected once, shared across rules */
-  structElems: PDFDict[];
+  structElems: CosDict[];
   /** /RoleMap built once, shared across rules */
   roleMap: Map<string, string>;
   /** Tag name -> count, after /RoleMap resolution */
@@ -74,7 +66,11 @@ interface RuleContext {
    * ua-no-encryption-barrier must still judge the original (§7.16).
    */
   wasEncrypted: boolean;
-  encryptDict: PDFDict | null;
+  encryptDict: CosDict | null;
+  /** The document catalog, resolved once */
+  catalog: CosDict | null;
+  /** Pages in §7.7.3 order, walked once (`doc.getPages()` の置き換え) */
+  pages: CosDict[];
 }
 
 interface Rule {
@@ -89,22 +85,23 @@ interface Rule {
    * everything else is ciphertext and would produce false findings).
    */
   worksOnEncrypted?: boolean;
-  check: (ctx: RuleContext) => { passed: boolean; detail: string | null };
+  check: (ctx: RuleContext) => Promise<{ passed: boolean; detail: string | null }>;
 }
 
 // ---------------------------------------------------------------------------
 // Structure tree helpers
 // ---------------------------------------------------------------------------
 
-/** Decode a PDF text string (literal or hex/UTF-16BE) */
-function decodeText(value: unknown): string | null {
-  if (value instanceof PDFString || value instanceof PDFHexString) return value.decodeText();
-  return null;
+/**
+ * テキスト文字列（§7.9.2）。pdf-lib 1.x は UTF-8 のバイト順マーク（R-7.9.2.2.1-4・PDF 2.0）を
+ * 扱わず、`ï»¿` の付いた文字列を返していた。`/Lang` `/Alt` `/Title` はここを通る。
+ */
+function decodeText(value: CosObject | null | undefined): string | null {
+  return textOf(value);
 }
 
-function structTreeRoot(doc: PDFDocument): PDFDict | null {
-  const root = doc.catalog.lookup(PDFName.of('StructTreeRoot'));
-  return root instanceof PDFDict ? root : null;
+async function structTreeRoot(doc: PdfDocument, catalog: CosDict | null): Promise<CosDict | null> {
+  return asDict(await resolved(doc, get(catalog, 'StructTreeRoot')));
 }
 
 /**
@@ -112,77 +109,92 @@ function structTreeRoot(doc: PDFDocument): PDFDict | null {
  * Cycles are guarded. The walk is iterative (explicit stack) so deeply nested
  * trees cannot overflow the call stack; kids are pushed in reverse so the
  * document order of /K is preserved (headings depend on it).
+ *
+ * 🔴 巡回の見張りは**参照の番号**で持つ。pdf-lib 版は辞書のオブジェクト同一性で
+ * 見ていたが、normativepdf の `resolve` は呼ぶたびに値を作るので同一性では止まらない。
+ * 直接オブジェクトは自分を指せないので、番号の無い枝は巡回しない。
  */
-function collectStructElems(doc: PDFDocument): PDFDict[] {
-  const root = structTreeRoot(doc);
+async function collectStructElems(doc: PdfDocument, catalog: CosDict | null): Promise<CosDict[]> {
+  const root = await structTreeRoot(doc, catalog);
   if (!root) return [];
 
-  const out: PDFDict[] = [];
-  const seen = new Set<PDFDict>();
+  const out: CosDict[] = [];
+  const seen = new Set<number>();
 
-  const kidsOf = (node: PDFDict): PDFDict[] => {
-    const k = node.lookup(PDFName.of('K'));
-    if (k instanceof PDFDict) return [k];
-    if (k instanceof PDFArray) {
-      const kids: PDFDict[] = [];
-      for (let i = 0; i < k.size(); i++) {
-        const kid = k.lookup(i);
-        if (kid instanceof PDFDict) kids.push(kid);
-      }
-      return kids;
+  const kidsOf = async (node: CosDict): Promise<{ ref: number | null; dict: CosDict }[]> => {
+    const k = await resolved(doc, get(node, 'K'));
+    const direct = asDict(k);
+    if (direct) return [{ ref: refNumber(get(node, 'K')), dict: direct }];
+    const array = asArray(k);
+    if (!array) return [];
+    const kids: { ref: number | null; dict: CosDict }[] = [];
+    for (const item of array.items) {
+      const dict = asDict(await resolved(doc, item));
+      if (dict) kids.push({ ref: refNumber(item), dict });
     }
-    return [];
+    return kids;
   };
 
-  const stack: PDFDict[] = kidsOf(root).reverse();
+  const stack = (await kidsOf(root)).reverse();
   while (stack.length > 0) {
     const node = stack.pop();
-    if (!node || seen.has(node)) continue;
-    seen.add(node);
+    if (!node) continue;
+    if (node.ref !== null) {
+      if (seen.has(node.ref)) continue;
+      seen.add(node.ref);
+    }
     // Marked-content reference dicts (/Type /MCR, /OBJR) are not struct elements
-    const type = node.lookup(PDFName.of('Type'));
-    const isMcr = type instanceof PDFName && ['MCR', 'OBJR'].includes(type.decodeText());
-    if (!isMcr && node.lookup(PDFName.of('S')) instanceof PDFName) out.push(node);
-    const kids = kidsOf(node);
+    const type = nameOf(await resolved(doc, get(node.dict, 'Type')));
+    const isMcr = type !== null && ['MCR', 'OBJR'].includes(type);
+    const s = await resolved(doc, get(node.dict, 'S'));
+    if (!isMcr && nameOf(s) !== null) out.push(node.dict);
+    const kids = await kidsOf(node.dict);
     for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]);
   }
   return out;
 }
 
+function refNumber(value: CosObject | undefined): number | null {
+  return value?.kind === 'ref' ? value.objectNumber : null;
+}
+
 /** Resolve a struct element's tag through /RoleMap */
-function tagOf(elem: PDFDict, roleMap: Map<string, string>): string {
-  const s = elem.lookup(PDFName.of('S'));
-  if (!(s instanceof PDFName)) return '';
-  const raw = s.decodeText();
+function tagOf(elem: CosDict, roleMap: Map<string, string>): string {
+  const raw = nameOf(get(elem, 'S'));
+  if (raw === null) return '';
   return roleMap.get(raw) ?? raw;
 }
 
-function buildRoleMap(doc: PDFDocument): Map<string, string> {
+async function buildRoleMap(
+  doc: PdfDocument,
+  catalog: CosDict | null,
+): Promise<Map<string, string>> {
   const map = new Map<string, string>();
-  const root = structTreeRoot(doc);
-  const rm = root?.lookup(PDFName.of('RoleMap'));
-  if (rm instanceof PDFDict) {
-    for (const [key, value] of rm.entries()) {
-      if (value instanceof PDFName) map.set(key.decodeText(), value.decodeText());
+  const root = await structTreeRoot(doc, catalog);
+  const rm = asDict(await resolved(doc, get(root, 'RoleMap')));
+  if (rm) {
+    for (const [key, value] of rm.entries) {
+      const name = nameOf(value);
+      if (name !== null) map.set(key, name);
     }
   }
   return map;
 }
 
-/** Count XObject images across pages (PDF/UA needs them tagged as Figure) */
-function countImageXObjects(doc: PDFDocument): number {
+/**
+ * Count XObject images across pages (PDF/UA needs them tagged as Figure).
+ * ページ自身の `/Resources` だけを見る（継承は辿らない）—— pdf-lib 版と同じ範囲。
+ */
+async function countImageXObjects(doc: PdfDocument, pages: CosDict[]): Promise<number> {
   let count = 0;
-  for (const page of doc.getPages()) {
-    const resources = page.node.lookup(PDFName.of('Resources'));
-    if (!(resources instanceof PDFDict)) continue;
-    const xobjects = resources.lookup(PDFName.of('XObject'));
-    if (!(xobjects instanceof PDFDict)) continue;
-    for (const key of xobjects.keys()) {
-      const xo = xobjects.lookup(key);
-      if (xo instanceof PDFDict) {
-        const subtype = xo.lookup(PDFName.of('Subtype'));
-        if (subtype instanceof PDFName && subtype.decodeText() === 'Image') count++;
-      }
+  for (const page of pages) {
+    const resources = asDict(await resolved(doc, get(page, 'Resources')));
+    if (!resources) continue;
+    const xobjects = asDict(await resolved(doc, get(resources, 'XObject')));
+    if (!xobjects) continue;
+    for (const [, value] of xobjects.entries) {
+      const xo = asDict(await resolved(doc, value));
+      if (xo && nameOf(await resolved(doc, get(xo, 'Subtype'))) === 'Image') count++;
     }
   }
   return count;
@@ -198,13 +210,13 @@ const RULES: Rule[] = [
     clause: 'ISO 14289-1, 7.1 (2)',
     description: 'The document catalog shall have MarkInfo with Marked set to true',
     severity: 'error',
-    check: (ctx) => {
-      const markInfo = ctx.doc.catalog.lookup(PDFName.of('MarkInfo'));
-      if (!(markInfo instanceof PDFDict)) {
+    check: async (ctx) => {
+      const markInfo = asDict(await resolved(ctx.doc, get(ctx.catalog, 'MarkInfo')));
+      if (!markInfo) {
         return { passed: false, detail: 'No /MarkInfo dictionary in the catalog' };
       }
-      const marked = markInfo.lookup(PDFName.of('Marked'));
-      if (marked instanceof PDFBool && marked.asBoolean()) return { passed: true, detail: null };
+      const marked = boolOf(await resolved(ctx.doc, get(markInfo, 'Marked')));
+      if (marked === true) return { passed: true, detail: null };
       return { passed: false, detail: '/MarkInfo /Marked is not true' };
     },
   },
@@ -213,8 +225,8 @@ const RULES: Rule[] = [
     clause: 'ISO 14289-1, 7.1 (1)',
     description: 'The document catalog shall contain a StructTreeRoot',
     severity: 'error',
-    check: (ctx) => {
-      if (!structTreeRoot(ctx.doc)) {
+    check: async (ctx) => {
+      if (!(await structTreeRoot(ctx.doc, ctx.catalog))) {
         return { passed: false, detail: 'No /StructTreeRoot in the catalog' };
       }
       if (ctx.structElems.length === 0) {
@@ -228,7 +240,7 @@ const RULES: Rule[] = [
     clause: 'ISO 14289-1, 5',
     description: 'XMP metadata shall declare PDF/UA identification (pdfuaid:part)',
     severity: 'error',
-    check: (ctx) => {
+    check: async (ctx) => {
       const xmp = ctx.parsed.xmpMetadata;
       if (!xmp) return { passed: false, detail: 'No XMP metadata stream' };
       const declared = extractPdfuaPart(xmp);
@@ -249,8 +261,8 @@ const RULES: Rule[] = [
     clause: 'ISO 14289-1, 7.2 (1)',
     description: 'A default natural language shall be declared (/Lang in the catalog)',
     severity: 'error',
-    check: (ctx) => {
-      const lang = decodeText(ctx.doc.catalog.lookup(PDFName.of('Lang')));
+    check: async (ctx) => {
+      const lang = decodeText(await resolved(ctx.doc, get(ctx.catalog, 'Lang')));
       if (!lang || lang.trim() === '') {
         return { passed: false, detail: 'No /Lang entry in the catalog' };
       }
@@ -262,13 +274,13 @@ const RULES: Rule[] = [
     clause: 'ISO 14289-1, 7.1 (8)',
     description: 'ViewerPreferences shall set DisplayDocTitle to true',
     severity: 'error',
-    check: (ctx) => {
-      const vp = ctx.doc.catalog.lookup(PDFName.of('ViewerPreferences'));
-      if (!(vp instanceof PDFDict)) {
+    check: async (ctx) => {
+      const vp = asDict(await resolved(ctx.doc, get(ctx.catalog, 'ViewerPreferences')));
+      if (!vp) {
         return { passed: false, detail: 'No /ViewerPreferences dictionary' };
       }
-      const flag = vp.lookup(PDFName.of('DisplayDocTitle'));
-      if (flag instanceof PDFBool && flag.asBoolean()) return { passed: true, detail: null };
+      const flag = boolOf(await resolved(ctx.doc, get(vp, 'DisplayDocTitle')));
+      if (flag === true) return { passed: true, detail: null };
       return { passed: false, detail: '/ViewerPreferences /DisplayDocTitle is not true' };
     },
   },
@@ -278,13 +290,12 @@ const RULES: Rule[] = [
     description:
       'The Metadata stream shall contain a dc:title entry (Info /Title alone does not conform — conforming readers ignore the document information dictionary)',
     severity: 'error',
-    check: (ctx) => {
+    check: async (ctx) => {
       const xmp = ctx.parsed.xmpMetadata ?? '';
       const hasXmpTitle = /<dc:title>[\s\S]*?<rdf:li[^>]*>\s*\S/.test(xmp);
       if (hasXmpTitle) return { passed: true, detail: null };
-      const info = ctx.doc.context.lookup(ctx.doc.context.trailerInfo.Info);
-      const infoTitle =
-        info instanceof PDFDict ? decodeText(info.lookup(PDFName.of('Title'))) : null;
+      const info = asDict(await resolved(ctx.doc, get(ctx.doc.trailer, 'Info')));
+      const infoTitle = info ? decodeText(await resolved(ctx.doc, get(info, 'Title'))) : null;
       if (infoTitle && infoTitle.trim() !== '') {
         return {
           passed: false,
@@ -300,14 +311,15 @@ const RULES: Rule[] = [
     clause: 'ISO 14289-1, 7.3',
     description: 'Every Figure structure element shall have alternate text (/Alt)',
     severity: 'error',
-    check: (ctx) => {
+    check: async (ctx) => {
       const figures = ctx.structElems.filter((e) => tagOf(e, ctx.roleMap) === 'Figure');
       if (figures.length === 0) return { passed: true, detail: null };
-      const missing = figures.filter((f) => {
-        const alt = decodeText(f.lookup(PDFName.of('Alt')));
-        const actual = decodeText(f.lookup(PDFName.of('ActualText')));
-        return !(alt && alt.trim() !== '') && !(actual && actual.trim() !== '');
-      });
+      const missing: CosDict[] = [];
+      for (const f of figures) {
+        const alt = decodeText(await resolved(ctx.doc, get(f, 'Alt')));
+        const actual = decodeText(await resolved(ctx.doc, get(f, 'ActualText')));
+        if (!(alt && alt.trim() !== '') && !(actual && actual.trim() !== '')) missing.push(f);
+      }
       if (missing.length === 0) return { passed: true, detail: null };
       return {
         passed: false,
@@ -320,8 +332,8 @@ const RULES: Rule[] = [
     clause: 'ISO 14289-1, 7.3',
     description: 'Images shall be tagged as Figure (or marked as artifacts)',
     severity: 'warning',
-    check: (ctx) => {
-      const images = countImageXObjects(ctx.doc);
+    check: async (ctx) => {
+      const images = await countImageXObjects(ctx.doc, ctx.pages);
       if (images === 0) return { passed: true, detail: null };
       const figures = ctx.roleCounts.Figure ?? 0;
       if (figures >= images) return { passed: true, detail: null };
@@ -337,7 +349,7 @@ const RULES: Rule[] = [
     description:
       'Headings shall start at H1 and not skip levels (checked in document order across the whole tree; branch-local level restarts are not distinguished and may be flagged)',
     severity: 'error',
-    check: (ctx) => {
+    check: async (ctx) => {
       const levels: number[] = [];
       for (const elem of ctx.structElems) {
         const m = /^H([1-6])$/.exec(tagOf(elem, ctx.roleMap));
@@ -364,7 +376,7 @@ const RULES: Rule[] = [
     clause: 'ISO 14289-1, 7.5',
     description: 'Tables shall have header cells (TH) and rows (TR)',
     severity: 'error',
-    check: (ctx) => {
+    check: async (ctx) => {
       const tables = ctx.roleCounts.Table ?? 0;
       if (tables === 0) return { passed: true, detail: null };
       const problems: string[] = [];
@@ -379,19 +391,18 @@ const RULES: Rule[] = [
     clause: 'ISO 14289-1, 7.18.5',
     description: 'Link annotations shall have an alternate description (/Contents)',
     severity: 'error',
-    check: (ctx) => {
+    check: async (ctx) => {
       let links = 0;
       let missing = 0;
-      for (const page of ctx.doc.getPages()) {
-        const annots = page.node.lookup(PDFName.of('Annots'));
-        if (!(annots instanceof PDFArray)) continue;
-        for (let i = 0; i < annots.size(); i++) {
-          const a = annots.lookup(i);
-          if (!(a instanceof PDFDict)) continue;
-          const subtype = a.lookup(PDFName.of('Subtype'));
-          if (!(subtype instanceof PDFName) || subtype.decodeText() !== 'Link') continue;
+      for (const page of ctx.pages) {
+        const annots = asArray(await resolved(ctx.doc, get(page, 'Annots')));
+        if (!annots) continue;
+        for (const item of annots.items) {
+          const a = asDict(await resolved(ctx.doc, item));
+          if (!a) continue;
+          if (nameOf(await resolved(ctx.doc, get(a, 'Subtype'))) !== 'Link') continue;
           links++;
-          const contents = decodeText(a.lookup(PDFName.of('Contents')));
+          const contents = decodeText(await resolved(ctx.doc, get(a, 'Contents')));
           if (!contents || contents.trim() === '') missing++;
         }
       }
@@ -409,17 +420,16 @@ const RULES: Rule[] = [
       'An encrypted file shall contain a P key whose 10th bit position (assistive-technology access) is true',
     severity: 'error',
     worksOnEncrypted: true,
-    check: (ctx) => {
+    check: async (ctx) => {
       if (!ctx.wasEncrypted) return { passed: true, detail: null };
       const enc = ctx.encryptDict;
-      if (!(enc instanceof PDFDict)) {
+      if (!enc) {
         return {
           passed: false,
           detail: 'Document is encrypted but the /Encrypt dictionary could not be read',
         };
       }
-      const p = enc.lookup(PDFName.of('P'));
-      const pValue = p instanceof PDFNumber ? p.asNumber() : null;
+      const pValue = numberOf(await resolved(ctx.doc, get(enc, 'P')));
       if (pValue === null) {
         return {
           passed: false,
@@ -464,27 +474,30 @@ export interface PdfuaValidationOptions {
   /** Whether the ORIGINAL document is encrypted (defaults to parsed.isEncrypted) */
   wasEncrypted?: boolean;
   /** /Encrypt dictionary of the ORIGINAL document (defaults to doc's trailer) */
-  encryptDict?: PDFDict | null;
+  encryptDict?: CosDict | null;
 }
 
-export function validatePdfuaNative(
+export async function validatePdfuaNative(
   parsed: ParsedPdf,
-  doc: PDFDocument,
+  doc: PdfDocument,
   flavour: PdfuaFlavour,
   options: PdfuaValidationOptions = {},
-): PdfuaValidationReport {
-  const structElems = collectStructElems(doc);
-  const roleMap = buildRoleMap(doc);
+): Promise<PdfuaValidationReport> {
+  const catalog = asDict(await doc.getCatalog().catch(() => null));
+  const structElems = await collectStructElems(doc, catalog);
+  const roleMap = await buildRoleMap(doc, catalog);
   const roleCounts: Record<string, number> = {};
   for (const elem of structElems) {
     const tag = tagOf(elem, roleMap);
     if (tag) roleCounts[tag] = (roleCounts[tag] ?? 0) + 1;
   }
 
+  const tree = await readPageTree(doc).catch(() => null);
+  const pages = tree ? tree.pages.map((page) => page.dict) : [];
+
   let encryptDict = options.encryptDict ?? null;
   if (encryptDict === null && options.encryptDict === undefined) {
-    const enc = doc.context.lookup(doc.context.trailerInfo.Encrypt);
-    encryptDict = enc instanceof PDFDict ? enc : null;
+    encryptDict = asDict(await resolved(doc, get(doc.trailer, 'Encrypt')));
   }
 
   const ctx: RuleContext = {
@@ -496,6 +509,8 @@ export function validatePdfuaNative(
     roleCounts,
     wasEncrypted: options.wasEncrypted ?? parsed.isEncrypted,
     encryptDict,
+    catalog,
+    pages,
   };
   const results: PdfuaRuleResult[] = [];
 
@@ -518,7 +533,7 @@ export function validatePdfuaNative(
 
     let outcome: { passed: boolean; detail: string | null };
     try {
-      outcome = rule.check(ctx);
+      outcome = await rule.check(ctx);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.debug(CONTEXT, `rule ${rule.ruleId} threw: ${message}`);

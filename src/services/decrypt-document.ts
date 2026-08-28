@@ -20,6 +20,7 @@
 
 import {
   PDFArray,
+  PDFBool,
   PDFDict,
   PDFDocument,
   PDFHexString,
@@ -34,10 +35,120 @@ import {
   PDFWriter,
 } from 'pdf-lib';
 import { logger } from '../utils/logger.js';
-import type { PdfDecryptor } from './decryptor.js';
-import { buildDecryptor } from './pdf-parser.js';
+import { type CryptMethod, type EncryptParams, PdfDecryptor } from './decryptor.js';
 
 const CONTEXT = 'decrypt-document';
+
+/* ------------------------------------------------------------------ *
+ * 復号器の組み立て（pdf-lib の /Encrypt 辞書から）
+ *
+ * L2 で pdf-parser.ts は normativepdf に載り、復号はライブラリが持つようになった。
+ * ここは pdf-lib のまま残っている最後の島（L4 で撤去可否を測る）なので、
+ * このファイル専用の道具として引き取った。
+ * ------------------------------------------------------------------ */
+
+/** Map a crypt filter's CFM to our method enum */
+function cfmToMethod(cfm: string | null): CryptMethod {
+  switch (cfm) {
+    case 'V2':
+      return 'RC4';
+    case 'AESV2':
+      return 'AESV2';
+    case 'AESV3':
+      return 'AESV3';
+    case 'Identity':
+      return 'Identity';
+    default:
+      return 'RC4';
+  }
+}
+
+/** Build a decryptor from the trailer /Encrypt dictionary (v0.5) */
+export function buildDecryptor(doc: PDFDocument, password: string): PdfDecryptor | null {
+  const encRef = doc.context.trailerInfo.Encrypt;
+  if (!encRef) return null;
+  const enc = doc.context.lookup(encRef);
+  if (!(enc instanceof PDFDict)) return null;
+  if (lookupName(enc, 'Filter') !== 'Standard') {
+    logger.warn(CONTEXT, 'Non-standard security handler is not supported');
+    return null;
+  }
+
+  const numberOf = (key: string, fallback: number): number => {
+    const v = enc.get(PDFName.of(key));
+    return v instanceof PDFNumber ? v.asNumber() : fallback;
+  };
+  const bytesOf = (key: string): Uint8Array => {
+    const v = enc.lookup(PDFName.of(key));
+    return v instanceof PDFString || v instanceof PDFHexString
+      ? new Uint8Array(v.asBytes())
+      : new Uint8Array(0);
+  };
+
+  const version = numberOf('V', 0);
+  const revision = numberOf('R', 0);
+  const keyLength = Math.floor(numberOf('Length', 40) / 8);
+
+  // V4/V5 use crypt filters (CF/StmF/StrF); V1/V2 use RC4 directly.
+  let streamMethod: CryptMethod = 'RC4';
+  let stringMethod: CryptMethod = 'RC4';
+  if (version >= 4) {
+    const cf = enc.lookup(PDFName.of('CF'));
+    const resolveCfm = (filterName: string | null): CryptMethod => {
+      if (!filterName || filterName === 'Identity') return 'Identity';
+      if (cf instanceof PDFDict) {
+        const entry = cf.lookup(PDFName.of(filterName));
+        if (entry instanceof PDFDict) return cfmToMethod(lookupName(entry, 'CFM'));
+      }
+      return 'RC4';
+    };
+    streamMethod = resolveCfm(lookupName(enc, 'StmF'));
+    stringMethod = resolveCfm(lookupName(enc, 'StrF'));
+  }
+  // R5/R6 are always AES-256 regardless of the declared filters.
+  if (revision >= 5) {
+    streamMethod = 'AESV3';
+    stringMethod = 'AESV3';
+  }
+
+  const idArray = doc.context.trailerInfo.ID;
+  let idBytes = new Uint8Array(0);
+  if (idArray instanceof PDFArray && idArray.size() > 0) {
+    const first = idArray.lookup(0);
+    if (first instanceof PDFString || first instanceof PDFHexString)
+      idBytes = new Uint8Array(first.asBytes());
+  }
+
+  const encryptMetadataVal = enc.get(PDFName.of('EncryptMetadata'));
+  const encryptMetadata =
+    encryptMetadataVal instanceof PDFBool ? encryptMetadataVal.asBoolean() : true;
+
+  const params: EncryptParams = {
+    revision,
+    version,
+    keyLength: keyLength > 0 ? keyLength : 5,
+    o: bytesOf('O'),
+    u: bytesOf('U'),
+    oe: revision >= 5 ? bytesOf('OE') : null,
+    ue: revision >= 5 ? bytesOf('UE') : null,
+    permissions: numberOf('P', 0),
+    idBytes,
+    encryptMetadata,
+    streamMethod,
+    stringMethod,
+  };
+
+  const decryptor = PdfDecryptor.create(params, new TextEncoder().encode(password));
+  if (!decryptor) {
+    logger.warn(CONTEXT, 'Failed to derive decryption key (wrong password or unsupported handler)');
+  }
+  return decryptor;
+}
+
+function lookupName(dict: PDFDict, key: string): string | null {
+  const value = dict.lookup(PDFName.of(key));
+  return value instanceof PDFName ? value.decodeText() : null;
+}
 
 function decryptedString(plain: Uint8Array): PDFHexString {
   return PDFHexString.of(Buffer.from(plain).toString('hex'));

@@ -21,9 +21,15 @@
  */
 
 import {
+  ByteCursor,
   type CosDict,
+  type CosObject,
   dictGet,
+  parseIndirectObject,
+  parseObject,
   readXrefSectionAt,
+  TokenReader,
+  type XrefChainStop,
   type XrefEntry,
   type XrefSection,
 } from 'normativepdf';
@@ -55,16 +61,37 @@ export interface WalkedSection {
 }
 
 /** 歩いた結果。`sections` は古い順。 */
+export interface WalkOptions {
+  /**
+   * チェーンが途中で止まったあと、**まだ読んでいない `startxref` の値**から読み続ける。
+   *
+   * 既定は false —— リビジョンの一覧（`revision-diff`）はチェーンが言うとおりに
+   * 読むべきで、続きを勝手に足すと「歩き切った」と同じ顔になる。
+   * true にするのは**文書を組み立てられないとき**だけである（目録に届かない、など）。
+   * そのときは「ここから先は `/Prev` ではなく `startxref` を頼りに読んだ」という
+   * 別の事実になるので、`continuedPastStop` で申告する。
+   */
+  continuePastStop?: boolean;
+}
+
 export interface WalkedChain {
   /** §7.5.2 の原点（`%PDF-` の位置）。節の offset は絶対、エントリの offset は原点相対 */
   origin: number;
   sections: WalkedSection[];
+  /**
+   * 歩きがどこで止まったか。normativepdf と同じ 5 値
+   * （`complete` / `prev-zero` / `unreadable` / `cyclic` / `malformed`）。
+   * 🔴 「終わりまで来た」と「これ以上行けなかった」は別の事実である。
+   */
+  stop: XrefChainStop;
   /** チェーンを最後まで辿れなかった（巡回・上限・辿れない `/Prev`） */
   truncated: boolean;
   /** 最後の `startxref` が読めず、古い入口から入った = 末尾のバイトはどの節にも代表されていない */
   newestSectionUnreadable: boolean;
   /** 線形化（Annex F）の 2 節を 1 リビジョンに畳んだ */
   linearized: boolean;
+  /** 止まったあと、`startxref` の値から読み続けた（`continuePastStop`） */
+  continuedPastStop: boolean;
 }
 
 /* ------------------------------------------------------------------ *
@@ -198,12 +225,18 @@ async function readSection(
  * non-integer `/Prev` outright; this module reports it as a chain that could
  * not be followed to the end, which is what the DocMDP assessment has to know.
  */
-type PrevLink = { kind: 'end' } | { kind: 'malformed' } | { kind: 'at'; offset: number };
+type PrevLink =
+  | { kind: 'end' }
+  | { kind: 'zero' }
+  | { kind: 'malformed' }
+  | { kind: 'at'; offset: number };
 
 function readPrev(section: XrefSection): PrevLink {
   const prev = dictGet(section.trailer, 'Prev');
   if (prev === undefined) return { kind: 'end' };
   if (prev.kind === 'integer' && prev.value > 0) return { kind: 'at', offset: prev.value };
+  // `/Prev 0` と「整数ですらない `/Prev`」は別の事実として運ぶ（§7.5.5 Table 15）。
+  if (prev.kind === 'integer') return { kind: 'zero' };
   return { kind: 'malformed' };
 }
 
@@ -233,6 +266,7 @@ function collectStartxrefTargets(bytes: Uint8Array): number[] {
 export async function walkXrefChain(
   bytes: Uint8Array,
   origin: number = findOrigin(bytes),
+  options: WalkOptions = {},
 ): Promise<WalkedChain | null> {
   const targets = collectStartxrefTargets(bytes);
   if (targets.length === 0) return null;
@@ -261,22 +295,26 @@ export async function walkXrefChain(
 
   const sections: WalkedSection[] = [];
   const visited = new Set<number>();
-  let truncated = false;
+  let stop: XrefChainStop = { kind: 'complete' };
   while (next !== null && next > 0) {
     if (visited.has(next)) {
-      truncated = true;
+      stop = { kind: 'cyclic', offset: next };
       break;
     }
     visited.add(next);
     const read: SectionRead | null = pending ?? (await readSection(bytes, origin, next));
     pending = null;
     if (!read) {
-      truncated = true;
+      stop = { kind: 'unreadable', offset: next, reason: 'no cross-reference section here' };
       break;
     }
     sections.push(read.revision);
     if (sections.length >= MAX_REVISIONS) {
-      truncated = true;
+      stop = {
+        kind: 'unreadable',
+        offset: next,
+        reason: `stopped at ${MAX_REVISIONS} revisions`,
+      };
       break;
     }
     if (read.prev.kind === 'end') {
@@ -289,10 +327,36 @@ export async function walkXrefChain(
       // a clean end would let `assessDocMdp` treat an unwalkable tail as "no
       // older revisions", which is the mistake this whole module exists to
       // avoid. [[revision-diff-lies-linearized-and-full-save]]
-      truncated = true;
+      stop =
+        read.prev.kind === 'zero'
+          ? { kind: 'prev-zero', offset: 0 }
+          : { kind: 'malformed', offset: 0 };
       next = null;
     }
   }
+  let continuedPastStop = false;
+  if (options.continuePastStop && stop.kind !== 'complete') {
+    // まだ訪ねていない `startxref` の値を、新しいものから順に試す。
+    // ここで足した節は `/Prev` が繋いだものではないので、そう申告する。
+    for (let i = targets.length - 1; i >= 0; i -= 1) {
+      const target = targets[i];
+      if (target <= 0 || visited.has(target)) continue;
+      const read = await readSection(bytes, origin, target);
+      if (!read) continue;
+      visited.add(target);
+      sections.push(read.revision);
+      continuedPastStop = true;
+      let follow: number | null = read.prev.kind === 'at' ? read.prev.offset : null;
+      while (follow !== null && follow > 0 && !visited.has(follow)) {
+        visited.add(follow);
+        const more = await readSection(bytes, origin, follow);
+        if (!more) break;
+        sections.push(more.revision);
+        follow = more.prev.kind === 'at' ? more.prev.offset : null;
+      }
+    }
+  }
+  const truncated = stop.kind !== 'complete';
   if (sections.length === 0) return null;
   const ordered = sections.reverse();
 
@@ -313,5 +377,100 @@ export async function walkXrefChain(
     }
   }
 
-  return { origin, sections: ordered, truncated, newestSectionUnreadable, linearized };
+  return {
+    origin,
+    sections: ordered,
+    stop,
+    truncated,
+    newestSectionUnreadable,
+    linearized,
+    continuedPastStop,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * 相互参照節が 1 つも読めない文書 —— オブジェクトを数え上げて組み直す
+ * ------------------------------------------------------------------ */
+
+/**
+ * ファイルの中の `N G obj` を数え上げて、相互参照表を組み直す。
+ *
+ * 🔴 **これは推測である。** ファイルが持っていない表を verify が作るのだから、
+ * 使った文書ではそう申告しなければならない（`DocumentScope.reconstructed`）。
+ * それでも refuse より良いのは、監査に持ち込まれる文書こそ壊れているからで、
+ * 「読めません」だけを返すと**中に何が書いてあるかを誰も見ないまま終わる**。
+ *
+ * 呼ぶのは `walkXrefChain` が 1 節も読めなかったときだけ。
+ * 後ろにある定義が前の定義を上書きする（増分更新は後ろが新しい・§7.5.6）。
+ */
+export function reconstructXref(
+  bytes: Uint8Array,
+  origin: number,
+): { entries: Map<number, XrefEntry>; trailer: CosDict } | null {
+  const entries = new Map<number, XrefEntry>();
+  for (let i = origin; i + 3 <= bytes.length; i += 1) {
+    if (bytes[i] !== 0x6f || bytes[i + 1] !== 0x62 || bytes[i + 2] !== 0x6a) continue; // "obj"
+    if (i + 3 < bytes.length && !isWhitespace(bytes[i + 3]) && !isDelimiter(bytes[i + 3])) continue;
+    // 直前を遡って `N G` を読む
+    let j = i - 1;
+    while (j >= origin && isWhitespace(bytes[j])) j -= 1;
+    const genEnd = j + 1;
+    while (j >= origin && bytes[j] >= 0x30 && bytes[j] <= 0x39) j -= 1;
+    const genStart = j + 1;
+    if (genStart === genEnd) continue;
+    while (j >= origin && isWhitespace(bytes[j])) j -= 1;
+    const numEnd = j + 1;
+    while (j >= origin && bytes[j] >= 0x30 && bytes[j] <= 0x39) j -= 1;
+    const numStart = j + 1;
+    if (numStart === numEnd) continue;
+    const objectNumber = Number.parseInt(LATIN1.decode(bytes.subarray(numStart, numEnd)), 10);
+    const generation = Number.parseInt(LATIN1.decode(bytes.subarray(genStart, genEnd)), 10);
+    if (!Number.isFinite(objectNumber) || !Number.isFinite(generation)) continue;
+    entries.set(objectNumber, { type: 'in-use', offset: numStart - origin, generation });
+  }
+  if (entries.size === 0) return null;
+
+  // trailer は後ろにあるものが新しい。読めたものを新しい順に重ねる。
+  const merged = new Map<string, CosObject>();
+  for (const at of [...findAll(bytes, 'trailer', origin)].reverse()) {
+    try {
+      const reader = new TokenReader(new ByteCursor(bytes, at + 'trailer'.length));
+      const dict = parseObject(reader);
+      if (dict.kind !== 'dict') continue;
+      for (const [key, value] of dict.entries) if (!merged.has(key)) merged.set(key, value);
+    } catch {
+      // 読めない trailer は飛ばす —— ここは推測の上の推測にしない
+    }
+  }
+  if (!merged.has('Root')) {
+    // trailer が無い（相互参照ストリームだけの文書）なら、/Type /Catalog を探す
+    for (const [objectNumber, entry] of entries) {
+      if (entry.type !== 'in-use') continue;
+      try {
+        const reader = new TokenReader(new ByteCursor(bytes, origin + entry.offset));
+        const { object } = parseIndirectObject(reader);
+        if (object.kind !== 'dict') continue;
+        const type = dictGet(object, 'Type');
+        if (type?.kind === 'name' && type.value === 'Catalog') {
+          merged.set('Root', { kind: 'ref', objectNumber, generationNumber: entry.generation });
+          break;
+        }
+      } catch {
+        // 読めないオブジェクトは飛ばす
+      }
+    }
+  }
+  if (!merged.has('Root')) return null;
+  return { entries, trailer: { kind: 'dict', entries: merged } };
+}
+
+/** バイト列に現れる `needle` の位置を全部返す。 */
+function* findAll(bytes: Uint8Array, needle: string, from: number): Generator<number> {
+  let at = from;
+  for (;;) {
+    at = indexOfBytes(bytes, needle, at);
+    if (at < 0) return;
+    yield at;
+    at += needle.length;
+  }
 }

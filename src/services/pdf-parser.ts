@@ -1,172 +1,49 @@
 /**
- * PDF structure parsing service.
+ * PDF の構造を読む —— 署名辞書・DSS・XMP・リビジョン数。
+ * 暗号はここに無い（cms-verifier.ts）。
  *
- * Extracts signature dictionaries, revision info, DSS and XMP metadata
- * using pdf-lib. No cryptography here — see cms-verifier.ts.
+ * 入口は `openDocument`（document.ts）1 つで、そこが normativepdf と
+ * 回復方針の両方を持つ。ここは**読んだものを family の語彙に移すだけ**であり、
+ * COS の形を見るのは `cos.ts` に寄せてある。
  */
 
 import { readFile } from 'node:fs/promises';
-import { inflateSync } from 'node:zlib';
-import {
-  decodePDFRawStream,
-  PDFArray,
-  PDFBool,
-  PDFDict,
-  PDFDocument,
-  PDFHexString,
-  PDFName,
-  PDFNumber,
-  PDFRawStream,
-  PDFRef,
-  PDFString,
-} from 'pdf-lib';
+import type { CosDict, CosObject, PdfDocument } from 'normativepdf';
 import type { ParsedPdf, SignatureField } from '../types.js';
 import { assertReadablePdf, PdfVerifyError } from '../utils/error-handler.js';
 import { logger } from '../utils/logger.js';
-import { type CryptMethod, type EncryptParams, PdfDecryptor } from './decryptor.js';
+import {
+  asArray,
+  asDict,
+  asStream,
+  bytesOf,
+  decodedBytes,
+  enumerateObjects,
+  get,
+  has,
+  integerOf,
+  nameOf,
+  numberOf,
+  resolved,
+  textOf,
+} from './cos.js';
+import { type DocumentScope, openDocument } from './document.js';
 
 const CONTEXT = 'pdf-parser';
 
-/** Map a crypt filter's CFM to our method enum */
-function cfmToMethod(cfm: string | null): CryptMethod {
-  switch (cfm) {
-    case 'V2':
-      return 'RC4';
-    case 'AESV2':
-      return 'AESV2';
-    case 'AESV3':
-      return 'AESV3';
-    case 'Identity':
-      return 'Identity';
-    default:
-      return 'RC4';
-  }
-}
-
-/** Build a decryptor from the trailer /Encrypt dictionary (v0.5) */
-export function buildDecryptor(doc: PDFDocument, password: string): PdfDecryptor | null {
-  const encRef = doc.context.trailerInfo.Encrypt;
-  if (!encRef) return null;
-  const enc = doc.context.lookup(encRef);
-  if (!(enc instanceof PDFDict)) return null;
-  if (lookupName(enc, 'Filter') !== 'Standard') {
-    logger.warn(CONTEXT, 'Non-standard security handler is not supported');
-    return null;
-  }
-
-  const numberOf = (key: string, fallback: number): number => {
-    const v = enc.get(PDFName.of(key));
-    return v instanceof PDFNumber ? v.asNumber() : fallback;
-  };
-  const bytesOf = (key: string): Uint8Array => {
-    const v = enc.lookup(PDFName.of(key));
-    return v instanceof PDFString || v instanceof PDFHexString
-      ? new Uint8Array(v.asBytes())
-      : new Uint8Array(0);
-  };
-
-  const version = numberOf('V', 0);
-  const revision = numberOf('R', 0);
-  const keyLength = Math.floor(numberOf('Length', 40) / 8);
-
-  // V4/V5 use crypt filters (CF/StmF/StrF); V1/V2 use RC4 directly.
-  let streamMethod: CryptMethod = 'RC4';
-  let stringMethod: CryptMethod = 'RC4';
-  if (version >= 4) {
-    const cf = enc.lookup(PDFName.of('CF'));
-    const resolveCfm = (filterName: string | null): CryptMethod => {
-      if (!filterName || filterName === 'Identity') return 'Identity';
-      if (cf instanceof PDFDict) {
-        const entry = cf.lookup(PDFName.of(filterName));
-        if (entry instanceof PDFDict) return cfmToMethod(lookupName(entry, 'CFM'));
-      }
-      return 'RC4';
-    };
-    streamMethod = resolveCfm(lookupName(enc, 'StmF'));
-    stringMethod = resolveCfm(lookupName(enc, 'StrF'));
-  }
-  // R5/R6 are always AES-256 regardless of the declared filters.
-  if (revision >= 5) {
-    streamMethod = 'AESV3';
-    stringMethod = 'AESV3';
-  }
-
-  const idArray = doc.context.trailerInfo.ID;
-  let idBytes = new Uint8Array(0);
-  if (idArray instanceof PDFArray && idArray.size() > 0) {
-    const first = idArray.lookup(0);
-    if (first instanceof PDFString || first instanceof PDFHexString)
-      idBytes = new Uint8Array(first.asBytes());
-  }
-
-  const encryptMetadataVal = enc.get(PDFName.of('EncryptMetadata'));
-  const encryptMetadata =
-    encryptMetadataVal instanceof PDFBool ? encryptMetadataVal.asBoolean() : true;
-
-  const params: EncryptParams = {
-    revision,
-    version,
-    keyLength: keyLength > 0 ? keyLength : 5,
-    o: bytesOf('O'),
-    u: bytesOf('U'),
-    oe: revision >= 5 ? bytesOf('OE') : null,
-    ue: revision >= 5 ? bytesOf('UE') : null,
-    permissions: numberOf('P', 0),
-    idBytes,
-    encryptMetadata,
-    streamMethod,
-    stringMethod,
-  };
-
-  const decryptor = PdfDecryptor.create(params, new TextEncoder().encode(password));
-  if (!decryptor) {
-    logger.warn(CONTEXT, 'Failed to derive decryption key (wrong password or unsupported handler)');
-  }
-  return decryptor;
-}
-
-/** Decode raw PDF string bytes: UTF-16BE (with BOM) or PDFDocEncoding-ish */
-function decodePdfStringBytes(bytes: Uint8Array): string {
-  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
-    const body = Buffer.from(bytes.subarray(2));
-    if (body.length % 2 === 0) {
-      const swapped = Buffer.from(body);
-      swapped.swap16(); // UTF-16BE → LE
-      return swapped.toString('utf16le');
-    }
-  }
-  return Buffer.from(bytes).toString('latin1');
-}
-
-function lookupName(dict: PDFDict, key: string): string | null {
-  const value = dict.lookup(PDFName.of(key));
-  return value instanceof PDFName ? value.decodeText() : null;
-}
-
-function lookupString(dict: PDFDict, key: string): string | null {
-  const value = dict.lookup(PDFName.of(key));
-  if (value instanceof PDFString || value instanceof PDFHexString) {
-    return value.decodeText();
-  }
-  return null;
-}
-
-function lookupBytes(dict: PDFDict, key: string): Uint8Array | null {
-  const value = dict.lookup(PDFName.of(key));
-  if (value instanceof PDFString || value instanceof PDFHexString) {
-    return value.asBytes();
-  }
-  return null;
-}
-
-function lookupNumberArray(dict: PDFDict, key: string): number[] | null {
-  const value = dict.lookup(PDFName.of(key));
-  if (!(value instanceof PDFArray)) return null;
+/** 数値の配列（1 つでも数値でなければ null —— 部分的な ByteRange は使えない）。 */
+async function numberArray(
+  doc: PdfDocument,
+  dict: CosDict | null,
+  key: string,
+): Promise<number[] | null> {
+  const array = asArray(await resolved(doc, get(dict, key)));
+  if (!array) return null;
   const numbers: number[] = [];
-  for (let i = 0; i < value.size(); i++) {
-    const item = value.lookup(i);
-    if (!(item instanceof PDFNumber)) return null;
-    numbers.push(item.asNumber());
+  for (const item of array.items) {
+    const n = numberOf(item);
+    if (n === null) return null;
+    numbers.push(n);
   }
   return numbers;
 }
@@ -219,17 +96,17 @@ function derTotalLength(bytes: Uint8Array): number | null {
 }
 
 /** Extract DocMDP permission from a signature dictionary's /Reference array */
-function extractDocMdpPermission(sigDict: PDFDict): number | null {
-  const reference = sigDict.lookup(PDFName.of('Reference'));
-  if (!(reference instanceof PDFArray)) return null;
-  for (let i = 0; i < reference.size(); i++) {
-    const ref = reference.lookup(i);
-    if (!(ref instanceof PDFDict)) continue;
-    if (lookupName(ref, 'TransformMethod') !== 'DocMDP') continue;
-    const params = ref.lookup(PDFName.of('TransformParams'));
-    if (params instanceof PDFDict) {
-      const p = params.lookup(PDFName.of('P'));
-      if (p instanceof PDFNumber) return p.asNumber();
+async function extractDocMdpPermission(doc: PdfDocument, sigDict: CosDict): Promise<number | null> {
+  const reference = asArray(await resolved(doc, get(sigDict, 'Reference')));
+  if (!reference) return null;
+  for (const item of reference.items) {
+    const ref = asDict(await resolved(doc, item));
+    if (!ref) continue;
+    if (nameOf(await resolved(doc, get(ref, 'TransformMethod'))) !== 'DocMDP') continue;
+    const params = asDict(await resolved(doc, get(ref, 'TransformParams')));
+    if (params) {
+      const p = integerOf(await resolved(doc, get(params, 'P')));
+      if (p !== null) return p;
     }
     return 2; // DocMDP default permission (ISO 32000-1 Table 254)
   }
@@ -251,88 +128,54 @@ function countPattern(haystack: Uint8Array, pattern: string): number {
 }
 
 /** Extract XMP metadata stream text from the document catalog */
-function extractXmp(doc: PDFDocument, decryptor: PdfDecryptor | null): string | null {
-  const metadataRef = doc.catalog.get(PDFName.of('Metadata'));
-  if (!metadataRef) return null;
-  const stream = doc.context.lookup(metadataRef);
-  if (!(stream instanceof PDFRawStream)) return null;
-
-  // Encrypted PDFs: decrypt the stream bytes first (metadata object number
-  // comes from the indirect reference), then apply stream filters.
-  if (decryptor && metadataRef instanceof PDFRef) {
-    try {
-      let raw = decryptor.decryptStream(
-        stream.contents,
-        metadataRef.objectNumber,
-        metadataRef.generationNumber,
-      );
-      const filter = lookupName(stream.dict, 'Filter');
-      if (filter === 'FlateDecode') raw = new Uint8Array(inflateSync(raw));
-      return new TextDecoder('utf-8', { fatal: false }).decode(raw);
-    } catch {
-      // fall through to the non-encrypted path
-    }
-  }
-
-  try {
-    const decoded = decodePDFRawStream(stream).decode();
-    return new TextDecoder('utf-8', { fatal: false }).decode(decoded);
-  } catch {
-    try {
-      return new TextDecoder('utf-8', { fatal: false }).decode(stream.contents);
-    } catch {
-      return null;
-    }
-  }
+async function extractXmp(doc: PdfDocument, catalog: CosDict | null): Promise<string | null> {
+  const stream = asStream(await resolved(doc, get(catalog, 'Metadata')));
+  if (!stream) return null;
+  const { bytes, unreadable } = await decodedBytes(doc, stream);
+  if (bytes) return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  // 復号できないストリームは、生バイトを読んでも意味を成さない。
+  // 「XMP が無い」と「XMP を読めなかった」は別だが、ParsedPdf にはその区別が無いので
+  // ここでは null にし、射程は scope が持つ。
+  if (unreadable) logger.debug(CONTEXT, 'metadata stream could not be decoded');
+  return null;
 }
 
 /** Decode an array of streams referenced from a DSS entry (Certs/OCSPs/CRLs) */
-function decodeStreamArray(dict: PDFDict, key: string): Uint8Array[] {
-  const array = dict.lookup(PDFName.of(key));
-  if (!(array instanceof PDFArray)) return [];
+async function decodeStreamArray(
+  doc: PdfDocument,
+  dict: CosDict,
+  key: string,
+): Promise<Uint8Array[]> {
+  const array = asArray(await resolved(doc, get(dict, key)));
+  if (!array) return [];
   const results: Uint8Array[] = [];
-  for (let i = 0; i < array.size(); i++) {
-    const stream = array.lookup(i);
-    if (!(stream instanceof PDFRawStream)) continue;
-    try {
-      results.push(decodePDFRawStream(stream).decode());
-    } catch {
-      results.push(stream.contents);
-    }
+  for (const item of array.items) {
+    const stream = asStream(await resolved(doc, item));
+    if (!stream) continue;
+    const { bytes } = await decodedBytes(doc, stream);
+    results.push(bytes ?? stream.raw);
   }
   return results;
 }
 
-/** Decrypt (when needed) and decode a string entry owned by an object */
-function readString(
-  dict: PDFDict,
-  key: string,
-  decryptor: PdfDecryptor | null,
-  objNumber: number,
-  generation: number,
-): string | null {
-  if (!decryptor) return lookupString(dict, key);
-  const raw = lookupBytes(dict, key);
-  if (!raw) return null;
-  return decodePdfStringBytes(decryptor.decryptString(raw, objNumber, generation));
-}
-
 /**
- * Build a map from signature /V dictionaries to their field names,
- * by scanning all AcroForm signature fields. Decrypts /T when needed.
+ * 署名フィールドの名前を、値が指すオブジェクト番号で引けるようにする。
+ *
+ * pdf-lib 版は辞書のオブジェクト同一性で対応づけていたが、normativepdf の
+ * `getObject` は呼ぶたびに値を作るので同一性では引けない。参照の番号で引く。
+ * `/V` が直接辞書の場合は引けない —— その形は AcroForm の署名では実質使われない。
  */
-function collectFieldNames(doc: PDFDocument, decryptor: PdfDecryptor | null): Map<PDFDict, string> {
-  const names = new Map<PDFDict, string>();
-  for (const [ref, object] of doc.context.enumerateIndirectObjects()) {
-    if (!(object instanceof PDFDict)) continue;
-    if (lookupName(object, 'FT') !== 'Sig') continue;
-    const fieldName = readString(object, 'T', decryptor, ref.objectNumber, ref.generationNumber);
-    const v = object.get(PDFName.of('V'));
-    if (!fieldName || !v) continue;
-    const target = v instanceof PDFRef ? doc.context.lookup(v) : v;
-    if (target instanceof PDFDict) {
-      names.set(target, fieldName);
-    }
+async function collectFieldNames(doc: PdfDocument): Promise<Map<number, string>> {
+  const names = new Map<number, string>();
+  const { objects } = await enumerateObjects(doc);
+  for (const { object } of objects) {
+    const dict = asDict(object);
+    if (!dict) continue;
+    if (nameOf(await resolved(doc, get(dict, 'FT'))) !== 'Sig') continue;
+    const fieldName = textOf(await resolved(doc, get(dict, 'T')));
+    const value = get(dict, 'V');
+    if (!fieldName || value === undefined) continue;
+    if (value.kind === 'ref') names.set(value.objectNumber, fieldName);
   }
   return names;
 }
@@ -343,16 +186,14 @@ export interface ParseOptions {
 }
 
 /**
- * Load a PDFDocument with the options shared across the verify tools:
- * metadata untouched, encryption tolerated, damaged objects skipped.
- * Centralised so parsing and native conformance validation stay consistent.
+ * Load the document the verify tools share. Recovery for files the library
+ * refuses lives in `document.ts`; everything here reads the result.
  */
-export async function loadPdfDocument(bytes: Uint8Array): Promise<PDFDocument> {
-  return PDFDocument.load(bytes, {
-    updateMetadata: false,
-    ignoreEncryption: true,
-    throwOnInvalidObject: false,
-  });
+export async function loadPdfDocument(
+  bytes: Uint8Array,
+  options: ParseOptions = {},
+): Promise<PdfDocument> {
+  return (await openDocument(bytes, { password: options.password })).doc;
 }
 
 /**
@@ -370,9 +211,10 @@ export async function parsePdfBytes(
   bytes: Uint8Array,
   options: ParseOptions = {},
 ): Promise<ParsedPdf> {
-  let doc: PDFDocument;
+  let doc: PdfDocument;
+  let scope: DocumentScope;
   try {
-    doc = await loadPdfDocument(bytes);
+    ({ doc, scope } = await openDocument(bytes, { password: options.password }));
   } catch (error) {
     throw new PdfVerifyError(
       `Failed to parse PDF: ${error instanceof Error ? error.message : String(error)}`,
@@ -381,50 +223,39 @@ export async function parsePdfBytes(
     );
   }
 
-  // In encrypted PDFs all string/stream objects are encrypted. v0.5 attempts
-  // decryption (permission-encrypted PDFs use an empty user password; a
-  // password can be supplied for reader-encrypted PDFs). Signature /Contents
-  // is exempt from encryption (ISO 32000-1 §7.6.2), so verification is
-  // unaffected either way.
-  const isEncrypted = doc.isEncrypted;
-  const decryptor = isEncrypted ? buildDecryptor(doc, options.password ?? '') : null;
-  const decrypted = decryptor !== null;
+  // 暗号化文書は `openDocument` の時点で復号されている（§7.6）。復号できなければ
+  // そこで条文を名指しして落ちるので、「読めたが暗号文のまま」という状態は無い
+  // —— pdf-lib の ignoreEncryption はそれを作っていた。
+  const isEncrypted = scope.encrypted;
 
-  const fieldNames = collectFieldNames(doc, decryptor);
+  const catalog = asDict(await doc.getCatalog().catch(() => null));
+  const fieldNames = await collectFieldNames(doc);
   const signatures: SignatureField[] = [];
-  const seen = new Set<PDFDict>();
 
-  for (const [ref, object] of doc.context.enumerateIndirectObjects()) {
-    if (!(object instanceof PDFDict) || seen.has(object)) continue;
-    const type = lookupName(object, 'Type');
+  const { objects } = await enumerateObjects(doc);
+  for (const { objectNumber, object } of objects) {
+    const dict = asDict(object);
+    if (!dict) continue;
+    const type = nameOf(await resolved(doc, get(dict, 'Type')));
     const isSig = type === 'Sig';
     const isDts = type === 'DocTimeStamp';
-    const hasSignatureShape =
-      object.has(PDFName.of('ByteRange')) && object.has(PDFName.of('Contents'));
-    if (!isSig && !isDts && !hasSignatureShape) continue;
-    // Signature field widgets also carry no ByteRange; require the shape.
-    if (!hasSignatureShape) continue;
-    seen.add(object);
+    // Signature field widgets carry no ByteRange; require the shape.
+    if (!has(dict, 'ByteRange') || !has(dict, 'Contents')) continue;
+    if (!isSig && !isDts && !(has(dict, 'ByteRange') && has(dict, 'Contents'))) continue;
 
-    const objNum = ref.objectNumber;
-    const gen = ref.generationNumber;
-    // When encrypted but undecryptable, suppress mojibake by returning null.
-    const str = (key: string): string | null =>
-      isEncrypted && !decryptor ? null : readString(object, key, decryptor, objNum, gen);
-
-    const contents = lookupBytes(object, 'Contents');
+    const contents = bytesOf(get(dict, 'Contents'));
     signatures.push({
-      fieldName: isEncrypted && !decryptor ? null : (fieldNames.get(object) ?? null),
-      filter: lookupName(object, 'Filter'),
-      subFilter: lookupName(object, 'SubFilter'),
-      byteRange: lookupNumberArray(object, 'ByteRange'),
+      fieldName: fieldNames.get(objectNumber) ?? null,
+      filter: nameOf(await resolved(doc, get(dict, 'Filter'))),
+      subFilter: nameOf(await resolved(doc, get(dict, 'SubFilter'))),
+      byteRange: await numberArray(doc, dict, 'ByteRange'),
       contents: contents ? trimSignatureContents(contents) : null,
-      signingTimeDictionary: str('M'),
-      name: str('Name'),
-      reason: str('Reason'),
-      location: str('Location'),
+      signingTimeDictionary: textOf(await resolved(doc, get(dict, 'M'))),
+      name: textOf(await resolved(doc, get(dict, 'Name'))),
+      reason: textOf(await resolved(doc, get(dict, 'Reason'))),
+      location: textOf(await resolved(doc, get(dict, 'Location'))),
       isDocumentTimestamp: isDts,
-      docMdpPermission: extractDocMdpPermission(object),
+      docMdpPermission: await extractDocMdpPermission(doc, dict),
     });
   }
 
@@ -435,42 +266,33 @@ export async function parsePdfBytes(
     return endA - endB;
   });
 
-  const dss = doc.catalog.get(PDFName.of('DSS'));
-  let hasVri = false;
-  let dssStreams: ParsedPdf['dss'] = null;
-  if (dss) {
-    const dssDict = doc.context.lookup(dss);
-    if (dssDict instanceof PDFDict) {
-      hasVri = dssDict.has(PDFName.of('VRI'));
-      dssStreams = {
-        certs: decodeStreamArray(dssDict, 'Certs'),
-        ocsps: decodeStreamArray(dssDict, 'OCSPs'),
-        crls: decodeStreamArray(dssDict, 'CRLs'),
-      };
-    }
-  }
-
-  const headerMatch = /%PDF-(\d+\.\d+)/.exec(
-    new TextDecoder('latin1').decode(bytes.subarray(0, 64)),
-  );
-
+  const dssEntry: CosObject | undefined = get(catalog, 'DSS');
+  const dssDict = asDict(await resolved(doc, dssEntry));
   const parsed: ParsedPdf = {
     bytes,
     fileSize: bytes.length,
     isEncrypted,
-    decrypted,
+    decrypted: scope.authenticated && isEncrypted,
     signatures,
     revisionCount: countPattern(bytes, 'startxref'),
-    hasDss: Boolean(dss),
-    hasVri,
-    dss: dssStreams,
-    xmpMetadata: extractXmp(doc, decryptor),
-    pdfVersion: headerMatch ? headerMatch[1] : null,
+    hasDss: dssEntry !== undefined,
+    hasVri: dssDict ? has(dssDict, 'VRI') : false,
+    dss: dssDict
+      ? {
+          certs: await decodeStreamArray(doc, dssDict, 'Certs'),
+          ocsps: await decodeStreamArray(doc, dssDict, 'OCSPs'),
+          crls: await decodeStreamArray(doc, dssDict, 'CRLs'),
+        }
+      : null,
+    xmpMetadata: await extractXmp(doc, catalog),
+    pdfVersion: doc.headerVersion,
+    scope,
   };
 
   logger.debug(
     CONTEXT,
-    `parsed: ${parsed.signatures.length} signature(s), ${parsed.revisionCount} revision(s)`,
+    `parsed: ${parsed.signatures.length} signature(s), ${parsed.revisionCount} revision(s)` +
+      (scope.recovered ? ' (recovered)' : ''),
   );
   return parsed;
 }
