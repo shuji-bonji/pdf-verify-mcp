@@ -567,27 +567,101 @@ device_bash には**網がある**（実測）ので、こう回した:
 誤った `fail` は 1 件も生まれていない。`fail → pass` の 1 件は pdf-lib の誤報の是正。
 **「読めた → 読めない」17 件は 17/17 とも条文を名指ししている**（撤去前は 0/19 だった）。
 
-### 11.4 🔴 この repo の fixtures 2 本は、条文に反する増分更新である
+### 11.4 `appendIncrementalUpdate` の `startxref 0` —— 2 案の帰結（実測）
 
 `{fixtures}/appended.pdf` と `{fixtures}/certified-p1-modified.pdf` が読めなくなった。
-原因は `tests/helpers/signed-pdf.ts` の `appendIncrementalUpdate`:
+どちらも `tests/helpers/signed-pdf.ts` の `appendIncrementalUpdate` の出力で、
+`startxref 0`（0 バイト目はファイルヘッダで、相互参照節ではない）を書く。
+
+⚠️ **これは事故ではない。** ヘルパ自身のコメントが
+「`appendIncrementalUpdate` above appends a stub whose `startxref` is 0, which exercises
+the "unparseable newest section" path」と書いてあり、**その経路を測るための検体**である。
+
+#### いま何がこれに乗っているか（実測）
+
+| 場所 | 何を固定しているか |
+|---|---|
+| `verify-integrity.test.ts:43` | 署名後に追記された（`revisionCount` 2 / `lastSignatureCoversFile` false 等） |
+| `:61` `:75` | DocMDP P=1 の違反判定、P=1 + DSS の §12.8.2.2 例外 |
+| `:163` | **チェーンが歩けないとき `violationAssessment` が `indeterminate`** |
+| `:246` | **「変更なし」ではなく「判定していない」と言う注記** |
+| `evaluate-policy.test.ts:337` | 名前がコメントに出るだけ。事実は合成オブジェクトなので**影響なし** |
+
+現在の出力（pdf-lib 経由）:
+`revisionChain: partial / missing: ["newest"]`、`revisionCountAgreement: accounted (chain-incomplete)`、
+`revisions: 1`（`startxref` は 2 つある）、注記に「does not point at a parseable cross-reference section」。
+
+#### 案 1 —— 条文どおりの空リビジョンに替える
+
+`xref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size N /Root R 0 R /Prev <前の offset> >>` にする。
+**その検体で現在のツールが何を返すかを実測した**:
+
+| 主張 | いまの stub | 条文どおりの空リビジョン |
+|---|---|---|
+| `revisionCount` / `incrementalUpdateCount` | 2 / 1 | **2 / 1**（同じ） |
+| `lastSignatureCoversFile` / 後続変更あり | false / 1 件 | **false / 1 件**（同じ） |
+| `revisionChain` | `partial` missing `newest` | **`complete`** |
+| `revisionCountAgreement` | `accounted` | **`agree`** |
+| `revisions`（object 差分の段数） | 1 | **2** |
+| P=1 `violatedByLaterChanges` | true | **true**（同じ） |
+| P=1 + DSS `laterChangesAppearLtvOnly` / §12.8.2.2 の注記 | true / あり | **true / あり**（同じ） |
+| P=2 `violationAssessment` | `indeterminate` | **`indeterminate`（同じ）** |
+| 「歩けない」注記 | あり | **なし** |
+| normativepdf で読めるか | **読めない** | **読める（2 節）** |
+
+帰結:
+
+- `:43` `:61` `:75` の 3 テストは**そのまま通る**（主張が 1 つも動かない）
+- `:246` は**落ちる**。注記が出なくなる —— 対象を失ったことが見える形で落ちる
+- 🔴 **`:163` は通ってしまうが、測っているものが変わる。** P=2 が `indeterminate` なのは
+  「チェーンが歩けない」からではなく「空のリビジョンには帰属できるものが無い」から。
+  テスト名とコメントが嘘になり、**「歩けない経路」の検査が黙って消える**
+- 🔴 **`tests/fixtures/generated/` は L0 のゴールデンの 5 集合のうちの 1 つ**である。
+  ヘルパを替えて `npm run test:fixtures` を回すと 9 件のバイト列が変わり、
+  計器は `[検体のバイト列が違う]` と言う（= その 9 件の A/B の土台が消える）。
+  ⚠️ そもそも `createTestIdentity` は毎回鍵を作り直すので、**再生成しただけで変わる**
+
+→ **やるなら足す形にする。** `appendIncrementalUpdate`（壊れた節）は名前を実態に合わせて残し、
+条文どおりの版を**別の関数・別のフィクスチャ名**で足す。既存の 9 件は動かさない。
+
+#### 案 2 —— 壊れた検体として残す（= `pdf-parser.ts` に回復方針を持たせる）
+
+そのまま残すなら、**L2 で `pdf-parser.ts` が回復方針を持たなければならない。**
+normativepdf の `parsePdf` は `startxref 0` を条文どおり拒み、入口を指定する口も無い
+（`ParsePdfOptions = DecryptionOptions`。`readXrefChain` も「短いチェーンではなくエラー」と明記）。
+
+**規模を測った**（2,947 検体・`parsePdf` と `PDFDocument.load` を総当たり）:
 
 ```
-% incremental update
-xref
-0 0
-trailer
-<< /Size 7 /Root 1 0 R >>
-startxref
-0            ← 🔴 0 バイト目はファイルヘッダで、相互参照節ではない
-%%EOF
+pdf-lib は読めるが normativepdf は受け取らない : 19 件（うち 2 件はパスワード付き暗号化）
+normativepdf は読めるが pdf-lib は読めない    :  0 件
+どちらも読めない                              :  1 件
 ```
 
-pdf-lib は飲み込んでいた。normativepdf は §7.5.4 を名指しして受け取らない。
-**いまは `validate_clauses` だけが落ちるが、L2 で `pdf-parser.ts` を載せ替えると
-`verify_integrity` など 6 ツール全部がこの 2 本で落ちる。**
-[[prev-zero-swallowed-is-a-complete-chain]] と同じ形。L2+L3 の着手時に決めること:
-ヘルパを条文どおりの増分更新に直すか、「壊れた増分更新」の検体として明示的に残すか。
+構造を理由に落ちる **17 件**の内訳:
+`xref` で始まらない 4 / ヘッダの後の EOL が 1 つでない 4（§7.5.2）/
+`xref` が行独立でない 3 / catalog `/Version` の形 3（§7.7.2）/
+subsection の個数が数値でない 2 / エントリが 20 バイトでない 1。
+集合別: veraPDF 14・specimens 3・fixtures 2。
+
+回復方針を入れないなら、**この 17 件が 7 ツール全部で「読めない」になる**
+（`validate_clauses` は L1 で既に変わったので、L2 での増分は 17 × 6 = 102 呼び出し）。
+`verify-integrity.test.ts` の 5 か所は `parsePdfBytes` が例外を投げるので落ちる。
+
+**回復方針は移せる**（0.9.0 の公開面で足りる。新しいリリースは要らない）:
+
+- `readXrefSectionAt` の doc コメントが「自分で歩く消費者のために公開している。
+  第 1 消費者は pdf-verify-mcp の revision diff」と名指ししている
+- `PdfDocument` の**コンストラクタが公開**されている
+  （`bytes, origin, headerVersion, version, trailer, xref, chainStop?, decryptor?`）
+- `chainStop` は `complete` / `prev-zero` / `unreadable` の 3 値で、
+  いま verify が `revisionChain: partial / missing: ["newest"]` と言っている情報と対応する
+- 復号器も `buildDocumentDecryptor` / `DocumentDecryptor` として公開されている（L4 に効く）
+
+→ **`revision-diff.ts` の `walkChain` を `pdf-parser.ts` へ引き上げ、
+そこで `PdfDocument` を組み立てる。** 未決 2（「同じ種類の回復コードが 2 か所に出る」）は
+**1 か所に寄せる**ことで決着する。回復したかどうかは `chainStop` として
+7 ツール全部の射程になる（§11.6 の「対象ごとの射程」とは別の、文書レベルの射程）。
 
 ### 11.5 予測 3 は外れた —— `observation` はツール出力に出ていなかった
 
@@ -647,7 +721,8 @@ T-3 は **14 通り**に増え、全部差を報告する。
 
 - `pdf-parser.ts` の `loadPdfDocument` の戻り型を `PdfDocument` に替える。
   §9.1 のとおり **L2 と L3 は 1 段**。`src/services/cos.ts` 相当に COS の読み口を集める
-- §11.4 の fixtures 2 本の扱いを先に決める（6 ツール全部に効く）
+- §11.4 の 2 案を決める（6 ツール全部・17 検体に効く）。
+  **案 2 を採るなら `walkChain` の引き上げが L2 の一部になる**
 - §11.6 の「対象ごとの射程」をどう申告するかを決める
 - 採る: `node scripts/golden.mjs take .golden/after-L3.json --label after-L3` →
   `diff .golden/after-L1.json .golden/after-L3.json`（L1 との差を見る。
