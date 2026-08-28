@@ -18,6 +18,22 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **構造の読み取りを normativepdf に移した**（`src` の pdf-lib import は 5 → 1）。
+  ツールの引数も規則も変えていないが、**壊れた文書の読み方が変わる**:
+  - 相互参照節や `startxref` が ISO 32000 に反する文書は、まず条文どおりに拒まれ、
+    そのうえで verify の回復方針（古い入口を試す / `startxref` の値も頼りに読み進める /
+    節が 1 つも読めなければオブジェクトを数え上げて組み直す）が当たる。
+    どの段が当たったかは内部で申告する（出力に載せるかは次の版で決める）
+  - **リビジョンチェーンが途中で切れた文書で、見えていなかった署名が見えるようになった。**
+    `/Prev 0` の実検体で署名 6 本のうち 5 本と DSS の失効情報が読めておらず、
+    `revocation: revoked` が `unknown` に、`evaluate_policy` の判定が
+    `reject` に届かない状態だった
+  - `origin > 0`（ヘッダが 0 バイト目に無い）文書の `pdfVersion` が読めるようになった
+  - パスワードの分からない暗号化文書で、XMP に暗号文が入ることが無くなった
+  - `fonts-embedded` の誤報が消えた。pdf-lib の `PDFDict.has` が
+    オブジェクトストリーム由来の辞書で鍵を見つけられず、埋め込み済みのフォントを
+    「埋め込まれていない」と報告していた（veraPDF の *pass* 検体にも出ていた）
+  - trailer に `/ID` が無い文書で `file-id` が違反を出すようになった
 - 依存を上げた: `normativepdf` 0.2.0 → **0.9.0**、
   `@shuji-bonji/pdf-constraints` 0.3.0 → **0.4.0**。
   ツールの引数も判定の規則も変わっていないが、**読める文書と読めない文書が変わる**:

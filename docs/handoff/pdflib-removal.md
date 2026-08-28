@@ -142,7 +142,7 @@ ADR-0006（writer Phase 3）と同じ型。pdf-lib が在るうちに、7 ツー
   0.2.0 → 0.6.x の間の変更は記録から追えないので、**`dist/index.d.ts` の差分で確認する**
 - 受入: `npm test` 全緑・`corpus` 相当の回帰なし
 
-### L2 + L3 ⏳ **ここから**
+### L2 + L3 ✅ **完了（2026-08-28・§12）**
 
 > 🔴 **L2 と L3 は 1 つの段として計画すること**（B1 で実測。§9.1）。
 > 入口の戻り型を替えた瞬間に 2 つの validator が動くので、分けても分けたことにならない。
@@ -158,7 +158,7 @@ ADR-0006（writer Phase 3）と同じ型。pdf-lib が在るうちに、7 ツー
 - `decodeText()` の置き換えが要る（未決 1）
 - `getPages()` 2 箇所 → `readPageTree`
 
-### L4. `decrypt-document.ts` の撤去可否を実測 → 撤去 or 縮小
+### L4. `decrypt-document.ts` の撤去可否を実測 → 撤去 or 縮小 ⏳ **ここから**
 
 ### L5. `conformance-validation.ts`（3 lookup）+ `package.json` の `pdf-lib` を `devDependencies` へ
 
@@ -727,3 +727,107 @@ T-3 は **14 通り**に増え、全部差を報告する。
 - 採る: `node scripts/golden.mjs take .golden/after-L3.json --label after-L3` →
   `diff .golden/after-L1.json .golden/after-L3.json`（L1 との差を見る。
   `before-full` との差には J 2,904 件が乗るため）
+
+---
+
+## 12. L2 + L3 の実測（2026-08-28）—— 入口と 2 つの validator を載せ替えた
+
+`src` の `pdf-lib` import は **5 → 1**。残るのは `decrypt-document.ts` だけで、これが L4 である。
+`npm test` 178 件・typecheck・biome・`check:public-types` とも緑。T-3 は 14 通りとも差を報告する。
+
+### 12.1 置いたもの
+
+| ファイル | 役割 |
+|---|---|
+| `src/services/xref-walk.ts` | **相互参照チェーンの歩きと回復方針**（`revision-diff.ts` から引き上げ・§11.4 案 2） |
+| `src/services/document.ts` | **文書を開く入口 1 つ**。`openDocument` と `DocumentScope`（どこまで読めたか） |
+| `src/services/cos.ts` | **COS の読み口**。`instanceof` と `lookup` の置き換えを集める。判定は書かない |
+
+`pdf-parser.ts` は 504 → 330 行になり、`buildDecryptor` は唯一の消費者である
+`decrypt-document.ts` へ移した。`pdfa-validator` / `pdfua-validator` は async 化し、
+`conformance-validation.ts` に `await` を 2 つ足した（§3 の予測どおり、ツール層より上には出ない）。
+
+### 12.2 回復方針は 3 段。**どれも申告する**
+
+`openDocument` はまず `parsePdf` に渡す。2,947 検体のうち **2,927 件はそれで読める**。
+方針が当たるのは残りだけである。
+
+1. **最後の `startxref` が読めなければ、古い入口を順に試す**（`newestSectionUnreadable`）
+2. 🔴 **チェーンが途中で止まった文書は、そのまま使わない。**
+   `startxref` の値も頼りに読み進め（`continuedPastStop`）、
+   さらに**表に載っていないオブジェクトを数え上げて穴を埋める**（`filledFromScan`）。
+   表にある定義は上書きしないので、意図的に free にしたオブジェクトは復活しない
+3. **節が 1 つも読めなければ、`N G obj` を数え上げて組み直す**（`reconstructed`）。
+   これは**推測**なので、使った文書ではそう申告する
+
+#### 🔴 2 を入れた理由（実測）
+
+`{_wout}/dss-pades-5sigs-doctimestamp-w2.pdf`（`/Prev 0` で切れた 8 リビジョン・6 署名）を
+ライブラリの答えのまま使うと、**署名 6 本のうち 5 本が消えた**。消えた中には
+
+```
+verdict: invalid / revocation: revoked（DSS の OCSP 応答による）
+```
+
+が含まれており、`evaluate_policy` の判定が **`reject` → `use_with_caution`** に緩んだ。
+`/DSS` が指すオブジェクト 127 は、どの相互参照節にも載っていない（pdf-lib は
+ファイルを走査して見つけていた）。**「ファイルが定義しているオブジェクト」と
+「チェーンが辿れるリビジョン」は別の問いである** —— 文書の組み立ては前者、
+`revision-diff` は後者を、それぞれの厳しさで読む。
+
+#### 組み直しの限界
+
+`{specimens}/ua-broken-startxref.pdf` は組み直しても開けない。
+`N G obj` の数え上げは**オブジェクトストリームの中には届かない**ので、
+pdf-lib 出力（既定でオブジェクトストリームを使う）では目録が見つからない。
+pdf-lib は ObjStm を展開して読んでいた。
+
+### 12.3 A/B（`after-L1` 比・2,947 検体 × 7 ツール）—— 差 25 件、全部帰属
+
+| 行 | 件数 | 帰属 |
+|---|---|---|
+| **A 読めた → 読めない** | 6 | `ua-broken-startxref.pdf` 1 件 × 6 ツール（上記の限界。自分で壊した検体） |
+| **B 読めない → 読めた** | 6 | `6-1-2-t01-fail-b.pdf` 1 件 × 6 ツール。古い入口からの回復で読めるようになった |
+| **D 🔴 反証できなくなった** | 3 | **2 件は pdf-lib の誤報の是正**（次項）/ 1 件は XMP ストリームが §7.3.8 に反していて復号できず、宣言から flavour を決められなくなった（PDF/A-1b → 既定の 2b・規則 15 → 13） |
+| **C 判定が変わった** | 3 | trailer に `/ID` が無い *fail* 検体で `file-id` が**違反を出すようになった**（反証が増える向き） |
+| G その他 | 7 | `pdfVersion: null → "2.0"`（`origin > 0` の文書。旧実装はヘッダを 0 バイト目から 64 バイトしか見ていなかった）/ パスワード付き暗号化 2 件で `hasXmp: true → false`（**pdf-lib は暗号文を XMP として読んでいた** = [[pdf-lib-ignoreencryption-yields-ciphertext]]）/ isartor 1 件（D と同じ XMP） |
+
+**誤った `pass` は 1 件も生まれていない。**
+
+### 12.4 🔴 pdf-lib の `PDFDict.has` は、オブジェクトストリーム由来の辞書で鍵を見つけられない
+
+D の 2 件は PDF/A-4 のフォント検体で、`fonts-embedded` が
+`fail → pass`（正確には `compliant: false → null`）になった。**旧実装の誤報である。**
+
+```
+descriptor の生キー: /Ascent … /FontFile3 /FontName …
+desc.has(PDFName.of('FontFile3')) = false      ← 鍵はあるのに false
+```
+
+同じ誤報が veraPDF の ***pass* 検体**にも出ていた（`6-2-10-4-1-t01-pass-a.pdf`）ので、
+「埋め込まれていないフォント」ではなく「読めていない辞書」だったと言い切れる。
+`get` / `lookup` は通るのに `has` だけが外す。
+
+### 12.5 テストを 1 つ書き換えた
+
+`validate-pdfua.test.ts` の「`/Encrypt` `/P` bit 10」は、pdf-lib の文書に
+`trailerInfo.Encrypt` を差し込んで測っていた。入口が替わったので、
+**`/Encrypt` 辞書そのものを `options.encryptDict` で渡す**形に変えた。
+§7.6.2 が `/Encrypt` 辞書を暗号化の対象から除いているので、
+鍵が導けなくてもこの規則は答えられる —— その性質をテストが直接測る形になった。
+
+`openDocument` はパスワードが合わないときも**文書を返す**（復号器を付けない）。
+オブジェクトは 1 つも渡らないが、`/Encrypt` 辞書は生バイトから読めるので、
+`validate_conformance` の「構造規則は checked: false」の経路（Issue #7）はそのまま動く。
+
+### 12.6 次（L4 → L5）
+
+- **L4**: `decrypt-document.ts`（196 行・pdf-lib の最後の島）の撤去可否。
+  `openDocument` が既に復号込みで開くので、2 パスの復号→再パースが要るかを実測する。
+  ⚠️ `validate_conformance` は veraPDF に**平文のファイルを渡す**ために復号後のバイト列を
+  書き出している（`tempFile`）。撤去するならその経路の代わりが要る
+  （normativepdf の `encryptPdf` / `writeFile` で書き戻せるか）
+- **L5**: `package.json` の `pdf-lib` を `devDependencies` へ。`npm ls pdf-lib` が
+  依存ツリーから消えることを確認する。テスト側 4 ファイルは pdf-lib のまま残す（GUARDS T-2）
+- `DocumentScope` をツール出力に載せるかは L5 で決める
+  （`validate_clauses` の `observation` は §11.5 で先に載せた）
