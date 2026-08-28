@@ -49,23 +49,23 @@
  * file in an editor needs.
  */
 
-import { dictGet, readXrefSectionAt, type XrefEntry, type XrefSection } from 'normativepdf';
-import type {
-  DocMdpChangeClass,
-  RevisionObjectChange,
-  RevisionSummary,
-  XrefKind,
-} from '../types.js';
+import type { XrefEntry } from 'normativepdf';
+import type { DocMdpChangeClass, RevisionObjectChange, RevisionSummary } from '../types.js';
 import { logger } from '../utils/logger.js';
+import {
+  indexOfBytes,
+  isDelimiter,
+  isWhitespace,
+  LATIN1,
+  readToken,
+  skipWhitespace,
+  walkXrefChain,
+} from './xref-walk.js';
 
 const CONTEXT = 'revision-diff';
 
 /** How far past an object's offset the type peek is willing to read. */
 const OBJECT_PEEK_BYTES = 4096;
-/** Guard against a malformed `/Prev` cycle. */
-const MAX_REVISIONS = 200;
-/** How far into the file the linearisation dictionary is looked for. */
-const LINEARIZED_HEADER_SCAN = 1024;
 /**
  * Upper bound on the object changes listed per revision. A full rewrite (a
  * "Save As" rather than an incremental update) can touch six figures of
@@ -76,22 +76,6 @@ const LINEARIZED_HEADER_SCAN = 1024;
 const MAX_CHANGES_PER_REVISION = 25;
 /** How many candidates per listed change may be typed before ranking. */
 const PEEK_BUDGET_FACTOR = 8;
-
-const LATIN1 = new TextDecoder('latin1');
-
-/**
- * One revision as this module needs it: a section normativepdf parsed, with
- * its offset already resolved to an absolute file position and its entry map
- * made mutable so the linearisation fix-up can fold two sections into one.
- */
-interface Revision {
-  /** Absolute byte offset of the cross-reference section (`origin + offset`) */
-  offset: number;
-  kind: XrefKind;
-  entries: Map<number, XrefEntry>;
-  /** Object number of the cross-reference stream itself, when it is one */
-  selfObjectNumber: number | null;
-}
 
 /**
  * §7.5.8.3 — an entry whose type is not 0/1/2 "shall be interpreted as a
@@ -108,256 +92,6 @@ function readsAsNull(entry: XrefEntry): boolean {
 /** Generation number, or 0 where the format defines it implicitly (§7.5.7). */
 function generationOf(entry: XrefEntry): number {
   return entry.type === 'in-use' || entry.type === 'free' ? entry.generation : 0;
-}
-
-/* ------------------------------------------------------------------ *
- * byte helpers
- * ------------------------------------------------------------------ */
-
-function isWhitespace(byte: number): boolean {
-  return (
-    byte === 0x20 ||
-    byte === 0x0a ||
-    byte === 0x0d ||
-    byte === 0x09 ||
-    byte === 0x0c ||
-    byte === 0x00
-  );
-}
-
-function isDelimiter(byte: number): boolean {
-  return (
-    byte === 0x28 || // (
-    byte === 0x29 || // )
-    byte === 0x3c || // <
-    byte === 0x3e || // >
-    byte === 0x5b || // [
-    byte === 0x5d || // ]
-    byte === 0x7b || // {
-    byte === 0x7d || // }
-    byte === 0x2f || // /
-    byte === 0x25 // %
-  );
-}
-
-/** Zero-copy Buffer view, so keyword scans use the native search. */
-function asBuffer(bytes: Uint8Array): Buffer {
-  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-}
-
-function indexOfBytes(hay: Uint8Array, needle: string, from: number): number {
-  return asBuffer(hay).indexOf(needle, Math.max(0, from), 'latin1');
-}
-
-function skipWhitespace(bytes: Uint8Array, index: number): number {
-  let i = index;
-  while (i < bytes.length) {
-    if (isWhitespace(bytes[i])) {
-      i += 1;
-      continue;
-    }
-    // A comment runs to the end of the line and counts as whitespace.
-    if (bytes[i] === 0x25) {
-      while (i < bytes.length && bytes[i] !== 0x0a && bytes[i] !== 0x0d) i += 1;
-      continue;
-    }
-    break;
-  }
-  return i;
-}
-
-/** Read the next whitespace/delimiter-terminated token. */
-function readToken(bytes: Uint8Array, index: number): { token: string; next: number } | null {
-  const start = skipWhitespace(bytes, index);
-  if (start >= bytes.length) return null;
-  let end = start;
-  if (isDelimiter(bytes[end])) {
-    // Names and dictionary markers are handled by their own readers.
-    return { token: String.fromCharCode(bytes[end]), next: end + 1 };
-  }
-  while (end < bytes.length && !isWhitespace(bytes[end]) && !isDelimiter(bytes[end])) end += 1;
-  return { token: LATIN1.decode(bytes.subarray(start, end)), next: end };
-}
-
-/* ------------------------------------------------------------------ *
- * cross-reference sections — read by normativepdf, recovered here
- * ------------------------------------------------------------------ */
-
-/**
- * §7.5.2 — "byte offsets shall be calculated from the PERCENT SIGN" of the
- * `%PDF-` header, which need not be at byte 0. A file with no header at all is
- * not dismissed here (that is the validator's verdict, not this module's): the
- * origin falls back to 0 so the chain can still be described.
- */
-function findOrigin(bytes: Uint8Array): number {
-  return Math.max(0, indexOfBytes(bytes, '%PDF-', 0));
-}
-
-/**
- * Read the single cross-reference section addressed at `offset`, or `null` when
- * normativepdf cannot read it. The library throws by design — an unreadable
- * section is an error there, because merging a partial chain would silently
- * lose objects. Here it is a fact to report, so the throw is caught and the
- * caller turns it into `truncated` / `newestSectionUnreadable`.
- */
-interface SectionRead {
-  revision: Revision;
-  prev: PrevLink;
-}
-
-async function readSection(
-  bytes: Uint8Array,
-  origin: number,
-  offset: number,
-): Promise<SectionRead | null> {
-  if (offset <= 0 || origin + offset >= bytes.length) return null;
-  let section: XrefSection;
-  try {
-    section = await readXrefSectionAt(bytes, offset, origin);
-  } catch (error) {
-    logger.debug(CONTEXT, `cross-reference section at ${offset} is unreadable: ${String(error)}`);
-    return null;
-  }
-  return {
-    revision: {
-      offset: origin + section.offset,
-      kind: section.kind,
-      entries: new Map(section.entries),
-      selfObjectNumber: section.selfObjectNumber ?? null,
-    },
-    prev: readPrev(section),
-  };
-}
-
-/**
- * The `/Prev` of a section's trailer (§7.5.5 Table 15; Table 17 for streams).
- *
- * Three outcomes, deliberately distinguished: `end` (no entry — the chain is
- * complete), an offset to follow, or `malformed`. normativepdf rejects a
- * non-integer `/Prev` outright; this module reports it as a chain that could
- * not be followed to the end, which is what the DocMDP assessment has to know.
- */
-type PrevLink = { kind: 'end' } | { kind: 'malformed' } | { kind: 'at'; offset: number };
-
-function readPrev(section: XrefSection): PrevLink {
-  const prev = dictGet(section.trailer, 'Prev');
-  if (prev === undefined) return { kind: 'end' };
-  if (prev.kind === 'integer' && prev.value > 0) return { kind: 'at', offset: prev.value };
-  return { kind: 'malformed' };
-}
-
-/** Every `startxref` value in the file, in the order they appear. */
-function collectStartxrefTargets(bytes: Uint8Array): number[] {
-  const targets: number[] = [];
-  let from = 0;
-  for (;;) {
-    const at = indexOfBytes(bytes, 'startxref', from);
-    if (at < 0) break;
-    const token = readToken(bytes, at + 'startxref'.length);
-    if (token) {
-      const value = Number.parseInt(token.token, 10);
-      if (!Number.isNaN(value)) targets.push(value);
-    }
-    from = at + 'startxref'.length;
-  }
-  return targets;
-}
-
-/**
- * Walk `startxref` → `/Prev` → … and return the revisions oldest first.
- *
- * Reading each section is normativepdf's job; everything below is the recovery
- * policy that library deliberately leaves to its consumer.
- */
-async function walkChain(
-  bytes: Uint8Array,
-  origin: number,
-): Promise<{
-  sections: Revision[];
-  truncated: boolean;
-  newestSectionUnreadable: boolean;
-  linearized: boolean;
-} | null> {
-  const targets = collectStartxrefTargets(bytes);
-  if (targets.length === 0) return null;
-
-  // Normally the last `startxref` is the entry point. When it does not point
-  // at a parseable section the file still has to be described rather than
-  // dismissed, so an older entry point is tried — and the fact is reported,
-  // because it means the trailing bytes are NOT represented in the diff.
-  // The probe's result is kept: re-reading the entry section would decode the
-  // same (possibly Flate + predictor) cross-reference stream twice.
-  let entry: number | null = null;
-  let entrySection: SectionRead | null = null;
-  let newestSectionUnreadable = false;
-  for (let i = targets.length - 1; i >= 0; i -= 1) {
-    const probe = targets[i] > 0 ? await readSection(bytes, origin, targets[i]) : null;
-    if (probe) {
-      entry = targets[i];
-      entrySection = probe;
-      newestSectionUnreadable = i !== targets.length - 1;
-      break;
-    }
-  }
-  if (entry === null) return null;
-  let next: number | null = entry;
-  let pending: SectionRead | null = entrySection;
-
-  const sections: Revision[] = [];
-  const visited = new Set<number>();
-  let truncated = false;
-  while (next !== null && next > 0) {
-    if (visited.has(next)) {
-      truncated = true;
-      break;
-    }
-    visited.add(next);
-    const read: SectionRead | null = pending ?? (await readSection(bytes, origin, next));
-    pending = null;
-    if (!read) {
-      truncated = true;
-      break;
-    }
-    sections.push(read.revision);
-    if (sections.length >= MAX_REVISIONS) {
-      truncated = true;
-      break;
-    }
-    if (read.prev.kind === 'end') {
-      next = null;
-    } else if (read.prev.kind === 'at') {
-      next = read.prev.offset;
-    } else {
-      // A `/Prev` that is present but not a direct positive integer means the
-      // chain does not end here — it just cannot be followed. Reporting that as
-      // a clean end would let `assessDocMdp` treat an unwalkable tail as "no
-      // older revisions", which is the mistake this whole module exists to
-      // avoid. [[revision-diff-lies-linearized-and-full-save]]
-      truncated = true;
-      next = null;
-    }
-  }
-  if (sections.length === 0) return null;
-  const ordered = sections.reverse();
-
-  // A linearised file (ISO 32000-2 Annex F) carries TWO cross-reference
-  // sections for a single save: the first-page section near the top of the
-  // file, whose /Prev points at the main section at the bottom. Walking the
-  // chain naively turns one save into two "revisions" and reports every object
-  // as added. The giveaway is that the newer section sits at a LOWER offset.
-  const linearized =
-    ordered.length >= 2 &&
-    ordered[ordered.length - 1].offset < ordered[ordered.length - 2].offset &&
-    /\/Linearized\b/.test(LATIN1.decode(bytes.subarray(origin, origin + LINEARIZED_HEADER_SCAN)));
-  if (linearized) {
-    const firstPage = ordered.pop();
-    const main = ordered[ordered.length - 1];
-    if (firstPage && main) {
-      for (const [key, entry] of firstPage.entries) main.entries.set(key, entry);
-    }
-  }
-
-  return { sections: ordered, truncated, newestSectionUnreadable, linearized };
 }
 
 /* ------------------------------------------------------------------ *
@@ -588,8 +322,7 @@ export interface RevisionDiffResult {
  */
 export async function diffRevisions(input: RevisionDiffInput): Promise<RevisionDiffResult | null> {
   const { bytes, signedRanges } = input;
-  const origin = findOrigin(bytes);
-  const walked = await walkChain(bytes, origin);
+  const walked = await walkXrefChain(bytes);
   if (!walked) {
     logger.debug(CONTEXT, 'cross-reference chain could not be walked');
     return null;
@@ -654,7 +387,8 @@ export async function diffRevisions(input: RevisionDiffInput): Promise<RevisionD
       .slice(0, MAX_CHANGES_PER_REVISION * PEEK_BUDGET_FACTOR);
     const typed = candidates.map(({ objectNumber, entry, change, selfXref }) => {
       // §7.5.2 — the entry's offset is measured from the header, not byte 0.
-      const peeked = entry.type === 'in-use' ? peekObject(bytes, origin + entry.offset) : null;
+      const peeked =
+        entry.type === 'in-use' ? peekObject(bytes, walked.origin + entry.offset) : null;
       const bookkeeping = selfXref || peeked?.type === 'XRef' || peeked?.type === 'ObjStm';
       const item: RevisionObjectChange = {
         objectNumber,
