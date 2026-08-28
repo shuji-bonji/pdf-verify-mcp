@@ -43,10 +43,30 @@ export interface ClauseResult {
   }[];
 }
 
+/**
+ * どこまで読めたか（pdf-constraints 0.4.0+ の `CheckReport.observation`）。
+ * **判定ではなく判定の射程。** 「制約に違反していない」と「その対象を観測できていない」は
+ * 別のことで、これが無いと後者が前者の顔をする（L1 の A/B で実際にそうなった:
+ * `/Prev 0` でチェーンが 2 段で止まった文書の subject が 10 -> 1 に減ったのに、
+ * results は「違反なし」のままだった）。
+ */
+export interface ClauseObservation {
+  /** リビジョンチェーンの歩きがどこで止まったか（§7.5.6）。`complete` 以外は文書全体を見ていない */
+  xrefChain: string;
+  /** 相互参照表に載っている（= 読めるはずの）オブジェクトの数 */
+  objects: number;
+  /** ページツリーに到達できたか。false のとき、注釈の subject が 0 でも「注釈が無い」ではない */
+  pagesReached: boolean;
+  /** 到達できたページ数 */
+  pages: number;
+}
+
 export interface ClauseValidationReport {
   /** 判定の由来。同じ facts でも版が違えば規則が違いうるので必ず出す */
   constraintsVersion: string;
   tables: { name: string; version: string }[];
+  /** 判定の射程。**数字より先に読ませる**（formatter は見出し直下に置く） */
+  observation: ClauseObservation;
   subjects: number;
   results: ClauseResult[];
   /** fail した表明の総数（制約数ではない） */
@@ -103,6 +123,19 @@ export async function validateClauses(
         'being defaulted into a pass.',
     );
   }
+  if (report.observation.xrefChain !== 'complete') {
+    notes.push(
+      `The revision chain could not be walked to the end (${report.observation.xrefChain}), so ` +
+        'the constraints were applied to PART of the document. Absence of a failure here does ' +
+        'not mean the constraint holds for the whole file.',
+    );
+  }
+  if (!report.observation.pagesReached) {
+    notes.push(
+      'The page tree could not be reached, so no page-scoped subject (annotations, page ' +
+        'resources) was examined at all — a count of zero means "not looked at", not "none".',
+    );
+  }
   if (results.some((r) => r.failures?.some((f) => f.traceOnly))) {
     notes.push(
       'Some failures are marked as traces: the clause addresses the PDF processor (the act of ' +
@@ -113,6 +146,7 @@ export async function validateClauses(
   return {
     constraintsVersion: report.packageVersion,
     tables: report.tables,
+    observation: report.observation,
     subjects: report.subjects,
     results,
     violations: report.violations,

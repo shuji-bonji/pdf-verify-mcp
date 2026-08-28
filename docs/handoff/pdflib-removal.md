@@ -134,13 +134,15 @@ ADR-0006（writer Phase 3）と同じ型。pdf-lib が在るうちに、7 ツー
   `{"@page": i}` に畳んでいたためページの中身がダイジェストに 1 バイトも入っていなかった。
   ゴールデンの 1 項目を書き換えて A/B が差を報告することを先に実測する
 
-### L1. normativepdf `0.2.0 → 0.9.0` ⏳ **ここから**
+### L1. normativepdf `0.2.0 → 0.9.0` ✅ **完了（2026-08-28・§11）**
 
 - いま使っているのは `revision-diff.ts` の 4 記号のみ
   （`dictGet` / `readXrefSectionAt` / `XrefEntry` / `XrefSection`）。4 記号とも 0.8.0 に存在する
 - ⚠️ **normativepdf の CHANGELOG は 0.7.0 以降しか記載が無い。**
   0.2.0 → 0.6.x の間の変更は記録から追えないので、**`dist/index.d.ts` の差分で確認する**
 - 受入: `npm test` 全緑・`corpus` 相当の回帰なし
+
+### L2 + L3 ⏳ **ここから**
 
 > 🔴 **L2 と L3 は 1 つの段として計画すること**（B1 で実測。§9.1）。
 > 入口の戻り型を替えた瞬間に 2 つの validator が動くので、分けても分けたことにならない。
@@ -497,3 +499,156 @@ evaluate_policy.profile             = "general"           ← profile 引数を�
 - 0.2.0 → 0.6.x の CHANGELOG が無いので `dist/index.d.ts` の差分で確認する（§5 L1）
 - 上げたら `node scripts/golden.mjs take .golden/after-L1.json --label after-L1` →
   `diff .golden/before-full.json .golden/after-L1.json`
+
+---
+
+## 11. L1 の実測（2026-08-28）—— 版を上げた
+
+`normativepdf 0.2.0 → 0.9.0` / `@shuji-bonji/pdf-constraints 0.3.0 → 0.4.0`。
+**ソースの変更は 1 つだけ**（`observation` の露出 = L5 の前倒し。§11.5）。
+`npm test` 178 件・`typecheck`・`biome check`・`check:public-types` とも緑。
+
+### 11.1 公開面の差（着手前に `dist/index.d.ts` で実測）
+
+CHANGELOG が 0.7.0 以降しか無いので、両版の tarball を取って突き合わせた。
+
+- **normativepdf**: 消えた export **0 件**・増えた 55 件。この repo が使う 4 記号
+  （`dictGet` / `readXrefSectionAt` / `XrefEntry` / `XrefSection`）は**宣言が 1 文字も違わない**。
+  `parsePdf` に `ParsePdfOptions`（復号）が増えたのは追加のみ
+- **pdf-constraints**: `checkFile` / `checkBytes` / `listTables` / `CheckOptions` は同一。
+  消えたのは `collectSubjects` / `extractors` / `FactExtractor`、増えたのは
+  `CheckReport.observation` と `Observation` 型
+- 🔴 **`CheckOptions` にパスワードの口は無い。** `validate_clauses` は暗号化文書に
+  パスワードを渡せない（ツールの引数にも無い）。空のユーザパスワードは既定で試される
+
+import している場所は **2 ファイルだけ**: `revision-diff.ts`（normativepdf の 4 記号）と
+`clause-validation.ts`（`checkFile` / `listTables`）。
+
+### 11.2 版の上げ方（マウント上で `npm install` を打たずに）
+
+[[no-npm-install-in-sandbox]] のとおりマウントの `node_modules` に `npm install` は打てない。
+device_bash には**網がある**（実測）ので、こう回した:
+
+1. `package.json` の 2 行を書き換える
+2. **`package-lock.json` は複製で作る** ——
+   `package.json` と lock を `/tmp` に写して `npm install --package-lock-only --ignore-scripts`。
+   `node_modules` には一切触らない。できた lock を書き戻し、`check:engines` で照合
+3. `node_modules` の 2 つだけ差し替える —— 古い方を `_to_delete/node_modules-stale/` へ `mv`
+   （マウントでは unlink が通らないが rename は通る）、`npm pack` した tarball を
+   `/tmp` で展開して `cp -R` で入れる。どちらも純 JS なので linux/darwin の別は無い
+4. typecheck とテストは[[run-tests-in-a-copy-not-the-mount]]の 4 手でコンテナ側
+
+⚠️ **`node_modules/.package-lock.json` は古いまま**なので、Mac 側で一度 `npm ci` を回すこと。
+
+### 11.3 A/B —— 差は `validate_clauses` だけ、実質 43 件
+
+```
+差 2,947 件（ファイル×ツール）
+  └ J 前の版に無かった項目が増えただけ  2,904   ← observation を足したぶん。判定は動いていない
+  └ 実質の差                              43
+```
+
+**他の 6 ツールは 1 件も動かなかった。** `revision-diff.ts` の 4 記号が
+0.2.0 と 0.9.0 で同じ答えを返すことの実測でもある。
+
+| 行 | 件数 | 帰属 |
+|---|---|---|
+| **A 読めた → 読めない** | 17 | 14 = veraPDF / Isartor の *fail* 検体（§7.5.2・§7.5.4・§7.7.2）/ 1 = 自分で壊した `ua-broken-startxref.pdf`（**予測 4 の的中**）/ 2 = **この repo 自身の fixtures**（§11.4） |
+| **B 読めない → 読めた** | 10 | 空のユーザパスワードの暗号化文書（**予測 1 の的中**。12 件中 10 件） |
+| **C 判定が変わった** | 4 | 全部 `pass → not_applicable`。**違反として報告されるようになったものは 0 件**（§11.6） |
+| **D 🔴 反証できなくなった** | 1 | `fail → pass`。UTF-8 BOM 付きの日付（R-7.9.2.2.1-4）を pdf-lib が扱えず**適合文書に誤報していた**分の是正。B1 §9.5-1 と同じ形 |
+| E 観測できた対象が減った | 3 | 1 = `/Prev 0` の打ち切り（C と同じ検体）/ 2 = 名前の `#c4` 解決（F と対） |
+| F 観測できた対象が増えた | 2 | `TMJTIB+FreeMonoBold#c4` → `TMJTIB+FreeMonoBoldÄ`。target 名が変わっただけ（B1 §9.5 の名前解決） |
+| H 🔴 出力が切り詰められて JSON にならない | 1 | §11.7 |
+| I 並びだけが違う | 5 | subject の列挙順のみ。中身は完全一致 |
+| G その他 | 3 | 2 = パスワード付き暗号化（読めないまま。ただしメッセージが **§7.6.4.4 Algorithm 6/7・11/12 を名指しする**ようになった）/ 1 = ヘッダ不正（両方 isError・文言が変わった） |
+
+**受入（§6 面 2）に対して**: `pass → 非 pass` は 4 件で全部 `not_applicable`、
+誤った `fail` は 1 件も生まれていない。`fail → pass` の 1 件は pdf-lib の誤報の是正。
+**「読めた → 読めない」17 件は 17/17 とも条文を名指ししている**（撤去前は 0/19 だった）。
+
+### 11.4 🔴 この repo の fixtures 2 本は、条文に反する増分更新である
+
+`{fixtures}/appended.pdf` と `{fixtures}/certified-p1-modified.pdf` が読めなくなった。
+原因は `tests/helpers/signed-pdf.ts` の `appendIncrementalUpdate`:
+
+```
+% incremental update
+xref
+0 0
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+0            ← 🔴 0 バイト目はファイルヘッダで、相互参照節ではない
+%%EOF
+```
+
+pdf-lib は飲み込んでいた。normativepdf は §7.5.4 を名指しして受け取らない。
+**いまは `validate_clauses` だけが落ちるが、L2 で `pdf-parser.ts` を載せ替えると
+`verify_integrity` など 6 ツール全部がこの 2 本で落ちる。**
+[[prev-zero-swallowed-is-a-complete-chain]] と同じ形。L2+L3 の着手時に決めること:
+ヘルパを条文どおりの増分更新に直すか、「壊れた増分更新」の検体として明示的に残すか。
+
+### 11.5 予測 3 は外れた —— `observation` はツール出力に出ていなかった
+
+B1 が `CheckReport.observation` を足したのは「判定ではなく判定の射程」を出すためだが、
+**`clause-validation.ts` が写していなかったので、0.4.0 に上げても出力に現れなかった。**
+
+これは受入に効く。§6 面 2 は「観測できた対象が減った」を
+**「どこまで読めたかを出力が申告していること」**を条件に許容する、と書いてある。
+`{_wout}/dss-pades-5sigs-doctimestamp-w2.pdf` は subject が 10 → 1 に減ったのに、
+出力は「違反なし」の顔をしていた。**申告が無いまま減るのは見逃しで、許容しない。**
+
+→ **L5 を前倒しして載せた**（shuji 決定・2026-08-28）:
+
+- `ClauseValidationReport.observation`（`xrefChain` / `objects` / `pagesReached` / `pages`）
+- チェーンが途中で止まったとき・ページツリーに届かなかったときは `notes` に明記
+- markdown は `Scope of this reading` を **subject の数より前**に置く
+- テストは対で置く（`complete` になる検体と、`/Prev 0` でチェーンを切った検体）。
+  片方だけだと、射程の申告を落としても既定値で緑になる
+
+載せたあとの実測: `dss-pades-5sigs-doctimestamp-w2.pdf` は
+`{"xrefChain":"prev-zero","objects":9,"pagesReached":false,"pages":0}` を申告する。
+射程が `complete` でない検体は 2,947 中 **2 件**。
+
+### 11.6 🔴 残り 2 件は、いまの `observation` では申告できない
+
+C の 4 件のうち 2 件（`isartor-6-1-7-t01-fail-a.pdf` / `6-1-7-1-t01-fail-a.pdf`）は
+`observation` が `complete` / `pagesReached: true` のまま、制約だけが
+`pass → not_applicable` になる。原因を実測した:
+
+```
+/Metadata decode: ERR  keyword "stream" shall be followed by an end-of-line marker (R-7.3.8.1-6)
+FontFile2 decode: ERR  keyword "stream" shall be followed by CRLF or LF, not CR alone (R-7.3.8.1-6)
+```
+
+**ストリーム 1 本が条文に反していて復号できず、その事実が観測できなくなった。**
+pdf-lib は飲み込んでいた。判定を `fail` に倒していないのは B1 の `unreadable` の設計どおりで正しいが、
+**`observation` は文書レベルの射程しか持たないので、この 2 件は「静かに評価されなくなった」まま**である。
+
+→ L2+L3 で持ち越す宿題。verify 側の対応物（§9.2-2「観測できなかったを違反にしない」）を
+入れるときに、**対象ごとの射程**をどう申告するかを決める。
+
+### 11.7 計器を 4 つ直した（L1 の A/B が壊れ方を出した）
+
+1. **分類を 1 つに畳んでいた** → 当てはまる行を**全部**返す。
+   `/Prev 0` の検体で、原因（対象が減った = E）を結果（判定が変わった = C）が隠していた
+2. **出力が切り詰められて JSON にならない呼び出しがある**（`truncateIfNeeded`）。
+   そこでは `kept` が空で、**判定も対象数も 1 つも取れていない**のに「差なし」と数えていた。
+   → 行 **H** を足して名指しする。実測 **3 件**
+   （`Isartor test suite manual.pdf` の `validate_clauses`、`7.18.1-t02-pass-g/h.pdf` の `verify_integrity`）
+3. **並びだけの違い**を変化と混ぜていた → 行 **I**。実測 5 件（subject の列挙順）
+4. **出力に項目が増えただけ**の差が 2,904 件で本当の差を埋めていた → 行 **J**。
+   ただし「項目が増え、**かつ**判定も動いた」ときに J で終わらせないことを T-3 で固定した
+
+T-3 は **14 通り**に増え、全部差を報告する。
+
+### 11.8 次（L2 + L3）
+
+- `pdf-parser.ts` の `loadPdfDocument` の戻り型を `PdfDocument` に替える。
+  §9.1 のとおり **L2 と L3 は 1 段**。`src/services/cos.ts` 相当に COS の読み口を集める
+- §11.4 の fixtures 2 本の扱いを先に決める（6 ツール全部に効く）
+- §11.6 の「対象ごとの射程」をどう申告するかを決める
+- 採る: `node scripts/golden.mjs take .golden/after-L3.json --label after-L3` →
+  `diff .golden/after-L1.json .golden/after-L3.json`（L1 との差を見る。
+  `before-full` との差には J 2,904 件が乗るため）

@@ -64,6 +64,8 @@ Because these are T1 clauses, a failure can be stated plainly and the clause ID 
 
 Some failures carry a Context note. Those clauses are real and the failure is real, but the industry deviates from them deliberately — text markup QuadPoints are written in Z order by nearly every writer because following the clause literally breaks rendering in major viewers. Pass the context on; a failure reported without it reads as a defect.
 
+Every result also carries \`observation\` — how far the reading got: whether the revision chain could be walked to the end, how many objects the cross-reference tables list, and whether the page tree was reached. **This is the scope of the verdict, not a verdict.** A subject count of zero means "not looked at" when the page tree was not reached; a chain that stopped early means the constraints were applied to part of the file. Read it before the numbers.
+
 **A result with no failures is not proof of conformance** — only that nothing in the bundled constraints could be disproved.
 
 Examples:

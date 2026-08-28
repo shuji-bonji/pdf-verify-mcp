@@ -146,3 +146,84 @@ describe('validate_clauses', () => {
     expect(markdown).toContain('not proof of conformance');
   });
 });
+
+/**
+ * 判定の射程（`observation`・pdf-constraints 0.4.0+）。
+ *
+ * **なぜ要るか**（L1 の A/B で実測・docs/handoff/pdflib-removal.md §11）:
+ * `/Prev 0` でリビジョンチェーンが途中で止まる文書で、subject が 10 -> 1 に減ったのに
+ * results は「違反なし」の顔をしていた。**「違反していない」と「そこを見ていない」は別**で、
+ * 出力が射程を申告しないかぎり読み手にはこの 2 つが同じに見える。
+ *
+ * 🔴 **空振り検査を対にする。** 「complete と出る」だけの検査は、射程の申告を落としても
+ * 通ってしまう（既定値が complete なら緑になる）。チェーンが切れた文書で
+ * 注記が出ることを、同じ数だけ確かめる。
+ */
+describe('validate_clauses は判定の射程を申告する', () => {
+  /** 何も変えない完全な xref を追記し、trailer の /Prev を 0 にして チェーンを切る */
+  async function makeTruncatedChain(): Promise<string> {
+    const doc = await PDFDocument.create();
+    doc.addPage([200, 200]);
+    const base = await doc.save({ useObjectStreams: false });
+    const text = Buffer.from(base).toString('latin1');
+
+    const xrefStart = text.lastIndexOf('\nxref\n');
+    const trailerStart = text.indexOf('trailer', xrefStart);
+    if (xrefStart === -1 || trailerStart === -1) throw new Error('classic xref not found');
+    const table = text.slice(xrefStart + 1, trailerStart); // "xref\n0 N\n....\n"
+    const size = /\/Size\s+(\d+)/.exec(text.slice(trailerStart))?.[1];
+    const root = /\/Root\s+(\d+)\s+\d+\s*R/.exec(text.slice(trailerStart))?.[1];
+    if (!size || !root) throw new Error('trailer without /Size or /Root');
+
+    const xrefOffset = base.length + 1; // 直後に足す '\n' の分
+    const chunk =
+      `\n${table}trailer\n<< /Size ${size} /Root ${root} 0 R /Prev 0 >>\n` +
+      `startxref\n${xrefOffset}\n%%EOF\n`;
+    const out = new Uint8Array(base.length + Buffer.byteLength(chunk, 'latin1'));
+    out.set(base, 0);
+    out.set(Buffer.from(chunk, 'latin1'), base.length);
+
+    const path = join(dir, `truncated-${Math.random().toString(36).slice(2)}.pdf`);
+    await writeFile(path, out);
+    return path;
+  }
+
+  it('全部読めた文書では射程が complete で、部分読みの注記は出ない', async () => {
+    const path = await makeDocumentWithDates({
+      infoCreation: 'D:20200102030405Z',
+      xmpCreate: '2020-01-02T03:04:05Z',
+    });
+    const report = await validateClauses(path);
+
+    // 射程そのものを落としていないこと（4 項目とも運ぶ）
+    expect(report.observation).toBeDefined();
+    expect(report.observation.xrefChain).toBe('complete');
+    expect(typeof report.observation.objects).toBe('number');
+    expect(report.observation.pagesReached).toBe(true);
+    expect(report.observation.pages).toBeGreaterThan(0);
+
+    expect(report.notes.join(' ')).not.toContain('PART of the document');
+    expect(formatClauseValidation(report)).toContain('Scope of this reading');
+  });
+
+  it('🔴 チェーンが切れた文書では、部分読みであることを注記に出す', async () => {
+    const path = await makeTruncatedChain();
+    const report = await validateClauses(path);
+
+    // 上の検査が「既定値 complete」で通っていないことの対
+    expect(report.observation.xrefChain).not.toBe('complete');
+    expect(report.notes.join(' ')).toContain('PART of the document');
+  });
+
+  it('markdown は射程を subject の数より前に置く', async () => {
+    const path = await makeDocumentWithDates({
+      infoCreation: 'D:20200102030405Z',
+      xmpCreate: '2020-01-02T03:04:05Z',
+    });
+    const markdown = formatClauseValidation(await validateClauses(path));
+
+    expect(markdown.indexOf('Scope of this reading')).toBeLessThan(
+      markdown.indexOf('Subjects examined'),
+    );
+  });
+});

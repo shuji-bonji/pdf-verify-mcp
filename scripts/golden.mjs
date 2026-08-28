@@ -75,6 +75,17 @@ const HOISTED = [
 
 const sha = (s) => createHash('sha256').update(s ?? '').digest('hex').slice(0, 16);
 
+/**
+ * ツール出力が JSON として読めなかった entry。`truncateIfNeeded` が長い出力を切るので、
+ * **大きい文書でだけ起きる**。このとき kept は空で、判定も対象数も 1 つも取れていない。
+ * 🔴 「差が無い」と数えてはいけない —— 何も測っていない。
+ * 古いゴールデン（この印を持たない）でも判るよう、raw の形から見分ける。
+ */
+const isUnparsed = (entry) =>
+  entry?.parsed === false ||
+  (entry?.raw && typeof entry.raw === 'object' && !Array.isArray(entry.raw) &&
+    Object.keys(entry.raw).length === 1 && '_text' in entry.raw);
+
 /** キー順に依存しない JSON 文字列（比較の同一性をキー順で崩さない）。 */
 function stable(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
@@ -365,10 +376,12 @@ async function take(outPath, opts) {
       calls++;
       const text = String(res.content?.[0]?.text ?? '');
       let raw;
+      let parsed = true;
       try {
         raw = JSON.parse(text);
       } catch {
         raw = { _text: text };
+        parsed = false;
       }
       raw = maskPaths(raw, masks);
       const isError = res.isError === true;
@@ -386,6 +399,7 @@ async function take(outPath, opts) {
 
       entry.tools[tool] = {
         isError,
+        parsed,
         channel: res.rpc ? 'jsonrpc' : 'tool-result',
         sha: sha(stable(raw)),
         kept: isError ? keptOfError(raw, text) : keptOf(tool, raw),
@@ -416,6 +430,20 @@ function reportAxes(golden, outPath) {
     `${golden.header.counts.errors} 件が isError / ${golden.header.counts.ms}ms -> ${outPath}`);
   for (const s of golden.header.sets) console.log(`  集合 ${s.token}: ${s.files} 件  (${s.root})`);
   console.log(`  版: ${JSON.stringify(golden.header.deps)}`);
+  let unparsed = 0;
+  const unparsedFiles = new Set();
+  for (const [k, e] of files) {
+    for (const tool of TOOLS) {
+      if (isUnparsed(e.tools[tool])) {
+        unparsed++;
+        unparsedFiles.add(`${k} / ${tool}`);
+      }
+    }
+  }
+  if (unparsed) {
+    console.log(`\n  🔴 出力が JSON として読めなかった: ${unparsed} 件（切り詰めのため。ここでは項目を 1 つも取れていない）`);
+    for (const k of unparsedFiles) console.log(`    ${k}`);
+  }
   if (golden.header.hoistedConflicts.length) {
     console.log(`  🔴 ヘッダに寄せた項目がファイルごとに違う: ${golden.header.hoistedConflicts.length} 件`);
   }
@@ -514,13 +542,21 @@ const B_D = 'D 🔴 反証できなくなった（fail -> pass、規則や対象
 const B_E = 'E 観測できた対象が減った';
 const B_F = 'F 観測できた対象が増えた';
 const B_G = 'G その他（帰属が要る）';
-const BUCKETS = [B_A, B_B, B_C, B_D, B_E, B_F, B_G];
+const B_H = 'H 🔴 出力が切り詰められて JSON にならない（項目を 1 つも取れていない）';
+const B_I = 'I 並びだけが違う（行の集合と中身は同じ）';
+const B_J = 'J 前の版に無かった項目が増えただけ（判定は動いていない）';
+const BUCKETS = [B_A, B_B, B_D, B_C, B_E, B_F, B_H, B_I, B_J, B_G];
 
-/** 1 ファイル 1 ツールの差を、受入の表（§6 面 2）のどの行かに割り当てる。 */
+/**
+ * 1 ファイル 1 ツールの差を、受入の表（§6 面 2）の行に割り当てる。
+ * 🔴 **当てはまる行を全部返す。** 1 つに畳むと、原因（対象が減った）を
+ * 結果（判定が変わった）が隠す —— L1 の `/Prev 0` の検体で実際にそうなった。
+ */
 function classify(tool, before, after) {
-  if (!before.isError && after.isError) return B_A;
-  if (before.isError && !after.isError) return B_B;
-  if (before.isError && after.isError) return B_G;
+  if (isUnparsed(before) || isUnparsed(after)) return [B_H];
+  if (!before.isError && after.isError) return [B_A];
+  if (before.isError && !after.isError) return [B_B];
+  if (before.isError && after.isError) return [B_G];
   const a = before.kept ?? {};
   const b = after.kept ?? {};
   const s = new Set();
@@ -580,8 +616,24 @@ function classify(tool, before, after) {
     if ((a.count ?? 0) < (b.count ?? 0)) s.add(B_F);
   }
 
-  for (const name of BUCKETS) if (s.has(name)) return name;
-  return B_G;
+  // 行の集合と中身が同じで並びだけ違う場合は、そう名指しする（変化と混ぜない）
+  if (tool === 'validate_clauses' && s.size === 0) {
+    const key = (r) => stable(r);
+    const sa = (a.rows ?? []).map(key).sort().join('|');
+    const sb = (b.rows ?? []).map(key).sort().join('|');
+    if (sa === sb && stable(a.rows) !== stable(b.rows)) s.add(B_I);
+  }
+
+  // 出力に項目が増えただけ（前の版に無かったキーしか差が無い）なら、判定は動いていない。
+  // 版を上げると新しい項目が全件に乗るので、これを分けないと本当の差が埋もれる
+  // —— L1 で `observation` を足したとき、2,947 件が「その他」に落ちた。
+  if (s.size === 0) {
+    const d = deepDiff(before.raw, after.raw, '', [], 200);
+    if (d.length > 0 && d.length < 200 && d.every((x) => x.before === undefined)) s.add(B_J);
+  }
+
+  if (s.size === 0) return [B_G];
+  return BUCKETS.filter((name) => s.has(name));
 }
 
 function diff(beforePath, afterPath, opts) {
@@ -620,7 +672,7 @@ function diff(beforePath, afterPath, opts) {
     for (const tool of TOOLS) {
       if (a.tools[tool].sha === b.tools[tool].sha) continue;
       shown++;
-      console.log(`\n=== ${opts.detail} / ${tool}  (${classify(tool, a.tools[tool], b.tools[tool])})`);
+      console.log(`\n=== ${opts.detail} / ${tool}  (${classify(tool, a.tools[tool], b.tools[tool]).join(' + ')})`);
       console.log(`isError ${a.tools[tool].isError} -> ${b.tools[tool].isError}`);
       for (const d of deepDiff(a.tools[tool].raw, b.tools[tool].raw, '', [], 200)) {
         console.log(`  ${d.path}\n    - ${d.before}\n    + ${d.after}`);
@@ -648,11 +700,12 @@ function diff(beforePath, afterPath, opts) {
       if (!ta || !tb || ta.sha === tb.sha) continue;
       changed++;
       byTool[tool] = (byTool[tool] ?? 0) + 1;
-      byBucket.get(classify(tool, ta, tb)).push(`${k} / ${tool}`);
+      for (const name of classify(tool, ta, tb)) byBucket.get(name).push(`${k} / ${tool}`);
     }
   }
 
-  console.log(`\n差: ${changed} 件（ファイル×ツール）`);
+  console.log(`\n差: ${changed} 件（ファイル×ツール）。` +
+    '下の分類は重複する —— 1 件が複数の行に当たることがある');
   for (const [tool, n] of Object.entries(byTool).sort((x, y) => y[1] - x[1])) {
     console.log(`  ${tool.padEnd(22)} ${n}`);
   }
@@ -795,6 +848,38 @@ function t3(goldenPath) {
     g.header.hoisted['validate_clauses.constraintsVersion'] = '9.9.9';
     return g;
   }, (t) => /版（ヘッダ） validate_clauses\.constraintsVersion/.test(t) && /差: 0 件/.test(t));
+
+  add('10 🔴 出力を JSON にならない形にする（切り詰め）', (g) => {
+    const e = g.files[clauseKey].tools.validate_clauses;
+    e.raw = { _text: '{ "constraintsVersion": "0.3.0", "resu' };
+    e.parsed = false;
+    e.kept = keptOf('validate_clauses', {});
+    e.sha = sha(stable(e.raw));
+    return g;
+  }, (t) => /^H 🔴 出力が切り詰められて/m.test(t));
+
+  add('11 行の並びだけ入れ替える', (g) => {
+    const e = g.files[clauseKey].tools.validate_clauses;
+    e.raw.results = [...e.raw.results].reverse();
+    refresh(e, 'validate_clauses');
+    return g;
+  }, (t) => /^I 並びだけが違う/m.test(t));
+
+  add('12 出力に項目が増えただけ', (g) => {
+    const e = g.files[okKey].tools.identify_conformance;
+    e.raw.observation = { scope: 'T-3' };
+    refresh(e, 'identify_conformance');
+    return g;
+  }, (t) => /^J 前の版に無かった項目が増えただけ/m.test(t));
+
+  add('13 🔴 項目が増え、かつ判定も動いたときは J で終わらせない', (g) => {
+    const e = g.files[passKey].tools.validate_clauses;
+    e.raw.observation = { scope: 'T-3' };
+    const row = e.raw.results.find((r) => r.status === 'pass');
+    row.status = 'fail';
+    refresh(e, 'validate_clauses');
+    return g;
+  }, (t) => /^C 判定が変わった/m.test(t) && !/^J 前の版に無かった項目が増えただけ: 1$/m.test(t));
 
   add('9 検体を 1 件落とす', (g) => {
     delete g.files[okKey];

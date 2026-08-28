@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+トラック B（pdf-lib 撤去）の L1。`docs/handoff/pdflib-removal.md` §11。
+
+### Added
+
+- **`validate_clauses` が判定の射程を返す**（`observation`: `xrefChain` /
+  `objects` / `pagesReached` / `pages`）。**判定ではなく判定の射程**である。
+  リビジョンチェーンを最後まで歩けなかった文書、ページツリーに届かなかった文書では
+  `notes` にもそう書き、markdown は `Scope of this reading` を subject の数より前に置く。
+  これが無いと「制約に違反していない」と「その対象を観測していない」が同じ顔をする ——
+  実測で、`/Prev 0` の打ち切りにより subject が 10 から 1 に減った文書が
+  「違反なし」として報告されていた。
+
+### Changed
+
+- 依存を上げた: `normativepdf` 0.2.0 → **0.9.0**、
+  `@shuji-bonji/pdf-constraints` 0.3.0 → **0.4.0**。
+  ツールの引数も判定の規則も変わっていないが、**読める文書と読めない文書が変わる**:
+  - 空のユーザパスワードで暗号化された文書を `validate_clauses` が読めるようになった
+    （0.3.0 は pdf-lib が `PDFDocument.load is encrypted` で拒んでいた）。
+    パスワード付きの文書は読めないままだが、エラーが条文（§7.6.4.4）を名指しする
+  - **相互参照節や `stream` キーワードが ISO 32000 に反する文書を受け取らなくなった。**
+    エラーは条文を名指しする。コーパス 2,947 件のうち 17 件が該当し、14 件は
+    veraPDF / Isartor の *fail* 検体である
+  - UTF-8 のバイト順マーク付きテキスト文字列（R-7.9.2.2.1-4・PDF 2.0）を扱えるようになった。
+    0.3.0 は適合している日付に「文法に合わない」と誤報していた
+
 ## [0.18.0] - 2026-08-27
 
 Infrastructure only: no tool gained or lost a capability, and no verdict

@@ -9,3 +9,6 @@ tests/fixtures/generated/
 # コミットしないのは大きいから。**消さないこと** — B2 の受入はこれとの A/B で決まる。
 # .golden/specimens/ は入力側で、鍵も ModDate も再生成すると変わるので作り直しも効かない
 .golden/
+
+# 使い捨ての退避先（マウントでは unlink が通らないので、ここへ mv して最後に消してもらう）
+_to_delete/

@@ -439,6 +439,12 @@ export function formatClauseValidation(
     `- Decided by: @shuji-bonji/pdf-constraints ${report.constraintsVersion} ` +
       `(${report.tables.map((t) => `${t.name} v${t.version}`).join(', ')})`,
   );
+  // 射程を数字より先に置く。「違反なし」と「そこを見ていない」を読み手が取り違えないため
+  const obs = report.observation;
+  lines.push(
+    `- Scope of this reading: revision chain ${obs.xrefChain}, ${obs.objects} object(s), ` +
+      `${obs.pagesReached ? `${obs.pages} page(s) reached` : '**page tree NOT reached**'}`,
+  );
   lines.push(`- Subjects examined: ${report.subjects}`);
   lines.push(
     `- Result: ${report.violations > 0 ? `**${report.violations} failure(s)**` : '**no failures in the constraints checked**'}` +
