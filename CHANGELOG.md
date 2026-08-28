@@ -16,9 +16,21 @@ All notable changes to this project will be documented in this file.
   実測で、`/Prev 0` の打ち切りにより subject が 10 から 1 に減った文書が
   「違反なし」として報告されていた。
 
+### Removed
+
+- **`pdf-lib` を実行時依存から落とした**（`devDependencies` へ移動・テストは引き続き使う）。
+  `npm ls --omit=dev pdf-lib` は `(empty)` を返す。
+- 全文書の復号を前処理として回す経路（`decrypt-document.ts`）を撤去した。
+  読み取りは §7.6 の復号込みで開かれるので前処理が要らない —— 暗号化 4 方式 ×
+  構造規則が落ちる文書 4 通りで、前処理あり・なしが同じ答えを出すことを実測した。
+  veraPDF は暗号化文書を読めないので、**そこに渡す平文の写しを書く経路だけ**残した。
+
 ### Changed
 
-- **構造の読み取りを normativepdf に移した**（`src` の pdf-lib import は 5 → 1）。
+- **`validate_conformance` が veraPDF に渡すものを報告に書くようにした。** 暗号化文書では
+  veraPDF が判定するのは受け取ったファイルではなく**復号した 1 リビジョンの写し**である。
+  写しを作れなかったときは、その旨と「読み取り自体は行われた」ことを書く。
+- **構造の読み取りを normativepdf に移した**（`src` の pdf-lib import は 5 → 0）。
   ツールの引数も規則も変えていないが、**壊れた文書の読み方が変わる**:
   - 相互参照節や `startxref` が ISO 32000 に反する文書は、まず条文どおりに拒まれ、
     そのうえで verify の回復方針（古い入口を試す / `startxref` の値も頼りに読み進める /

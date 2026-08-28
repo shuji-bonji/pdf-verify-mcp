@@ -109,13 +109,14 @@ describeQpdf('PDF/UA validation of encrypted documents (Issue #7)', () => {
   });
 
   it('produces a structurally valid plaintext rebuild (strict validators)', async () => {
-    // pdf-lib is lenient about xref gaps, but veraPDF/qpdf are not: the
-    // decrypted ObjStm must be expanded into plain objects so every object
-    // is reachable from the rebuilt xref (found via veraPDF, v0.6.3).
-    const { decryptDocumentBytes } = await import('../../src/services/decrypt-document.js');
+    // 平文の写しは **veraPDF に渡すためだけ**に作る（L4）。verify 自身の読み取りには
+    // 要らない。pdf-lib は xref の穴に寛容だが veraPDF / qpdf はそうではないので、
+    // 復号したオブジェクトストリームは平のオブジェクトに展開されていなければならない
+    // （veraPDF で見つけた・v0.6.3）。
+    const { decryptedCopy } = await import('../../src/services/plaintext-copy.js');
     const { readFile } = await import('node:fs/promises');
     const bytes = new Uint8Array(await readFile(join(dir, 'pw.pdf')));
-    const plain = await decryptDocumentBytes(bytes, 'secret');
+    const plain = await decryptedCopy(bytes, 'secret');
     expect(plain).not.toBeNull();
     const out = join(dir, 'pw-decrypted.pdf');
     await writeFile(out, plain as Uint8Array);

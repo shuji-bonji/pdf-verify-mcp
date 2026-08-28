@@ -22,11 +22,10 @@ import { ValidationEngine, VERAPDF_ENV } from '../constants.js';
 import type { ParsedPdf } from '../types.js';
 import { PdfVerifyError } from '../utils/error-handler.js';
 import { extractPdfaId, extractPdfuaPart } from './conformance.js';
-import { decryptDocumentBytes } from './decrypt-document.js';
-
-import { loadPdfDocument, parsePdfBytes } from './pdf-parser.js';
+import { loadPdfDocument } from './pdf-parser.js';
 import { type PdfaFlavour, resolveFlavour, validatePdfaNative } from './pdfa-validator.js';
 import { type PdfuaFlavour, resolvePdfuaFlavour, validatePdfuaNative } from './pdfua-validator.js';
+import { decryptedCopy } from './plaintext-copy.js';
 import { resolveVeraPdf, runVeraPdf, veraPdfVersion } from './verapdf.js';
 
 export interface ConformanceViolation {
@@ -328,7 +327,8 @@ async function validatePdfua(
   // plaintext document first (the empty user password covers
   // permission-encrypted PDFs); when that fails, structure-dependent rules
   // are reported as "not checked" instead of failed.
-  let target = parsed;
+  // 復号の前処理が要らなくなったので、判定する文書は最初から `parsed` である（L4）。
+  const target = parsed;
   let validationPath = filePath;
   let tempFile: string | null = null;
   let undecrypted = false;
@@ -339,24 +339,37 @@ async function validatePdfua(
     // 復号前の文書について ISO 14289-1 7.16 を判定するのはこれ 1 つで足りる。
     encryptDict = parsed.scope.encryptDict;
 
-    const plain = await decryptDocumentBytes(parsed.bytes, options.password ?? '');
-    if (plain && plain !== parsed.bytes) {
-      target = await parsePdfBytes(plain);
+    if (parsed.scope.authenticated) {
+      // 🔴 verify 自身の読み取りに復号の前処理は要らない —— `openDocument` が
+      // §7.6 の復号込みで開くので、暗号化されたオブジェクトストリームの中の
+      // 構造木もそのまま読める（L4 で実測。4 方式 × 4 欠陥の検体で 2 パスと同じ答え）。
       notes.push(
         'Encrypted document was decrypted before validation. ua-no-encryption-barrier is evaluated against the original encryption dictionary (ISO 14289-1, 7.16).',
       );
       if (veraPath) {
-        tempFile = join(tmpdir(), `pdf-verify-decrypted-${randomBytes(8).toString('hex')}.pdf`);
-        await writeFile(tempFile, plain);
-        validationPath = tempFile;
+        // veraPDF だけは暗号化文書を読めないので、**平文の写し**を書き出して渡す。
+        const plain = await decryptedCopy(parsed.bytes, options.password ?? '');
+        if (plain) {
+          tempFile = join(tmpdir(), `pdf-verify-decrypted-${randomBytes(8).toString('hex')}.pdf`);
+          await writeFile(tempFile, plain);
+          validationPath = tempFile;
+          notes.push(
+            'veraPDF judged a decrypted single-revision REWRITE of this document, not the file as received: an encrypted file cannot be handed to it. Structure is preserved; byte-level findings are about the rewrite.',
+          );
+        } else {
+          veraPath = null;
+          notes.push(
+            'A decrypted copy for veraPDF could not be written, so only the native rule subset was applied. The document itself was read and checked; this limits the authoritative engine, not the reading.',
+          );
+        }
       }
-    } else if (!plain && options.password !== undefined) {
+    } else if (options.password !== undefined) {
       throw new PdfVerifyError(
         'The supplied password is wrong, or the security handler is unsupported',
         'WRONG_PASSWORD',
         'Check the password; only the Standard security handler is supported',
       );
-    } else if (!plain) {
+    } else {
       if (engineChoice === ValidationEngine.VERAPDF) {
         throw new PdfVerifyError(
           'Document is password-protected; veraPDF cannot validate it without decryption',
@@ -415,7 +428,7 @@ async function validatePdfua(
     };
   }
 
-  const doc = await loadPdfDocument(target.bytes);
+  const doc = await loadPdfDocument(target.bytes, { password: options.password });
   const native = await validatePdfuaNative(target, doc, flavour, {
     undecrypted,
     wasEncrypted: parsed.isEncrypted,

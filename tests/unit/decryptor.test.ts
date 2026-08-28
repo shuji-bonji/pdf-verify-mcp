@@ -1,20 +1,48 @@
 /**
- * v0.5: Standard Security Handler decryption.
+ * Standard Security Handler の復号（§7.6）。
  *
- * - RC4 known-answer vector (cipher correctness)
- * - End-to-end: a hand-built RC4 (V1/R2, 40-bit) permission-encrypted PDF
- *   whose signature-dictionary strings are recovered by the parser.
+ * 手で組んだ RC4（V1/R2・40 ビット）の権限暗号化 PDF から、署名辞書の文字列を
+ * パーサが取り戻せることを、端から端まで測る。
+ *
+ * ⚠️ **暗号そのものの検査はここに無い。** L4 で復号は normativepdf に移った
+ * （`src/services/decryptor.ts` は撤去）ので、RC4 の既知答えベクタは
+ * そのライブラリの検査が持つ。ここが測るのは **verify が復号済みの値を
+ * 正しく受け取れているか**である。
  */
 
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { rc4 } from '../../src/services/decryptor.js';
 import { parsePdfBytes } from '../../src/services/pdf-parser.js';
 
 const PAD = Uint8Array.from([
   0x28, 0xbf, 0x4e, 0x5e, 0x4e, 0x75, 0x8a, 0x41, 0x64, 0x00, 0x4e, 0x56, 0xff, 0xfa, 0x01, 0x08,
   0x2e, 0x2e, 0x00, 0xb6, 0xd0, 0x68, 0x3e, 0x80, 0x2f, 0x0c, 0xa9, 0xfe, 0x64, 0x53, 0x69, 0x7a,
 ]);
+
+/**
+ * 検体を組むための RC4（暗号化する側）。**判定する側には使わない** ——
+ * 復号は normativepdf が持つので、ここが同じ実装を持っていては
+ * 「自分で書いたものを自分で読み戻す」検査になる（GUARDS T-2）。
+ */
+function rc4(key: Uint8Array, data: Uint8Array): Uint8Array {
+  const s = new Uint8Array(256);
+  for (let i = 0; i < 256; i += 1) s[i] = i;
+  let j = 0;
+  for (let i = 0; i < 256; i += 1) {
+    j = (j + s[i] + key[i % key.length]) & 0xff;
+    [s[i], s[j]] = [s[j], s[i]];
+  }
+  const out = new Uint8Array(data.length);
+  let a = 0;
+  let b = 0;
+  for (let k = 0; k < data.length; k += 1) {
+    a = (a + 1) & 0xff;
+    b = (b + s[a]) & 0xff;
+    [s[a], s[b]] = [s[b], s[a]];
+    out[k] = data[k] ^ s[(s[a] + s[b]) & 0xff];
+  }
+  return out;
+}
 
 function md5(...parts: Uint8Array[]): Uint8Array {
   const h = createHash('md5');
@@ -77,21 +105,6 @@ function buildEncryptedPdf(reason: string): Uint8Array {
 
   return new Uint8Array(Buffer.from(body + xref + trailer, 'latin1'));
 }
-
-describe('rc4', () => {
-  it('matches the standard RC4 known-answer vector', () => {
-    const key = new TextEncoder().encode('Key');
-    const plaintext = new TextEncoder().encode('Plaintext');
-    const out = rc4(key, plaintext);
-    expect(Buffer.from(out).toString('hex').toUpperCase()).toBe('BBF316E8D940AF0AD3');
-  });
-
-  it('is symmetric (decrypt(encrypt(x)) == x)', () => {
-    const key = Uint8Array.from([1, 2, 3, 4, 5]);
-    const data = new TextEncoder().encode('pdf-verify-mcp');
-    expect(rc4(key, rc4(key, data))).toEqual(data);
-  });
-});
 
 describe('Standard Security Handler decryption (RC4 R2)', () => {
   it('recovers an encrypted /Reason from a permission-encrypted PDF', async () => {

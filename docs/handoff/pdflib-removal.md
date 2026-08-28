@@ -158,9 +158,9 @@ ADR-0006（writer Phase 3）と同じ型。pdf-lib が在るうちに、7 ツー
 - `decodeText()` の置き換えが要る（未決 1）
 - `getPages()` 2 箇所 → `readPageTree`
 
-### L4. `decrypt-document.ts` の撤去可否を実測 → 撤去 or 縮小 ⏳ **ここから**
+### L4. `decrypt-document.ts` の撤去可否を実測 → 撤去 or 縮小 ✅ **撤去（2026-08-28・§13）**
 
-### L5. `conformance-validation.ts`（3 lookup）+ `package.json` の `pdf-lib` を `devDependencies` へ
+### L5. `conformance-validation.ts`（3 lookup）+ `package.json` の `pdf-lib` を `devDependencies` へ ✅ **完了（2026-08-28・§13）**
 
 テスト側 4 ファイル（`validate-clauses.test.ts` 148 行 / `validate-pdfua.test.ts` 185 行 /
 `evaluate-policy.test.ts` 451 行 / `helpers/ua-pdf.ts` 116 行）は **pdf-lib のまま残す**。
@@ -831,3 +831,115 @@ desc.has(PDFName.of('FontFile3')) = false      ← 鍵はあるのに false
   依存ツリーから消えることを確認する。テスト側 4 ファイルは pdf-lib のまま残す（GUARDS T-2）
 - `DocumentScope` をツール出力に載せるかは L5 で決める
   （`validate_clauses` の `observation` は §11.5 で先に載せた）
+
+---
+
+## 13. L4 + L5 の実測（2026-08-28）—— pdf-lib を落とした
+
+```
+grep -rl "from 'pdf-lib'" src/     → 0 ファイル
+npm ls --omit=dev pdf-lib          → (empty)      ← 公開される依存から消えた
+npm ls pdf-lib                     → pdf-lib@1.17.1（devDependencies。テスト側 4 ファイルが使う）
+```
+
+**A/B は差 0 件**（`after-L3` 比・2,947 検体 × 7 ツール）。`npm test` 176 件・typecheck・
+biome・`check:engines`・`check:public-types` とも緑。
+
+### 13.1 2 パスの復号は要らなくなった（実測）
+
+`decrypt-document.ts` は「pdf-lib が暗号化オブジェクトストリームの中を読めない」ために
+①復号して保存 → ②呼び出し側が再パース、という 2 パスを踏んでいた。
+`openDocument` が §7.6 の復号込みで開くので、この前提が消えている。
+
+**直接読んだ場合と 2 パスの場合で、`validatePdfuaNative` の答えが同じかを測った:**
+
+| 検体 | 直接 | 2 パス |
+|---|---|---|
+| 暗号化 4 方式 × 8 検体（RC4 40/128・AESV2・AESV3・パスワード付き・objstm 有無） | `checked 12/12 fail=[]` | 同じ |
+
+🔴 **空振りの対も置いた。** 上は全部 12/12 なので、差が出ない集合で「同じ」と言っても
+何も測っていない。**構造規則が落ちる文書**を 4 通り作って測り直した:
+
+| 欠陥 | 直接 | 2 パス |
+|---|---|---|
+| `StructTreeRoot` 無し | `fail=[ua-struct-tree]` | 同じ |
+| `/Lang` と `MarkInfo` 無し | `fail=[ua-lang,ua-marked]` | 同じ |
+| Figure に `/Alt` 無し | `fail=[ua-figure-alt]` | 同じ |
+| Link に `/Contents` 無し | `fail=[ua-link-contents]` | 同じ |
+
+どれも AESV3 + オブジェクトストリームで暗号化した検体である。
+→ **verify 自身の読み取りに前処理は要らない。**
+
+### 13.2 残ったのは 1 つ —— **veraPDF に渡すファイル**
+
+veraPDF は暗号化文書を読めないので、判定させたければ平文のバイト列を書き出すしかない。
+そこだけを `src/services/plaintext-copy.ts`（`decryptedCopy`）に残した。
+
+`normativepdf` の `rewrite` は暗号化文書を**名指しで拒む**:
+
+```
+writing an encrypted document is not supported through writeFile (§7.6.2; ADR-0008):
+the trailer carries /Encrypt
+```
+
+拒否の理由は「平文のバイト列に『暗号化されている』と書いた文書ができる」ことなので、
+`/Encrypt` を**落としてから** `collectObjects` + `writeFile` で書く ——
+拒否の条件そのものを解いている（[[gate-bypassing-the-api-it-measures]] の迂回ではない）。
+`rewrite` のもう 1 つの拒否（**歩き切れていないチェーンは書き直さない**）は、
+`decryptedCopy` が同じ条件で自分に課している。
+
+実測（4 方式）: `qpdf --check` 通過・再パースで `isEncrypted false` / XMP あり。
+
+**報告にも書くようにした**: veraPDF が判定したのは「受け取ったファイル」ではなく
+**復号した 1 リビジョンの写し**である、と `notes` に出す。
+
+### 13.3 撤去したもの
+
+| ファイル | 行 | 撤去の理由 |
+|---|---|---|
+| `src/services/decrypt-document.ts` | 196 | 2 パスの前提が消えた（§13.1）。veraPDF 用の書き出しだけ `plaintext-copy.ts` に残した |
+| `src/services/decryptor.ts` | — | 唯一の消費者が上だった。復号は normativepdf が持つ |
+
+`tests/unit/decryptor.test.ts` は **RC4 の既知答えベクタ 2 件を落とした**（暗号の実装が
+この repo から出たので、その検査もライブラリ側が持つ）。端から端までの検査
+（手で組んだ RC4 R2 の暗号化 PDF から `/Reason` を取り戻す）は残し、
+検体を暗号化するための RC4 はテストの中に置いた —— **判定する側には使わない**
+（自分で書いたものを自分で読み戻す形にしないため・GUARDS T-2）。
+
+### 13.4 受入（§6）の到達点
+
+| 面 | 状態 |
+|---|---|
+| **面 1 撤去** | ✅ `src` の import 0 / `npm ls --omit=dev pdf-lib` = `(empty)` |
+| **面 2 出力の A/B** | ✅ 全段で帰属済み（L1 = 43 件・L2+L3 = 25 件・L4+L5 = 0 件）。**誤った `pass` は 0 件** |
+| **面 3 独立オラクル** | ⏳ **未実施** —— device_bash に veraPDF が無い（§13.5） |
+
+### 13.5 🔴 面 3 は Mac で回す —— `npm run check:verapdf-oracle`
+
+**B2 が veraPDF に渡すファイルを変えるのは 1 か所だけである**（実測）:
+
+```
+PDF/A  : runVeraPdf(veraPath, filePath, …)         ← 常に元のファイル。B2 は触っていない
+PDF/UA : runVeraPdf(veraPath, validationPath, …)   ← 暗号化文書のときだけ平文の写し
+```
+
+したがって面 3 は**「暗号化文書の平文の写しを、veraPDF が元の平文と同じに判定するか」**に縮む。
+`scripts/verapdf-oracle.mjs` がそれを測る:
+
+```bash
+npm run build && npm run check:verapdf-oracle
+```
+
+`.golden/specimens/ua-enc-*.pdf` は全部 `ua-plain.pdf` を qpdf で暗号化したものなので、
+**写しの判定が `ua-plain.pdf` の判定と一致すれば、書き直しは veraPDF が見る面を保っている。**
+移行前の実装との突き合わせ（撤去済みなのでもうできない）より強い形にしてある ——
+旧実装が同じ誤りをしていても、こちらは通らない。
+
+### 13.6 次
+
+- [ ] 面 3 を Mac で回す（上）。緑なら B2 の受入 3 面が揃う
+- [ ] `DocumentScope`（`recovered` / `chainStop` / `reconstructed` / `filledFromScan`）を
+      ツール出力に載せるか決める。**載せるべき理由がある**: `reconstructed` は
+      「相互参照表は verify が推測した」であり、監査の読み手に隠してよい種類の事実ではない
+- [ ] 版を上げて publish（CHANGELOG は書いてある）
+- [ ] 3 つの Skill の README に Node 20 以上
