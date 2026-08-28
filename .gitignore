@@ -4,3 +4,8 @@ coverage/
 *.log
 .DS_Store
 tests/fixtures/generated/
+
+# L0 のゴールデンと検体（pdf-lib が在るうちにしか採れない。撤去後に作り直さない）
+# コミットしないのは大きいから。**消さないこと** — B2 の受入はこれとの A/B で決まる。
+# .golden/specimens/ は入力側で、鍵も ModDate も再生成すると変わるので作り直しも効かない
+.golden/

@@ -32,9 +32,10 @@
 
 ## 1. いま何が pdf-lib の上にあるか（実測 2026-08-27）
 
-`grep -rl "from 'pdf-lib'" src/` = **6 ファイル**（2026-08-28 再実測。下の表の 5 つに
-`services/revision-diff.ts` を足した 6 つ。0.2.0 移行で歩行層は normativepdf に載せたが、
-`import` は残っている）。
+`grep -rl "from 'pdf-lib'" src/` = **5 ファイル**（2026-08-28 の L0 で再実測）。
+⚠️ 一度「6 ファイル」と書いたが誤りだった。`services/revision-diff.ts` に出る `pdf-lib` は
+**コメント 1 行**（「pdf-lib is not used: ...」）で、`import` は無い。数えるときは
+`grep -rn "pdf-lib"` ではなく `grep -rl "from 'pdf-lib'"` を使う。
 `package.json` の `dependencies` に `pdf-lib: ^1.17.1`。
 
 | ファイル | 行数 | pdf-lib 由来の識別子の出現回数 | `lookup` 系 | 既存 `await` |
@@ -118,7 +119,7 @@ normativepdf 0.8.0 は `parsePdf(bytes, { password })` が**材料化の時点�
 
 ## 5. 段取り
 
-### L0. ゴールデン採取 — **撤去前に固定する（後から作れない）**
+### L0. ゴールデン採取 — **撤去前に固定する（後から作れない）** ✅ **完了（2026-08-28・§10）**
 
 ADR-0006（writer Phase 3）と同じ型。pdf-lib が在るうちに、7 ツールの出力を凍結する。
 
@@ -133,7 +134,7 @@ ADR-0006（writer Phase 3）と同じ型。pdf-lib が在るうちに、7 ツー
   `{"@page": i}` に畳んでいたためページの中身がダイジェストに 1 バイトも入っていなかった。
   ゴールデンの 1 項目を書き換えて A/B が差を報告することを先に実測する
 
-### L1. normativepdf `0.2.0 → 0.9.0`
+### L1. normativepdf `0.2.0 → 0.9.0` ⏳ **ここから**
 
 - いま使っているのは `revision-diff.ts` の 4 記号のみ
   （`dictGet` / `readXrefSectionAt` / `XrefEntry` / `XrefSection`）。4 記号とも 0.8.0 に存在する
@@ -361,3 +362,138 @@ B1 の A/B で、**pdf-lib が読み落としていたもの**が 2 つ出た。
 - 判定を凍結する計器と、事実を突き合わせる probe は**別物で、両方要る**。
   「差 0 件」は「判定が変わらなかった」であって「何も変わらなかった」ではない
   = [[zero-diff-can-mean-the-axis-is-absent]]
+
+---
+
+## 10. L0 の実測（2026-08-28）—— ゴールデンは採り終えた
+
+**`.golden/before-full.json`（2,947 検体・20,629 呼び出し・17MB）を pdf-lib が在るうちに凍結した。
+🔴 これは撤去後に作り直さない。** `.golden/` は `.gitignore` に入れた（コミットしないのは
+大きいから。**消さないこと**）。`.golden/specimens/` は入力側で、鍵も ModDate も
+再生成すると変わるので作り直しも効かない。
+
+### 10.1 計器 `scripts/golden.mjs`（851 行）
+
+```bash
+node scripts/golden.mjs take <out.json> [--set <dir>]... [--label NAME] [--limit N] [--resume]
+node scripts/golden.mjs diff <before.json> <after.json> [--detail <file-key>] [--max N]
+node scripts/golden.mjs report <golden.json>
+node scripts/golden.mjs t3   [golden.json]
+```
+
+- **どこで測るか**: `buildServer()` を `InMemoryTransport` 越しに駆動し、
+  登録済み 7 ツールを呼ぶ（`tests/unit/registry.test.ts` と同じ立場）。
+  サービス層を直接呼ぶと `handleStructuredError` と `isError` の経路が写らない
+- **何を凍結するか**: ファイル × ツールごとに `raw`（ツールの JSON そのまま）と
+  `kept`（判定に効く項目を平らにしたもの）と `raw` 全体の sha。
+  **kept に無い変化も sha で出る**（T-3 の 7 で実測）
+- `engine` は **native 固定**。pdf-lib が居るのは native の 2 本だけで、
+  veraPDF を挟むと撤去と無関係な差が全件に乗る
+- 版（`constraintsVersion` / `tables`）は**ヘッダに寄せて**行の比較から外す。
+  0.3.0 → 0.4.0 で全ファイルが差になると、判定の差が埋もれる
+- `diff` は差を受入の表（§6 面 2）の 7 バケツに割り当てる:
+  A 読めた→読めない / B 読めない→読めた / C pass→非 pass /
+  **D 🔴 反証できなくなった** / E 観測できた対象が減った / F 増えた / G その他
+- 🔴 知らない引数では止まる。`--set` は 1 つずつ直接書く
+
+### 10.2 🔴 device_bash の背景プロセスは呼び出しが終わると死ぬ（実測）
+
+`nohup` も `setsid` も効かない。1,750/2,947 まで進んだところで無音のまま止まり、
+次の呼び出しからは `pgrep` にも出ない。**45 秒を越える仕事は `--resume` で刻む。**
+計器は 250 件ごとに出力を書き、`--resume` は既にあるキーを飛ばす
+（版が違うゴールデンへの継ぎ足しは、1 つの JSON に 2 つの版が混ざるので止まる）。
+全 2,947 件は 30.4 秒で採れたので、実際には 1 回で通った。
+
+### 10.3 検体集合 2,947 件
+
+| 集合 | 件数 | 出どころ |
+|---|---|---|
+| `veraPDF` | 2,907 | `lib/normativepdf/corpus/veraPDF-corpus` |
+| `specimens` | 21 | **本作業で作った**（`.golden/specimens/`） |
+| `fixtures` | 9 | `tests/fixtures/generated/` |
+| `pdf20examples` | 7 | PDF 2.0 の例（§9.4 で B1 が入れ忘れた軸） |
+| `_wout` | 3 | 往復出力 |
+
+**`specimens` を作る 2 本**（どちらも一度だけ動かす。`--force` が要る）:
+
+- `scripts/golden-specimens.mjs` —— qpdf で 12 件。
+  **暗号化 4 方式**（R2=RC4 40 / R3=RC4 128 / R4=AESV2 / R6=AESV3）× 空のユーザパスワード・
+  パスワードあり・アクセシビリティ許可を落としたもの、`origin > 0`、`startxref` を壊したもの、
+  オブジェクトストリームの有無。
+  ⚠️ **pdf-lib の `save()` は既定でオブジェクトストリームを使う**ので、素の検体から作った
+  暗号化検体はすべて「暗号化オブジェクトストリーム」を含む（**L4 の軸はこれで満たされている**）。
+  対照として `--object-streams=disable` の平らな版を 2 件置いた
+- `scripts/golden-specimens-pades.mjs` —— 9 件。**リポジトリ自身の
+  `tests/helpers/signed-pdf.ts` で作る**（別実装を書かない）。B-B / B-T / DSS つき /
+  文書タイムスタンプ ×2 / 非 PAdES / CMS を壊したもの / DocMDP p3 / XMP 宣言つき
+
+`manifest.json` が各検体のパスワードと軸を持ち、`take` はそれを読んで引数を決める
+（`password` を受け取らないツールに渡すと入力検証で落ちるので、受け取る 3 つにだけ渡す）。
+
+#### device_bash で `.ts` のヘルパを動かす（`.golden/tools/`）
+
+`tsc` は macOS 用なので回らないが、**`node --experimental-strip-types` で `.ts` は読める**。
+残るのは `tests/helpers/*.ts` が `../../src/*.js` を指していることだけなので、
+解決を `src` → `dist` に付け替えるローダを 1 枚置いた。
+
+```bash
+node --experimental-strip-types --import ./.golden/tools/register-loader.mjs scripts/<x>.mjs
+```
+
+### 10.4 T-3 —— 10 通りとも差を報告した
+
+`node scripts/golden.mjs t3 .golden/before-full.json` が 10 件とも OK。
+0 = 空振り（同じものを比べて「差なし」）/ 1 = 読めた→読めない / 2 = 読めない→読めた /
+3 = pass→fail / 4 = **fail→pass** / 5 = 制約の行を落とす / 6 = **checkedRules を 1 減らす** /
+7 = **kept に無い項目だけ動かす**（sha で出る）/ 8 = 版だけ動かす（per-file の差は 0 のまま
+ヘッダに出る）/ 9 = 検体を 1 件落とす。
+壊す先が集合に無い検査は「通った」ではなく「何も測っていない」として名指しで落ちる。
+
+**採り直しの空振りも実測した。** 400 検体を 6 分あけて 2 回採って `diff` が 0 件。
+時刻に依存する項目（証明書の失効判定）はこの集合では動いていない。
+
+### 10.5 凍結した中身 —— `isError` は 19 件だけ
+
+| ツール | isError |
+|---|---|
+| `validate_clauses` | 13 |
+| 他の 6 ツール | 各 1 |
+
+- **12 件は暗号化文書に対する `validate_clauses`。** メッセージは pdf-lib の
+  `Input document to PDFDocument.load is encrypted.` で、**7 ツールのうちこれだけが
+  暗号化文書を読めない**。他の 6 つは `decrypt-document.ts` の 2 パスで読めている
+- **残り 7 件は 1 つのファイル**（`{veraPDF}/PDF_A-1b/6.1.2 File header/...`）で、
+  7 ツールとも `Failed to parse number (line:0 col:5 offset=5)` で落ちる
+- 🔴 **19 件のどれも条文を名指ししていない（0/19）。** §6 面 2 の表は
+  「読めた → 読めない」を許容する条件として「エラーが条文を名指ししていること」を
+  置いている。**撤去前の値が 0 なので、この条件は撤去後にだけ効く**
+
+### 10.6 撤去後に出るはずの差（予測。出なかったらそれ自体が発見）
+
+1. **`validate_clauses` が暗号化 12 件で読めるようになる**（B バケツ）。
+   pdf-constraints 0.4.0 + normativepdf 0.9.0 は `parsePdf({password})` で復号込みに読む
+2. **エラーが条文を名指しするようになる**（0/19 → n/19）
+3. **`validate_clauses.observation` が `null` でなくなる**。
+   いまは「1 形しか無い軸」として申告されている（0.3.0 に `observation` が無い）
+4. **壊れた xref の検体が「歩けた → 判定不能」へ落ちる**（§6 面 2 の予測。
+   `{specimens}/ua-broken-startxref.pdf` はいま pdf-lib が回復して読めている）
+
+### 10.7 いま「1 形しか無い軸」4 件
+
+```
+validate_conformance.authPerformed  = false               ← engine を native に固定したため（意図どおり）
+validate_conformance.authReason     = "native_engine_requested"  ← 同上
+validate_clauses.observation        = null                ← 0.4.0 で動くはず（上の予測 3）
+evaluate_policy.profile             = "general"           ← profile 引数を振っていない
+```
+
+**一度も fail しない制約は 15/26**（`CT-ANNOT-1 2 5 6 7 8 11 12 13 14 15` /
+`CT-FONT-2 3` / `CT-META-1 6`）。B1 の後退を捕まえたのはこの申告なので、
+撤去後にこの数が**増えたら**、反証が 1 つ消えたということ。
+
+### 10.8 次（L1）
+
+- `normativepdf 0.2.0 → 0.9.0` と `@shuji-bonji/pdf-constraints 0.3.0 → 0.4.0` を上げる
+- 0.2.0 → 0.6.x の CHANGELOG が無いので `dist/index.d.ts` の差分で確認する（§5 L1）
+- 上げたら `node scripts/golden.mjs take .golden/after-L1.json --label after-L1` →
+  `diff .golden/before-full.json .golden/after-L1.json`
