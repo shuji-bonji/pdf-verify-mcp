@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-08-29
+
 **出力も判定も変わっていない。実行時依存が 1 つ増えた。**
 
 ### Changed
@@ -23,9 +25,12 @@ All notable changes to this project will be documented in this file.
 
 ### 受入
 
-- A/B は **差 0 件**（`.golden/after-0.21.1.json` ↔ `.golden/after-recover.json`・
+- A/B は **差 0 件**（`.golden/after-0.21.1.json` ↔ `.golden/after-0.22.0.json`・
   2,950 検体 × 7 ツール = 20,650 呼び出し）。計器自身の T-3 は 14 件とも差を報告する
   （0 件が空振りでないことの対）。
+  後者は **npm から取った `@normativepdf/recover` 0.1.0** で採ってある
+  （integrity `sha512-jYxS4I+5...`）。手で置いた写しで先に採った
+  `.golden/after-recover.json` とも差 0 件。
 - `scripts/probe-scope.mjs` の分布も同じ —— `chainStop` 5 値・`reconstructed` 7 件・
   `sections` の 0 が 7 件。
 - 単体テスト 191 件（`document-scope` 15 件を含む）が緑。
