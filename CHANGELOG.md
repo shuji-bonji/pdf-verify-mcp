@@ -4,6 +4,58 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-08-29
+
+**`validate_clauses` の markdown で、同じ見出しが 2 つの違うものを指していた。**
+JSON の出力は変わっていない。
+
+### Changed
+
+- `validate_clauses` の markdown の 2 行目の見出しを
+  `Scope of this reading` から **`Scope pdf-constraints observed`** に変えた。
+
+  ```diff
+  - - Scope of this reading: 1 cross-reference section(s), 11 object(s), chain complete
+    - Decided by: @shuji-bonji/pdf-constraints 0.4.0 (...)
+  - - Scope of this reading: revision chain complete, 11 object(s), 1 page(s) reached
+  + - Scope pdf-constraints observed: revision chain complete, 11 object(s), 1 page(s) reached
+  ```
+
+  2 行は違うものを測っている —— 1 本目は verify がこの文書をどこまで読めたか
+  （`ReadingScope`）、2 本目は pdf-constraints が制約を当てるときに観測できた範囲。
+  同じ名前だと、数字が食い違ったときに読み手がどちらを読めばいいか分からない。
+  検体 2,950 件のうち **2,929 件**でこの 2 行が並んでいた。
+
+  **移行**: markdown を文字列で読んでいるなら 2 本目の見出しが変わる。
+  JSON（`response_format: 'json'`）は 1 バイトも変わっていない。
+
+### Fixed
+
+- **`scripts/golden.mjs` が markdown の出力を一度も測っていなかった。**
+  `take` は毎回 `response_format: 'json'` を付けていたので、20,650 回の呼び出しの
+  どれにも既定の本文が入っていなかった。上の 2 行が並んでいたのは 0.20.0 からで、
+  A/B は 3 回とも「差 0 件」を返し続けていた。
+
+  `--format json|markdown` を足した（既定は json）。markdown のゴールデンは
+  本文をそのまま持ち、行の消滅・追加・並べ替え・空を分類する。
+  🔴 **形式の違うゴールデン同士は突き合わせられない**（全件差になって信号が埋まる）。
+  版を持たない古いゴールデンは json として扱う。
+
+  `report` は markdown のとき、ツールごとに「`Scope of this reading` が本文に
+  何行あるか」の分布を出す。0 行 = 射程を出していない、2 行 = 違うものが同じ見出しで
+  並んでいる。この計器があれば 0.20.0 の時点で見えていた。
+
+### 受入
+
+```
+markdown  .golden/md-0.22.0.json <-> .golden/md-after-split.json
+          差 2,929 件。すべて validate_clauses の 5 行目 1 行だけ。ほかの 6 ツールは 0 件
+json      .golden/after-0.22.0.json <-> .golden/after-split.json  差 0 件
+T-3       json 14 件 / markdown 10 件とも差を報告
+report    「Scope of this reading」の行数が 7 ツールとも 1 になった（前は clauses が 2）
+単体      192 件（+1 = 2 つの射程が別の名前で出ることの検査。直す前は落ちることを実測）
+```
+
 ## [0.22.0] - 2026-08-29
 
 **出力も判定も変わっていない。実行時依存が 1 つ増えた。**

@@ -18,8 +18,16 @@
  * 版（constraintsVersion / tables）は行ではなくヘッダで比べる。0.3.0 -> 0.4.0 で
  * 全ファイルが差になると、判定の差が埋もれるため。
  *
+ * **どちらの出力を凍結するか**: ツールは `response_format` で 2 通りの本文を返す。
+ *   `--format json`（既定）= 構造化された JSON。判定と対象の数はここで測る。
+ *   `--format markdown`    = 利用者が既定で受け取る本文。射程の行や注記はここにしかない。
+ * 🔴 **2 つは別のゴールデンである。** 0.22.0 までは json しか採っておらず、
+ * `formatReadingScope` が組む行は 20,650 回の呼び出しのどれにも入っていなかった。
+ * 形式の違うゴールデン同士は diff できない（全件差になって信号が埋まる）。
+ *
  * 使い方:
  *   node scripts/golden.mjs take <out.json> [--set <dir>]... [--label NAME] [--limit N] [--resume]
+ *                                           [--format json|markdown]
  *   node scripts/golden.mjs diff <before.json> <after.json> [--detail <file-key>] [--max N]
  *   node scripts/golden.mjs report <golden.json>    # 採ったものの軸の申告を読み直す
  *   node scripts/golden.mjs t3   [golden.json]      # 計器自身の T-3。採る前に通す
@@ -61,6 +69,9 @@ const TOOLS = [
 /** veraPDF を挟むと撤去と無関係な差（veraPDF の有無）が全件に乗る。 */
 const FIXED_ARGS = { validate_conformance: { engine: 'native' } };
 
+/** 凍結できる出力の形。既定は json。 */
+const RESPONSE_FORMATS = ['json', 'markdown'];
+
 /** 時刻に依存して動く項目。差が出たらまずここを疑う（帰属の手がかりとしてヘッダに残す）。 */
 const TIME_DEPENDENT = [
   'verify_signatures[].cms.signerCertificate.isExpiredNow',
@@ -82,9 +93,18 @@ const sha = (s) => createHash('sha256').update(s ?? '').digest('hex').slice(0, 1
  * 古いゴールデン（この印を持たない）でも判るよう、raw の形から見分ける。
  */
 const isUnparsed = (entry) =>
-  entry?.parsed === false ||
-  (entry?.raw && typeof entry.raw === 'object' && !Array.isArray(entry.raw) &&
-    Object.keys(entry.raw).length === 1 && '_text' in entry.raw);
+  entry?.format === 'markdown'
+    ? false
+    : entry?.parsed === false ||
+      (entry?.raw && typeof entry.raw === 'object' && !Array.isArray(entry.raw) &&
+        Object.keys(entry.raw).length === 1 && '_text' in entry.raw);
+
+/**
+ * Markdown の entry で「何も測っていない」形 —— 本文が空。
+ * json の `isUnparsed` に当たるもので、こちらも「差が無い」と数えてはいけない。
+ */
+const isEmptyText = (entry) =>
+  entry?.format === 'markdown' && !String(entry.text ?? '').trim();
 
 /** キー順に依存しない JSON 文字列（比較の同一性をキー順で崩さない）。 */
 function stable(value) {
@@ -137,6 +157,25 @@ function maskPaths(value, masks) {
 // --------------------------------------------------------------------------
 
 const N = (v) => (Array.isArray(v) ? v.length : v == null ? null : v);
+
+/**
+ * Markdown の本文から、意味の載っている行だけを取り出す。
+ *
+ * 本文そのものは `text` に持っているので、ここは**分類と軸の申告のため**の抜き出しである。
+ * `scopeLines` を数えるのは、射程の行が本文に何本あるかを見張るため ——
+ * 0 本なら射程を出していない、2 本なら 2 つの違うものが同じ見出しで出ている
+ * （0.22.0 の `validate_clauses` が実際にそうだった）。
+ */
+function keptMd(text) {
+  const lines = String(text ?? '').split('\n');
+  return {
+    bytes: String(text ?? '').length,
+    lineCount: lines.length,
+    scopeLines: lines.filter((l) => l.includes('Scope of this reading')).length,
+    headings: lines.filter((l) => l.startsWith('#')),
+    bullets: lines.filter((l) => l.startsWith('- ')),
+  };
+}
 
 function keptOf(tool, raw) {
   if (raw == null) return null;
@@ -265,6 +304,11 @@ function depVersions() {
 }
 
 async function take(outPath, opts) {
+  const responseFormat = opts.format ?? 'json';
+  if (!RESPONSE_FORMATS.includes(responseFormat)) {
+    console.error(`--format は ${RESPONSE_FORMATS.join(' / ')} のどれか: ${responseFormat}`);
+    process.exit(2);
+  }
   const { Client, InMemoryTransport } = await import('@modelcontextprotocol/client');
   const { buildServer } = await import('../dist/server.js');
 
@@ -317,6 +361,13 @@ async function take(outPath, opts) {
   const outResolved = resolve(outPath);
   if (opts.resume && existsSync(outResolved)) {
     const prev = JSON.parse(readFileSync(outResolved, 'utf8'));
+    if ((prev.header.responseFormat ?? 'json') !== responseFormat) {
+      console.error(
+        `--resume: 形式が違う（${prev.header.responseFormat ?? 'json'} に ${responseFormat} を継ぎ足そうとしている）。` +
+          '1 つの JSON に 2 通りの本文が混ざる。',
+      );
+      process.exit(2);
+    }
     if (stable(prev.header.deps) !== stable(depVersions())) {
       console.error(`--resume: 版が違う（${JSON.stringify(prev.header.deps)}）。継ぎ足すと 1 つの JSON に 2 つの版が混ざる。`);
       process.exit(2);
@@ -336,6 +387,7 @@ async function take(outPath, opts) {
       capturedAt: new Date().toISOString(),
       node: process.version,
       deps: depVersions(),
+      responseFormat,
       fixedArgs: FIXED_ARGS,
       tools: TOOLS,
       timeDependent: TIME_DEPENDENT,
@@ -368,7 +420,8 @@ async function take(outPath, opts) {
       tools: {},
     };
     for (const tool of TOOLS) {
-      const args = { file_path: t.path, response_format: 'json', ...(FIXED_ARGS[tool] ?? {}) };
+      // 🔴 既定に頼らず毎回明示する。既定が変わったときに、採った本文が黙って入れ替わる
+      const args = { file_path: t.path, response_format: responseFormat, ...(FIXED_ARGS[tool] ?? {}) };
       if (t.password !== undefined) {
         // password を受け付けないツールに渡すと入力検証で落ちるので、受け付けるものだけ
         if (['verify_signatures', 'validate_conformance', 'evaluate_policy'].includes(tool)) {
@@ -384,6 +437,22 @@ async function take(outPath, opts) {
       }
       calls++;
       const text = String(res.content?.[0]?.text ?? '');
+      const isError = res.isError === true;
+      if (isError) errors++;
+
+      if (responseFormat === 'markdown') {
+        const body = maskPaths(text, masks);
+        entry.tools[tool] = {
+          isError,
+          format: 'markdown',
+          channel: res.rpc ? 'jsonrpc' : 'tool-result',
+          sha: sha(body),
+          kept: keptMd(body),
+          text: body,
+        };
+        continue;
+      }
+
       let raw;
       let parsed = true;
       try {
@@ -393,8 +462,6 @@ async function take(outPath, opts) {
         parsed = false;
       }
       raw = maskPaths(raw, masks);
-      const isError = res.isError === true;
-      if (isError) errors++;
 
       for (const [t2, key] of HOISTED) {
         if (t2 === tool && !isError && raw && typeof raw === 'object' && key in raw) {
@@ -438,7 +505,37 @@ function reportAxes(golden, outPath) {
   console.log(`\n採った: ${files.length} 検体 / ${golden.header.counts.calls} 呼び出し / ` +
     `${golden.header.counts.errors} 件が isError / ${golden.header.counts.ms}ms -> ${outPath}`);
   for (const s of golden.header.sets) console.log(`  集合 ${s.token}: ${s.files} 件  (${s.root})`);
+  console.log(`  形式: ${golden.header.responseFormat ?? 'json'}`);
   console.log(`  版: ${JSON.stringify(golden.header.deps)}`);
+
+  if ((golden.header.responseFormat ?? 'json') === 'markdown') {
+    // 🔴 本文が空 = 何も測っていない。差が無いことと分ける
+    const empty = [];
+    for (const [k, e] of files) {
+      for (const tool of TOOLS) if (isEmptyText(e.tools[tool])) empty.push(`${k} / ${tool}`);
+    }
+    if (empty.length) {
+      console.log(`\n  🔴 本文が空: ${empty.length} 件（ここでは項目を 1 つも取れていない）`);
+      for (const k of empty.slice(0, 20)) console.log(`    ${k}`);
+    }
+    // 射程の行がツールごとに何本出ているか。0 本 = 射程を出していない、
+    // 2 本 = 違うものが同じ見出しで並んでいる
+    console.log('\n  「Scope of this reading」の行数（ツール別・値ごとの検体数）:');
+    for (const tool of TOOLS) {
+      const dist = {};
+      for (const [, e] of files) {
+        const t = e.tools[tool];
+        if (!t || t.isError) continue;
+        const n = t.kept?.scopeLines ?? 0;
+        dist[n] = (dist[n] ?? 0) + 1;
+      }
+      const marks = Object.keys(dist).map(Number).filter((n) => n !== 1);
+      console.log(
+        `    ${tool.padEnd(22)} ${JSON.stringify(dist)}${marks.length ? '  🔴 1 本でない値がある' : ''}`,
+      );
+    }
+  }
+
   let unparsed = 0;
   const unparsedFiles = new Set();
   for (const [k, e] of files) {
@@ -572,14 +669,48 @@ const B_G = 'G その他（帰属が要る）';
 const B_H = 'H 🔴 出力が切り詰められて JSON にならない（項目を 1 つも取れていない）';
 const B_I = 'I 並びだけが違う（行の集合と中身は同じ）';
 const B_J = 'J 前の版に無かった項目が増えただけ（判定は動いていない）';
-const BUCKETS = [B_A, B_B, B_D, B_C, B_E, B_F, B_H, B_I, B_J, B_G];
+const B_K = 'K 本文から行が消えた（Markdown）';
+const B_L = 'L 本文に行が増えた（Markdown）';
+const B_M = 'M 🔴 本文が空（Markdown・項目を 1 つも取れていない）';
+const BUCKETS = [B_A, B_B, B_D, B_C, B_E, B_F, B_H, B_M, B_I, B_K, B_L, B_J, B_G];
 
 /**
  * 1 ファイル 1 ツールの差を、受入の表（§6 面 2）の行に割り当てる。
  * 🔴 **当てはまる行を全部返す。** 1 つに畳むと、原因（対象が減った）を
  * 結果（判定が変わった）が隠す —— L1 の `/Prev 0` の検体で実際にそうなった。
  */
+/**
+ * Markdown の本文の差を割り当てる。
+ *
+ * 🔴 json の分類（pass -> fail・規則の数）はここでは使えない。本文からは
+ * 判定を取り出していないからで、取り出せるふりをすると「測っていないこと」が
+ * 「差が無いこと」の顔をする。ここで言えるのは、**行が消えた・増えた・
+ * 並びが違う・中身が変わった**の 4 つだけである。判定は json のゴールデンで見る。
+ */
+function classifyMd(before, after) {
+  if (isEmptyText(before) || isEmptyText(after)) return [B_M];
+  if (!before.isError && after.isError) return [B_A];
+  if (before.isError && !after.isError) return [B_B];
+  const la = String(before.text ?? '').split('\n');
+  const lb = String(after.text ?? '').split('\n');
+  const sa = [...la].sort().join('\n');
+  const sb = [...lb].sort().join('\n');
+  if (sa === sb) return la.join('\n') === lb.join('\n') ? [B_G] : [B_I];
+  const ca = new Map();
+  for (const l of la) ca.set(l, (ca.get(l) ?? 0) + 1);
+  const cb = new Map();
+  for (const l of lb) cb.set(l, (cb.get(l) ?? 0) + 1);
+  const s = new Set();
+  for (const [l, n] of ca) if ((cb.get(l) ?? 0) < n) s.add(B_K);
+  for (const [l, n] of cb) if ((ca.get(l) ?? 0) < n) s.add(B_L);
+  if (s.size === 0) s.add(B_G);
+  return BUCKETS.filter((name) => s.has(name));
+}
+
 function classify(tool, before, after) {
+  if (before?.format === 'markdown' || after?.format === 'markdown') {
+    return classifyMd(before, after);
+  }
   if (isUnparsed(before) || isUnparsed(after)) return [B_H];
   if (!before.isError && after.isError) return [B_A];
   if (before.isError && !after.isError) return [B_B];
@@ -667,8 +798,17 @@ function diff(beforePath, afterPath, opts) {
   const A = JSON.parse(readFileSync(resolve(beforePath), 'utf8'));
   const B = JSON.parse(readFileSync(resolve(afterPath), 'utf8'));
 
-  console.log(`before: ${A.header.label}  ${A.header.capturedAt}  ${JSON.stringify(A.header.deps)}`);
-  console.log(`after : ${B.header.label}  ${B.header.capturedAt}  ${JSON.stringify(B.header.deps)}`);
+  const fa = A.header.responseFormat ?? 'json';
+  const fb = B.header.responseFormat ?? 'json';
+  if (fa !== fb) {
+    // 🔴 json と markdown を突き合わせると全件が差になり、本当の差がその中に埋まる。
+    // 版が無い古いゴールデンは json（0.22.0 まで json しか採っていない）。
+    console.error(`形式が違うゴールデンは突き合わせられない: ${fa} <-> ${fb}`);
+    console.error('同じ --format で採り直してから比べること。');
+    return 2;
+  }
+  console.log(`before: ${A.header.label}  ${A.header.capturedAt}  [${fa}]  ${JSON.stringify(A.header.deps)}`);
+  console.log(`after : ${B.header.label}  ${B.header.capturedAt}  [${fb}]  ${JSON.stringify(B.header.deps)}`);
   for (const slot of new Set([...Object.keys(A.header.hoisted), ...Object.keys(B.header.hoisted)])) {
     const va = stable(A.header.hoisted[slot]);
     const vb = stable(B.header.hoisted[slot]);
@@ -701,6 +841,15 @@ function diff(beforePath, afterPath, opts) {
       shown++;
       console.log(`\n=== ${opts.detail} / ${tool}  (${classify(tool, a.tools[tool], b.tools[tool]).join(' + ')})`);
       console.log(`isError ${a.tools[tool].isError} -> ${b.tools[tool].isError}`);
+      if (fa === 'markdown') {
+        const la = String(a.tools[tool].text ?? '').split('\n');
+        const lb = String(b.tools[tool].text ?? '').split('\n');
+        for (let i = 0; i < Math.max(la.length, lb.length); i++) {
+          if (la[i] === lb[i]) continue;
+          console.log(`  行 ${i + 1}\n    - ${la[i] ?? '(無し)'}\n    + ${lb[i] ?? '(無し)'}`);
+        }
+        continue;
+      }
       for (const d of deepDiff(a.tools[tool].raw, b.tools[tool].raw, '', [], 200)) {
         console.log(`  ${d.path}\n    - ${d.before}\n    + ${d.after}`);
       }
@@ -770,8 +919,122 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
 
 /** raw を書き換えたら kept と sha を採り直す。片方だけ動かすと計器が嘘をつく。 */
 function refresh(entry, tool) {
+  if (entry.format === 'markdown') {
+    entry.kept = keptMd(entry.text);
+    entry.sha = sha(entry.text);
+    return;
+  }
   entry.kept = entry.isError ? entry.kept : keptOf(tool, entry.raw);
   entry.sha = sha(stable(entry.raw));
+}
+
+/**
+ * Markdown のゴールデンに対する T-3。
+ *
+ * 🔴 json の検査（pass -> fail・規則の数）はここでは使えない。本文からは判定を
+ * 取り出していないので、壊しても分類は動かない。ここで測るのは
+ * **本文の変化が差として出るか**と、**形式の取り違えで止まるか**である。
+ */
+function runMdCases(src, base, write, keys, findWhere, cases, add, goldenPath) {
+  const okKey = findWhere((f) => TOOLS.every((t) => !f.tools[t].isError));
+  const errKey = findWhere((f) => TOOLS.some((t) => f.tools[t].isError));
+  const clauseKey = findWhere(
+    (f) => !f.tools.validate_clauses.isError && (f.tools.validate_clauses.kept?.lineCount ?? 0) > 6,
+  );
+  const missing = Object.entries({ okKey, errKey, clauseKey })
+    .filter(([, v]) => !v)
+    .map(([k]) => k);
+
+  const errTool = errKey ? TOOLS.find((t) => src.files[errKey].tools[t].isError) : null;
+
+  add('M1 読めた -> 読めない（isError を立てる）', (g) => {
+    const e = g.files[okKey].tools.detect_pades_level;
+    e.isError = true;
+    e.text = 'PARSE_FAILED: ISO 32000-1 7.5.4';
+    refresh(e, 'detect_pades_level');
+    return g;
+  }, (t) => /^A 読めた -> 読めない: 1$/m.test(t));
+
+  add('M2 読めない -> 読めた（isError を落とす）', (g) => {
+    const e = g.files[errKey].tools[errTool];
+    e.isError = false;
+    e.text = `${e.text}\n`;
+    refresh(e, errTool);
+    return g;
+  }, (t) => /^B 読めない -> 読めた: 1$/m.test(t));
+
+  add('M3 本文の 1 行を書き換える', (g) => {
+    const e = g.files[clauseKey].tools.validate_clauses;
+    const lines = e.text.split('\n');
+    const i = lines.findIndex((l) => l.startsWith('- '));
+    lines[i] = `${lines[i]} (T-3)`;
+    e.text = lines.join('\n');
+    refresh(e, 'validate_clauses');
+    return g;
+  }, (t) => /差: [1-9]/.test(t) && /validate_clauses/.test(t));
+
+  add('M4 本文から行を 1 つ落とす', (g) => {
+    const e = g.files[clauseKey].tools.validate_clauses;
+    const lines = e.text.split('\n');
+    lines.splice(lines.findIndex((l) => l.startsWith('- ')), 1);
+    e.text = lines.join('\n');
+    refresh(e, 'validate_clauses');
+    return g;
+  }, (t) => /^K 本文から行が消えた/m.test(t));
+
+  add('M5 本文に行を 1 つ足す', (g) => {
+    const e = g.files[clauseKey].tools.validate_clauses;
+    e.text = `${e.text}\n- T-3 で足した行`;
+    refresh(e, 'validate_clauses');
+    return g;
+  }, (t) => /^L 本文に行が増えた/m.test(t));
+
+  add('M6 行の並びだけ入れ替える', (g) => {
+    const e = g.files[clauseKey].tools.validate_clauses;
+    e.text = e.text.split('\n').reverse().join('\n');
+    refresh(e, 'validate_clauses');
+    return g;
+  }, (t) => /^I 並びだけが違う/m.test(t));
+
+  add('M7 🔴 本文を空にする（何も測っていない）', (g) => {
+    const e = g.files[clauseKey].tools.validate_clauses;
+    e.text = '';
+    refresh(e, 'validate_clauses');
+    return g;
+  }, (t) => /^M 🔴 本文が空/m.test(t));
+
+  add('M8 🔴 形式の違うゴールデンと突き合わせる（止まること）', (g) => {
+    g.header.responseFormat = 'json';
+    return g;
+  }, (t, code) => code === 2 && !/差:/.test(t));
+
+  add('M9 検体を 1 件落とす', (g) => {
+    delete g.files[okKey];
+    return g;
+  }, (t) => /消えた 1 /.test(t));
+
+  return runCases(src, base, write, keys, cases, missing, goldenPath, 'markdown');
+}
+
+/** 壊した写しを 1 件ずつ diff にかけ、差を報告したかを見る。 */
+function runCases(src, base, write, keys, cases, missing, goldenPath, format) {
+  console.log(`計器の T-3: ${goldenPath}（検体 ${keys.length}・形式 ${format}）`);
+  if (missing.length) {
+    console.log(`🔴 壊す先が集合に無い検査がある: ${missing.join(' ')}`);
+    console.log('   その検査は「通った」のではなく、何も測っていない。');
+  }
+  let failed = 0;
+  for (const c of cases) {
+    const mutated = c.mutate(clone(src));
+    const p = write(`case-${c.name.split(' ')[0]}`, mutated);
+    const { code, text } = capture(() => diff(base, p, {}));
+    const ok = c.expect(text, code);
+    if (!ok) failed++;
+    console.log(`  ${ok ? 'OK  ' : '🔴 NG'} ${c.name}`);
+    if (!ok) console.log(text.split('\n').map((l) => `        ${l}`).join('\n'));
+  }
+  console.log(failed ? `\n🔴 ${failed} 件の自己検査に失敗` : `\n${cases.length} 件とも差を報告した`);
+  return failed || missing.length ? 2 : 0;
 }
 
 function t3(goldenPath) {
@@ -793,6 +1056,11 @@ function t3(goldenPath) {
   const add = (name, mutate, expect) => cases.push({ name, mutate, expect });
 
   add('0 空振り（同じものを比べる）', (g) => g, (t) => t.includes('差なし'));
+
+  const format = src.header.responseFormat ?? 'json';
+  if (format === 'markdown') {
+    return runMdCases(src, base, write, keys, findWhere, cases, add, goldenPath);
+  }
 
   const okKey = findWhere((f) => TOOLS.every((t) => !f.tools[t].isError));
   const errKey = findWhere((f) => f.tools.detect_pades_level.isError);
@@ -913,23 +1181,7 @@ function t3(goldenPath) {
     return g;
   }, (t) => /消えた 1 /.test(t));
 
-  console.log(`計器の T-3: ${goldenPath}（検体 ${keys.length}）`);
-  if (missing.length) {
-    console.log(`🔴 壊す先が集合に無い検査がある: ${missing.join(' ')}`);
-    console.log('   その検査は「通った」のではなく、何も測っていない。');
-  }
-  let failed = 0;
-  for (const c of cases) {
-    const mutated = c.mutate(clone(src));
-    const p = write(`case-${c.name.split(' ')[0]}`, mutated);
-    const { text } = capture(() => diff(base, p, {}));
-    const ok = c.expect(text);
-    if (!ok) failed++;
-    console.log(`  ${ok ? 'OK  ' : '🔴 NG'} ${c.name}`);
-    if (!ok) console.log(text.split('\n').map((l) => `        ${l}`).join('\n'));
-  }
-  console.log(failed ? `\n🔴 ${failed} 件の自己検査に失敗` : `\n${cases.length} 件とも差を報告した`);
-  return failed || missing.length ? 2 : 0;
+  return runCases(src, base, write, keys, cases, missing, goldenPath, 'json');
 }
 
 // --------------------------------------------------------------------------
@@ -938,6 +1190,7 @@ function t3(goldenPath) {
 
 const USAGE = `使い方:
   node scripts/golden.mjs take <out.json> [--set <dir>]... [--label NAME] [--limit N] [--resume]
+                                          [--format json|markdown]   既定 json
   node scripts/golden.mjs diff <before.json> <after.json> [--detail <file-key>] [--max N]
   node scripts/golden.mjs report <golden.json>
   node scripts/golden.mjs t3   [golden.json]`;
@@ -951,6 +1204,7 @@ function parseArgs(argv) {
     else if (a === '--label') opts.label = argv[++i];
     else if (a === '--limit') opts.limit = Number(argv[++i]);
     else if (a === '--resume') opts.resume = true;
+    else if (a === '--format') opts.format = argv[++i];
     else if (a === '--detail') opts.detail = argv[++i];
     else if (a === '--max') opts.max = Number(argv[++i]);
     else if (a.startsWith('--')) {

@@ -203,7 +203,24 @@ describe('validate_clauses は判定の射程を申告する', () => {
     expect(report.observation.pages).toBeGreaterThan(0);
 
     expect(report.notes.join(' ')).not.toContain('PART of the document');
-    expect(formatClauseValidation(report)).toContain('Scope of this reading');
+    const markdown = formatClauseValidation(report);
+    // 🔴 verify が読んだ範囲（`Scope of this reading`）ではなく、
+    // pdf-constraints が観測できた範囲のほうを見ている
+    expect(markdown).toContain('Scope pdf-constraints observed');
+  });
+
+  it('🔴 2 つの射程は別の名前で出る（同じ見出しに畳まれていない）', async () => {
+    const path = await makeDocumentWithDates({
+      infoCreation: 'D:20200102030405Z',
+      xmpCreate: '2020-01-02T03:04:05Z',
+    });
+    const markdown = formatClauseValidation(await validateClauses(path));
+
+    // 上 = verify がこの文書をどこまで読めたか / 下 = 制約を当てられた範囲
+    expect(markdown).toContain('- Scope of this reading:');
+    expect(markdown).toContain('- Scope pdf-constraints observed:');
+    // 同じ見出しが 2 回出ない。0.22.0 まではこれが 2 だった
+    expect(markdown.split('- Scope of this reading:').length - 1).toBe(1);
   });
 
   it('🔴 チェーンが切れた文書では、部分読みであることを注記に出す', async () => {
@@ -222,7 +239,7 @@ describe('validate_clauses は判定の射程を申告する', () => {
     });
     const markdown = formatClauseValidation(await validateClauses(path));
 
-    expect(markdown.indexOf('Scope of this reading')).toBeLessThan(
+    expect(markdown.indexOf('Scope pdf-constraints observed')).toBeLessThan(
       markdown.indexOf('Subjects examined'),
     );
   });

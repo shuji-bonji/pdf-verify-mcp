@@ -513,10 +513,16 @@ export function formatClauseValidation(
     `- Decided by: @shuji-bonji/pdf-constraints ${report.constraintsVersion} ` +
       `(${report.tables.map((t) => `${t.name} v${t.version}`).join(', ')})`,
   );
-  // 射程を数字より先に置く。「違反なし」と「そこを見ていない」を読み手が取り違えないため
+  // 射程を数字より先に置く。「違反なし」と「そこを見ていない」を読み手が取り違えないため。
+  //
+  // 🔴 **1 つ上の行と別の名前にしてある。** どちらも「どこまで見たか」だが、測っている
+  // ものが違う —— 上は verify がこの文書をどこまで読めたか（`ReadingScope`）、
+  // ここは pdf-constraints が制約を当てるときに観測できた範囲である。0.22.0 まで
+  // どちらも `Scope of this reading` と名乗っていて、2,929 検体でこの 2 行が並んでいた。
+  // 数字が食い違ったとき、読み手はどちらを読めばいいか分からない。
   const obs = report.observation;
   lines.push(
-    `- Scope of this reading: revision chain ${obs.xrefChain}, ${obs.objects} object(s), ` +
+    `- Scope pdf-constraints observed: revision chain ${obs.xrefChain}, ${obs.objects} object(s), ` +
       `${obs.pagesReached ? `${obs.pages} page(s) reached` : '**page tree NOT reached**'}`,
   );
   lines.push(`- Subjects examined: ${report.subjects}`);

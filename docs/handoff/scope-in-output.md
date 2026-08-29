@@ -370,3 +370,28 @@ node scripts/golden.mjs t3   .golden/base-0.20.0.json
 - [ ] `site/` の再生成（publish 後）
 - [ ] **reader の pdf-lib 撤去**（family 第 3 弾）。B2 で作った 3 つ
       （`xref-walk.ts` / `document.ts` / `cos.ts`）と計器 3 本がそのまま型になる
+
+---
+
+## 追記（2026-08-29・0.23.0）
+
+上の S2 の「markdown は `Scope of this reading` を判定より前（`validate_clauses` と
+同じ形）」を**そのまま実装したせいで、`validate_clauses` だけ同じ見出しが 2 行になった。**
+
+`validate_clauses` には元から `report.observation`（pdf-constraints が制約を当てる
+ときに観測できた範囲）を出す行があり、そこに `ReadingScope`（verify がこの文書を
+どこまで読めたか）の行を同じ名前で足した形になっていた。検体 2,950 件のうち
+**2,929 件**で 2 行が並んでいた。0.23.0 で 2 本目を
+`Scope pdf-constraints observed` に変えた。
+
+**なぜ 3 回の A/B で出なかったか**: `scripts/golden.mjs take` が毎回
+`response_format: 'json'` を付けており、**既定の markdown の本文は 20,650 回の
+呼び出しのどれにも入っていなかった**。0.23.0 で `--format json|markdown` を足し、
+`report` が「`Scope of this reading` の行数」をツール別に出すようにした。
+
+教訓は 2 つ。
+
+1. **「同じ形にする」と書くときは、足す先に同じ名前が既に無いかを見る。**
+   1 語が 2 つを指したら、それは説明ではなく食い違いを畳んだもの
+2. **計器が固定している引数は、測っていない経路の一覧でもある。**
+   `response_format: 'json'` は再現性のために正しいが、既定の経路を測らない理由にはならない
