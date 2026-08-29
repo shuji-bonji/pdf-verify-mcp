@@ -58,7 +58,22 @@ All notable changes to this project will be documented in this file.
   **こちらの出力の欠陥**として扱う
 - `pdf-agent-pipeline` —— Trust Report の表に「読んだ範囲」の行
 
+## [0.21.1] - 2026-08-29
+
+### Changed
+
+- **7 ツールの `description` が `scope` を説明するようになった**（`tools/list` の応答）。
+  0.20.0 / 0.21.0 で出力の形は変わっていたのに、**ツール自身の説明が古い契約のまま**
+  だった。ツールを呼ぶ側（LLM）がまず読むのはこの文で、サイトのリファレンスも
+  ここから生成される。とくに `verify_signatures` と `detect_pades_level` は
+  「最上位が v0.21.0 で配列から辞書に変わった」を説明に書いた。
+- 判定も引数も出力の形も変えていない。ゴールデンの A/B は 0 件。
+
 ## [0.20.0] - 2026-08-29
+
+> **この版は npm に出ていない。** tag `v0.20.0` は残っているが publish は走らず、
+> npm の版は 0.19.0 の次が 0.21.0 になっている。0.19.0 から上げると、この節の
+> 変更も 0.21.0 にまとめて入る。
 
 判定の射程を出力に載せた。計画と実測は `docs/handoff/scope-in-output.md`。
 

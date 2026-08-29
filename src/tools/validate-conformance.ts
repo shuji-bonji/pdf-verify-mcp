@@ -65,6 +65,8 @@ Args:
 When veraPDF does not run, the report says so before the numbers: authoritativeValidation.performed is false and names the reason ("not_installed", "configured_path_unusable" when PDF_VERIFY_VERAPDF points at something that is not executable, or "native_engine_requested"). A configured-but-unusable path is never silently replaced by another executable — with engine: "verapdf" it errors as VERAPDF_NOT_AVAILABLE.
 
 Returns:
+  Every report begins with a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
+
   Per-rule results with ISO clause references. compliant is true/false for veraPDF; for the native engine, false means definitive violations were found and null means "no violations in the checked subset" (NOT certification). PDF/UA native violations carry a severity: only 'error' rules can prove non-conformance, 'warning' rules need human review. For an encrypted PDF that cannot be decrypted, structure-dependent PDF/UA rules are reported in skippedRules (not checked) rather than as violations.
 
 Note: PDF/UA cannot be fully decided by machine — whether alt text is *present* is checkable, whether it is *meaningful* is not. Use pdf-reader-mcp's inspect_tags to examine the structure tree itself.

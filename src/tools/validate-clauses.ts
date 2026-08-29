@@ -54,6 +54,8 @@ Args:
   - given (object, optional): External facts, e.g. { "isSubset": true }
 
 Returns:
+  Every report begins with a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
+
   Per-constraint results with the clause IDs they come from. Four states:
   - pass — nothing in this constraint could be disproved
   - fail — disproved, with the fact and its measured value as evidence
