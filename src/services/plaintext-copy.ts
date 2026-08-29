@@ -57,7 +57,13 @@ export async function decryptedCopy(
       [...doc.doc.trailer.entries].filter(([key]) => key !== 'Encrypt'),
     );
     const trailer: CosDict = { kind: 'dict', entries };
-    return writeFile(objects, trailer);
+    // 🔴 **ヘッダの版は元のまま書く。** `writeFile` を直接呼ぶと既定の版で書かれ、
+    // 1.7 の文書が `%PDF-2.0` になる。ISO 14289-1 6.1 は「版は 1.0 から 1.7 のいずれか」
+    // と定めているので、これだけで veraPDF は PDF/UA-1 を不適合と判定する
+    // —— 判定させたい文書とは別の文書を渡していたことになる（面 3 で実測・2026-08-28）。
+    // 実効版（catalog の `/Version`）ではなくヘッダ版を使う: 実効版で書くと、
+    // catalog と一緒に旅する `/Version` のせいでファイルが黙って上の版に上がる。
+    return writeFile(objects, trailer, { version: doc.doc.headerVersion });
   } catch (error) {
     logger.debug(CONTEXT, `cannot write: ${String(error)}`);
     return null;

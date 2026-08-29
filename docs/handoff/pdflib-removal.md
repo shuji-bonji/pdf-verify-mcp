@@ -912,7 +912,7 @@ the trailer carries /Encrypt
 |---|---|
 | **面 1 撤去** | ✅ `src` の import 0 / `npm ls --omit=dev pdf-lib` = `(empty)` |
 | **面 2 出力の A/B** | ✅ 全段で帰属済み（L1 = 43 件・L2+L3 = 25 件・L4+L5 = 0 件）。**誤った `pass` は 0 件** |
-| **面 3 独立オラクル** | ⏳ **未実施** —— device_bash に veraPDF が無い（§13.5） |
+| **面 3 独立オラクル** | ⏳ 1 回目で**欠陥を 1 つ捕まえた**（§13.5）。直して再実行待ち |
 
 ### 13.5 🔴 面 3 は Mac で回す —— `npm run check:verapdf-oracle`
 
@@ -943,3 +943,63 @@ npm run build && npm run check:verapdf-oracle
       「相互参照表は verify が推測した」であり、監査の読み手に隠してよい種類の事実ではない
 - [ ] 版を上げて publish（CHANGELOG は書いてある）
 - [ ] 3 つの Skill の README に Node 20 以上
+
+
+---
+
+## 14. 面 3 の 1 回目 —— 書き直しがヘッダの版を上げていた（2026-08-28）
+
+Mac で `npm run check:verapdf-oracle` を回したら、**暗号化検体 8 件が 8 件とも**
+同じ規則で落ちた。`qpdf --check` は通っている。
+
+```
+基準（ua-plain.pdf・暗号化していない元）: true []
+  🔴 NG ua-enc-aesv3.pdf   qpdf=ok  false [ISO 14289-1:2014 6.1-1]
+  （他 7 件も同じ）
+```
+
+### 原因（条文を引いて、写しの中身と突き合わせた）
+
+| | ヘッダ |
+|---|---|
+| 元 `ua-plain.pdf` | `%PDF-1.7` |
+| 平文の写し | **`%PDF-2.0`** |
+
+ISO 14289-1:2014 §6.1（pdf-spec-mcp で実測）:
+
+> The version number of a file may be any value **from 1.0 to 1.7**, and the value shall not
+> be used in determining whether a file is in conformance with this part of ISO 14289.
+
+`writeFile` を**直接**呼ぶと既定の版でヘッダが書かれる。`rewrite(doc)` 経由なら
+文書のヘッダ版が使われるが、こちらは `/Encrypt` を落とすために `collectObjects` +
+`writeFile` を直接呼んでいたので、その既定が当たっていた。
+
+→ `writeFile(objects, trailer, { version: doc.headerVersion })` に直した。
+**実効版（catalog の `/Version`）ではなくヘッダ版**を使う —— 実効版で書くと、
+catalog と一緒に旅する `/Version` のせいでファイルが黙って上の版に上がる。
+実測: 1.7 → 1.7。ゴールデンは差 0 件（写しは veraPDF がいるときしか作らない）。
+
+### 🔴 これは受入の面 3 が捕まえた欠陥である
+
+面 1（撤去）も面 2（A/B）も緑のまま、**veraPDF に渡していた文書は
+判定させたい文書と別物だった**。A/B は「自分の出力が変わったか」しか見ないので、
+自分が他人に渡すものが変わったことは写らない。
+= [[independent-oracle-catches-what-ab-cannot]]
+
+### 計器を作り直した —— 基準は `qpdf --decrypt`
+
+1 回目は基準を「暗号化していない元（`ua-plain.pdf`）」に取っていたが、これは弱い:
+qpdf は AES-256 をかけるときに catalog へ `/Extensions` を足すので、
+**暗号化を経た文書は元と同じにはならない**（実測）。差が出ても、こちらの書き直しの
+せいなのか qpdf が足したもののせいなのか分けられない。
+
+作り直した形は、同じ入力から作った平文どうしを並べる:
+
+```
+qpdf --decrypt の出力   ←→   decryptedCopy() の出力
+        （どちらも veraPDF に PDF/UA-1 で判定させる）
+```
+
+qpdf は verify とも normativepdf とも 1 行も共有しない復号器なので、
+**独立オラクルとしてはこちらが正しい形**である。`ua-plain.pdf` の判定は
+基準ではなく参考として 1 行目に出す。
