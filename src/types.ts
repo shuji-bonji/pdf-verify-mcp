@@ -50,6 +50,30 @@ export interface ReadingScope {
   authenticated: boolean;
 }
 
+/**
+ * `verify_signatures` が返すもの。
+ *
+ * 🔴 **0.21.0 で最上位が配列から辞書に変わった。** 署名の一覧だけを返していたが、
+ * 一覧が「ファイルにある署名の全部」だとは限らない —— 相互参照表を組み直した
+ * 文書では、組み直しに入らなかった署名は一覧に出ない。**一覧と同じ場所で
+ * 射程を読めないと、欠けていることが分からない。**
+ */
+export interface SignatureVerificationResult {
+  /** どこまで読んだか。**判定ではない。** */
+  scope: ReadingScope;
+  signatures: SignatureVerificationReport[];
+}
+
+/**
+ * `detect_pades_level` が返すもの。0.21.0 で最上位が配列から辞書に変わった
+ * （理由は `SignatureVerificationResult` と同じ）。
+ */
+export interface PadesLevelResult {
+  /** どこまで読んだか。**判定ではない。** */
+  scope: ReadingScope;
+  levels: PadesLevelReport[];
+}
+
 /** Result of trust chain evaluation against trust anchors */
 export interface TrustResult {
   status: TrustStatus;

@@ -5,6 +5,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { PadesLevel } from '../../src/constants.js';
 import { identifyConformance } from '../../src/services/conformance.js';
+import { toReadingScope } from '../../src/services/document.js';
 import { parsePdfBytes } from '../../src/services/pdf-parser.js';
 import { detectPadesLevels } from '../../src/services/verification-service.js';
 import { formatPadesReports } from '../../src/utils/formatter.js';
@@ -70,7 +71,10 @@ describe('detectPadesLevels', () => {
   it('carries the caveat into the markdown, above the levels', async () => {
     const pdf = await createSignedPdf(identity);
     const parsed = await parsePdfBytes(pdf);
-    const md = formatPadesReports(await detectPadesLevels(parsed));
+    const md = formatPadesReports({
+      scope: toReadingScope(parsed.scope),
+      levels: await detectPadesLevels(parsed),
+    });
 
     expect(md).toContain('Observation, not a conformance verdict');
     expect(md).toContain('Normative basis: **T3**');
@@ -87,7 +91,10 @@ describe('detectPadesLevels', () => {
     const doc = await PDFDocument.create();
     doc.addPage([200, 200]);
     const parsed = await parsePdfBytes(await doc.save());
-    const md = formatPadesReports(await detectPadesLevels(parsed));
+    const md = formatPadesReports({
+      scope: toReadingScope(parsed.scope),
+      levels: await detectPadesLevels(parsed),
+    });
 
     expect(md).toContain('No (non-timestamp) signatures found');
     expect(md).not.toContain('Normative basis');

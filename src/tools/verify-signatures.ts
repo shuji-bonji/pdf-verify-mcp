@@ -5,8 +5,10 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { ResponseFormat, RevocationMode } from '../constants.js';
 import { PdfToolInputShape } from '../schemas/common.js';
+import { toReadingScope } from '../services/document.js';
 import { parsePdf } from '../services/pdf-parser.js';
 import { verifySignatures } from '../services/verification-service.js';
+import type { SignatureVerificationResult } from '../types.js';
 import { handleStructuredError } from '../utils/error-handler.js';
 import { formatSignatureReports, truncateIfNeeded } from '../utils/formatter.js';
 
@@ -81,14 +83,19 @@ Examples:
     async (params: VerifySignaturesInput) => {
       try {
         const parsed = await parsePdf(params.file_path, { password: params.password });
-        const reports = await verifySignatures(parsed, {
-          trustAnchorPaths: params.trust_anchors,
-          revocationMode: params.check_revocation,
-        });
+        // 🔴 0.21.0 で最上位を配列から辞書にした。署名の一覧と、その一覧が
+        // どこまでを見たものかを、同じ場所で読めるようにするため。
+        const result: SignatureVerificationResult = {
+          scope: toReadingScope(parsed.scope),
+          signatures: await verifySignatures(parsed, {
+            trustAnchorPaths: params.trust_anchors,
+            revocationMode: params.check_revocation,
+          }),
+        };
         const raw =
           params.response_format === ResponseFormat.JSON
-            ? JSON.stringify(reports, null, 2)
-            : formatSignatureReports(reports);
+            ? JSON.stringify(result, null, 2)
+            : formatSignatureReports(result);
         const { text } = truncateIfNeeded(raw);
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {

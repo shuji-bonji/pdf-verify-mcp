@@ -9,11 +9,11 @@ import type {
   ConformanceReport,
   DocMdpAssessment,
   IntegrityReport,
-  PadesLevelReport,
+  PadesLevelResult,
   ReadingScope,
   RevisionChainCoverage,
   RevisionObjectChange,
-  SignatureVerificationReport,
+  SignatureVerificationResult,
 } from '../types.js';
 
 export function truncateIfNeeded(text: string): { text: string; truncated: boolean } {
@@ -106,11 +106,22 @@ export function formatReadingScope(scope: ReadingScope): string[] {
   return lines;
 }
 
-export function formatSignatureReports(reports: SignatureVerificationReport[]): string {
+export function formatSignatureReports(result: SignatureVerificationResult): string {
+  const reports = result.signatures;
+  const scope = formatReadingScope(result.scope);
   if (reports.length === 0) {
-    return '# Signature Verification\n\nNo signatures found in this document.';
+    // 🔴 ここに射程が要る。「署名が無い」と「読めた範囲に署名が無い」は別で、
+    // 表を組み直した文書では後者になりうる。見出しの直後に置く。
+    return [
+      '# Signature Verification',
+      '',
+      ...scope,
+      '',
+      'No signatures found in this document.',
+    ].join('\n');
   }
   const lines: string[] = ['# Signature Verification', ''];
+  lines.push(...scope, '');
   lines.push(`Signatures found: ${reports.length}`, '');
   reports.forEach((r, i) => {
     lines.push(
@@ -385,9 +396,17 @@ export function formatPolicyReport(report: PolicyReportForFormat): string {
   return lines.join('\n');
 }
 
-export function formatPadesReports(reports: PadesLevelReport[]): string {
+export function formatPadesReports(result: PadesLevelResult): string {
+  const reports = result.levels;
+  const scope = formatReadingScope(result.scope);
   if (reports.length === 0) {
-    return '# PAdES Level Detection\n\nNo (non-timestamp) signatures found in this document.';
+    return [
+      '# PAdES Level Detection',
+      '',
+      ...scope,
+      '',
+      'No (non-timestamp) signatures found in this document.',
+    ].join('\n');
   }
   // T3（規範なし）であることを表の外・冒頭で述べる。level だけを抜き出して
   // 「PAdES 準拠」と書かれるのを防ぐのが目的（Issue #9 / `specs/09 §2`）。
@@ -399,6 +418,7 @@ export function formatPadesReports(reports: PadesLevelReport[]): string {
     '> read as evidence, and do not restate it as "conforms to PAdES".',
     '',
   ];
+  lines.push(...scope, '');
   reports.forEach((r, i) => {
     lines.push(`## ${i + 1}. ${r.fieldName ?? '(unnamed field)'}`);
     lines.push('');

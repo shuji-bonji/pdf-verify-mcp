@@ -4,8 +4,10 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { ResponseFormat } from '../constants.js';
 import { type PdfToolInput, PdfToolInputSchema } from '../schemas/common.js';
+import { toReadingScope } from '../services/document.js';
 import { parsePdf } from '../services/pdf-parser.js';
 import { detectPadesLevels } from '../services/verification-service.js';
+import type { PadesLevelResult } from '../types.js';
 import { handleStructuredError } from '../utils/error-handler.js';
 import { formatPadesReports, truncateIfNeeded } from '../utils/formatter.js';
 
@@ -43,11 +45,15 @@ Examples:
     async (params: PdfToolInput) => {
       try {
         const parsed = await parsePdf(params.file_path);
-        const reports = await detectPadesLevels(parsed);
+        // 🔴 0.21.0 で最上位を配列から辞書にした（verify_signatures と同じ理由）。
+        const result: PadesLevelResult = {
+          scope: toReadingScope(parsed.scope),
+          levels: await detectPadesLevels(parsed),
+        };
         const raw =
           params.response_format === ResponseFormat.JSON
-            ? JSON.stringify(reports, null, 2)
-            : formatPadesReports(reports);
+            ? JSON.stringify(result, null, 2)
+            : formatPadesReports(result);
         const { text } = truncateIfNeeded(raw);
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {

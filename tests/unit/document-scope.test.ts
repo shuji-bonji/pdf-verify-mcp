@@ -20,10 +20,15 @@ import { describe, expect, it } from 'vitest';
 import { specimens, toBytes } from '../../scripts/lib/xref-specimen-builder.mjs';
 import { validateClauses } from '../../src/services/clause-validation.js';
 import { identifyConformance } from '../../src/services/conformance.js';
-import { openDocument } from '../../src/services/document.js';
+import { openDocument, toReadingScope } from '../../src/services/document.js';
 import { parsePdfBytes } from '../../src/services/pdf-parser.js';
+import { detectPadesLevels } from '../../src/services/verification-service.js';
 import { PdfVerifyError } from '../../src/utils/error-handler.js';
-import { formatReadingScope } from '../../src/utils/formatter.js';
+import {
+  formatPadesReports,
+  formatReadingScope,
+  formatSignatureReports,
+} from '../../src/utils/formatter.js';
 
 const open = async (name: keyof typeof specimens) =>
   (await openDocument(toBytes(specimens[name]()))).scope;
@@ -133,5 +138,39 @@ describe('条文を名指しする拒否は、サーバの故障ではない', (
     const report = await validateClauses(file);
     expect(report.scope.reconstructed).toBe(false);
     expect(Object.keys(report)[0]).toBe('scope');
+  });
+});
+
+describe('署名の一覧を返す 2 本も射程を持つ（0.21.0）', () => {
+  it('🔴 「署名が無い」と「読めた範囲に署名が無い」を、同じ場所で見分けられる', async () => {
+    const parsed = await parsePdfBytes(toBytes(specimens.unreadableTable()));
+    expect(parsed.scope.reconstructed).toBe(true);
+    const markdown = formatSignatureReports({
+      scope: toReadingScope(parsed.scope),
+      signatures: [],
+    });
+    // 署名が 0 本でも、射程は消えない
+    expect(markdown).toMatch(/No signatures found/);
+    expect(markdown).toMatch(/rebuilt by this tool/);
+  });
+
+  it('条文どおりの文書では、その文は出ない（空振り検査の対）', async () => {
+    const parsed = await parsePdfBytes(toBytes(specimens.complete()));
+    const markdown = formatSignatureReports({
+      scope: toReadingScope(parsed.scope),
+      signatures: [],
+    });
+    expect(markdown).toMatch(/No signatures found/);
+    expect(markdown).not.toMatch(/rebuilt by this tool/);
+  });
+
+  it('detect_pades_level も同じ形で射程を持つ', async () => {
+    const parsed = await parsePdfBytes(toBytes(specimens.unreadableTable()));
+    const result = {
+      scope: toReadingScope(parsed.scope),
+      levels: await detectPadesLevels(parsed),
+    };
+    expect(Object.keys(result)[0]).toBe('scope');
+    expect(formatPadesReports(result)).toMatch(/rebuilt by this tool/);
   });
 });
