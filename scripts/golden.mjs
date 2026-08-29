@@ -141,10 +141,15 @@ const N = (v) => (Array.isArray(v) ? v.length : v == null ? null : v);
 function keptOf(tool, raw) {
   if (raw == null) return null;
   switch (tool) {
-    case 'verify_signatures':
+    case 'verify_signatures': {
+      // 🔴 0.21.0 で最上位が配列から辞書（`{ scope, signatures }`）になった。
+      // 基準（0.20.0 以前）は配列なので、**両方の形を読む**。片方しか読まないと、
+      // 形が変わっただけの版で「観測できた対象が減った」と報告する ——
+      // 実測でそうなった（48 件がバケツ E に落ちた）。
+      const list = Array.isArray(raw) ? raw : Array.isArray(raw?.signatures) ? raw.signatures : null;
       return {
-        count: Array.isArray(raw) ? raw.length : null,
-        sigs: (Array.isArray(raw) ? raw : []).map((s) => ({
+        count: list === null ? null : list.length,
+        sigs: (list ?? []).map((s) => ({
           field: s.fieldName ?? null,
           verdict: s.verdict ?? null,
           trust: s.trust?.status ?? null,
@@ -155,6 +160,7 @@ function keptOf(tool, raw) {
           cmsError: s.cms?.error != null,
         })),
       };
+    }
     case 'verify_integrity':
       return {
         revisionCount: raw.revisionCount ?? null,
@@ -169,10 +175,12 @@ function keptOf(tool, raw) {
         revisions: N(raw.revisions),
         laterChanges: N(raw.signaturesWithLaterChanges),
       };
-    case 'detect_pades_level':
+    case 'detect_pades_level': {
+      // 0.21.0 で `{ scope, levels }` になった（verify_signatures と同じ）。
+      const list = Array.isArray(raw) ? raw : Array.isArray(raw?.levels) ? raw.levels : null;
       return {
-        count: Array.isArray(raw) ? raw.length : null,
-        levels: (Array.isArray(raw) ? raw : []).map((r) => ({
+        count: list === null ? null : list.length,
+        levels: (list ?? []).map((r) => ({
           field: r.fieldName ?? null,
           isPades: r.isPades ?? null,
           level: r.level ?? null,
@@ -183,6 +191,7 @@ function keptOf(tool, raw) {
           dts: r.evidence?.hasDocumentTimestamp ?? null,
         })),
       };
+    }
     case 'identify_conformance':
       return {
         hasXmp: raw.hasXmp ?? null,
