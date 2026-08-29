@@ -2,9 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.19.0] - 2026-08-29
 
-トラック B（pdf-lib 撤去）の L1。`docs/handoff/pdflib-removal.md` §11。
+トラック B（pdf-lib 撤去）。`docs/handoff/pdflib-removal.md` §10〜§14。
+
+受入は 3 面で採った。
+
+- **撤去** — `src` の pdf-lib import は 5 → 0、`npm ls --omit=dev pdf-lib` は
+  `(empty)`。テストは引き続き pdf-lib を使う（`devDependencies`）
+- **出力の A/B** — 撤去前に検体 2,947 件 × ツール 7 本 = 20,629 呼び出しを凍結し、
+  段階ごとに差を採って 1 件ずつ帰属した。差は L1 43 件・L2+L3 25 件・L4+L5 0 件。
+  **`fail` から `pass` に動いたのは 3 件で、いずれも pdf-lib の誤報の訂正である**
+  （UTF-8 のバイト順マーク付き日付 1 件、`fonts-embedded` 2 件）
+- **独立オラクル** — 暗号化 8 検体で、この版が書く平文の写しと `qpdf --decrypt` の
+  出力に veraPDF が同じ判定を出すことを確認した。1 回目は欠陥を 1 つ捕まえた
+  （写しのヘッダが `%PDF-2.0` になり ISO 14289-1 §6.1 に触れていた）。
+  A/B は両側が同じ写しを作るので、この差は A/B からは見えない
 
 ### Added
 
