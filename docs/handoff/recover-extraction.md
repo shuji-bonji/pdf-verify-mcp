@@ -75,3 +75,71 @@ node scripts/golden.mjs t3 .golden/after-recover.json
 - `.golden/` は gitignore・**消さない**
 - publish は **tag `v*` の push で発火**。🔴 `--follow-tags` を忘れると版が欠番になる
   （verify 0.20.0 で実際に起きた）
+
+---
+
+## 7. 実施結果（2026-08-29）
+
+済んだのは §4 の 1〜4。**5（publish）は残っている。**
+
+| 面 | 結果 |
+|---|---|
+| A/B | `.golden/after-0.21.1.json` ↔ `.golden/after-recover.json` で **差 0 件**（2,950 検体 × 7 ツール = 20,650 呼び出し） |
+| 空振りの対 | `golden.mjs t3` が **14 件とも差を報告** |
+| 分布 | `probe-scope.mjs` は `chainStop` 5 値・`reconstructed` 7 件・`sections` の 0 が 7 件 —— §3 のとおり |
+| テスト | verify 191 件・recover 9 件が緑 |
+
+コミット: recover `ba8cddf`（`lib/recover`）・verify `722fe67`。**どちらも未 push。**
+
+### §2 の 3 つをどう解いたか
+
+- `logger` → `options.onDebug?: DebugSink`。既定はどこにも出さない。
+  verify は 5 か所（`plaintext-copy` / `pdf-parser` ×2 / `clause-validation` /
+  `revision-diff`）で `onDebug: logger.debug` を渡し、`DEBUG` を立てたときの
+  stderr 出力を移送前と同じに保つ
+- `XrefKind` / `ReadingScope` → recover の `src/types.ts` で定義。
+  verify は `export type { ReadingScope, XrefKind } from '@normativepdf/recover'`
+
+### §4-2 の「テストはそのまま移せる」は違った
+
+`tests/unit/document-scope.test.ts` の 15 件のうち、`openDocument` だけに掛かるのは
+最初の describe の **5 件**。残り 10 件は verify の formatter / error-handler /
+pdf-parser / 各 validator を測っている。**5 件だけ recover へ写し、verify 側は
+15 件のまま残した**（あちらは境界の統合検査になる）。
+recover には `onDebug` の検査 4 件を新設した（呼ばれる / 空振りの対 /
+渡さなくても同じ scope / **stdout に 1 バイトも書かない**）。
+
+### 🔴 publish の順序（測って分かった制約）
+
+**`@normativepdf/recover` が npm に出るまで、verify の `package-lock.json` は
+更新できない。** `npm install --package-lock-only` も `npm ci` も、registry に
+無いパッケージを解けない。いまの verify は:
+
+- `package.json` の `dependencies` に `"@normativepdf/recover": "0.1.0"` がある
+- `package-lock.json` は**まだ 0.21.1 のまま**・版も 0.21.1 のまま
+- CHANGELOG は `[Unreleased]` に書いてある（publish.yml が `[Unreleased]` の
+  空を見るので、tag の前に `## [0.22.0]` へ移す）
+
+この状態で verify に tag を打つと CI の `npm ci` が落ちる。順序は:
+
+```
+1. lib/recover を GitHub に置く（新規リポジトリ）→ push → tag v0.1.0
+   npmjs.com 側で Trusted Publisher（リポジトリ名 + publish.yml）を先に登録する
+2. verify で npm install → package-lock.json を commit
+3. CHANGELOG の [Unreleased] を [0.22.0] に移す → 版を 0.22.0 に上げる
+4. push --follow-tags（🔴 忘れると 0.20.0 と同じ欠番になる）
+```
+
+### 手元の配線（publish 前に A/B を採るために作ったもの）
+
+`node_modules/@normativepdf/recover/` に `npm pack` の中身を展開してある
+（マウント側・コンテナ側とも）。lock は触っていない。
+**2 の `npm install` でこれは正規のものに置き換わる。**
+
+### そのほか
+
+- `scripts/golden.mjs` の `depVersions()` は固定リストだったので
+  `@normativepdf/recover` を足した。足さないとヘッダに版が出ず、
+  上がっても計器がその日から何も言わない
+- 落とした 3 ファイルと古い `dist/services/{cos,xref-walk,document}.*` は
+  `pdf-agent-stack/_to_delete/` へ `mv` してある（device_bash は `rm` を通さない）
