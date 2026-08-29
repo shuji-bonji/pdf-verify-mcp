@@ -55,7 +55,7 @@
 
 ## 3. 実測 —— `scope` の 11 項目は実際どれだけ動くか
 
-`.golden/tools/probe-scope.mjs` を書いて、同じ 2,947 検体に `openDocument` を直接当てた
+`scripts/probe-scope.mjs` を書いて、同じ 2,947 検体に `openDocument` を直接当てた
 （1.9 秒）。開けたのは 2,946 件、例外 1 件。
 
 | 項目 | 分布 |
