@@ -22,6 +22,7 @@ import type { CosDict, PdfDocument } from 'normativepdf';
 import type { ParsedPdf } from '../types.js';
 import { logger } from '../utils/logger.js';
 import { extractPdfaId } from './conformance.js';
+import { collectFontUsage } from './content-font-usage.js';
 
 const CONTEXT = 'pdfa-validator';
 
@@ -53,6 +54,13 @@ export interface RuleResult {
   clause: string;
   description: string;
   passed: boolean;
+  /**
+   * false = **判定していない**（観測が足りない）。pass でも violation でもない。
+   * PDF/UA 側（Issue #7 の `skippedRules`）と同じ語彙をここでも使う。
+   * 🔴 `passed: false` と読まないこと —— 判定していないものを違反に数えると、
+   * 「観測できなかった」が「違反だった」の顔をする。
+   */
+  checked: boolean;
   /** Human-readable evidence when failed */
   detail: string | null;
 }
@@ -84,7 +92,14 @@ interface Rule {
   description: string;
   /** Restrict to certain parts (e.g. transparency ban is PDF/A-1 only) */
   appliesToParts?: number[];
-  check: (ctx: RuleContext) => Promise<{ passed: boolean; detail: string | null }>;
+  check: (ctx: RuleContext) => Promise<RuleOutcome>;
+}
+
+/** 規則 1 つの結果。`checked: false` は「判定していない」（既定は判定した） */
+interface RuleOutcome {
+  passed: boolean;
+  detail: string | null;
+  checked?: boolean;
 }
 
 /** Collect names used in /Filter entries across all streams */
@@ -122,11 +137,33 @@ const STANDARD_14 = new Set([
   'ZapfDingbats',
 ]);
 
-/** Check that every font has an embedded font program */
-async function checkFontsEmbedded(
-  ctx: RuleContext,
-): Promise<{ passed: boolean; detail: string | null }> {
+/**
+ * 描画に使われたフォントに、埋め込まれたフォントプログラムがあるか。
+ *
+ * 🔴 **「文書に在るフォント辞書」ではなく「文字を出したフォント」を見る。**
+ * 0.24.0 まではすべての `/Type /Font` 辞書を数え上げていた。PDF/A が埋め込みを
+ * 求めるのは描画に使われたフォントで、AcroForm の `/DR` に置いてあるだけの
+ * `/Helv` `/ZaDb` や、テキストレンダリングモード 3（不可視・§9.3.6）でしか
+ * 出さないフォントは対象外である。独立オラクル（veraPDF 1.30.2）と突き合わせると、
+ * こちらだけが違反と言っていた検体が **106 件中 88 件**あった（2026-08-29 実測）。
+ *
+ * 3 つの答えを返す:
+ *   fail        埋め込まれていないフォントが、モード 3 以外で文字を出している
+ *   pass        すべて未使用かモード 3 だけ、**かつ観測が完全**
+ *   not decided 観測が完全でない（`checked: false`）。pass でも violation でもない
+ *
+ * 🔴 観測が不完全でも、**すでに違反を 1 つ見つけていれば fail で確定する** ——
+ * 見えている違反を「判定できない」に隠さない。
+ */
+async function checkFontsEmbedded(ctx: RuleContext): Promise<RuleOutcome> {
+  const { usage, incomplete, reasons } = await collectFontUsage(ctx.doc);
+
+  /** そのフォント辞書が文字を出したモード。使われていなければ空 */
+  const modesOf = (font: CosDict): Set<number> => usage.get(font) ?? new Set<number>();
+
   const missing: string[] = [];
+  let hadUnobservedCandidate = false;
+
   for (const dict of ctx.dicts) {
     if (nameOf(get(dict, 'Type')) !== 'Font') continue;
     const subtypeName = nameOf(get(dict, 'Subtype')) ?? '';
@@ -136,24 +173,38 @@ async function checkFontsEmbedded(
 
     const descriptor = asDict(await resolved(ctx.doc, get(dict, 'FontDescriptor')));
     const baseFontName = nameOf(get(dict, 'BaseFont')) ?? '(unknown)';
+    const embedded =
+      descriptor !== null &&
+      (has(descriptor, 'FontFile') || has(descriptor, 'FontFile2') || has(descriptor, 'FontFile3'));
+    if (embedded) continue;
 
-    if (!descriptor) {
+    const modes = modesOf(dict);
+    const visible = [...modes].some((mode) => mode !== 3);
+    if (visible) {
       missing.push(
-        `${baseFontName} (no FontDescriptor${STANDARD_14.has(baseFontName) ? '; standard-14 fonts must be embedded in PDF/A' : ''})`,
+        `${baseFontName}${descriptor === null ? ` (no FontDescriptor${STANDARD_14.has(baseFontName) ? '; standard-14 fonts must be embedded in PDF/A' : ''})` : ''}`,
       );
       continue;
     }
-    const hasProgram =
-      has(descriptor, 'FontFile') || has(descriptor, 'FontFile2') || has(descriptor, 'FontFile3');
-    if (!hasProgram) missing.push(baseFontName);
+    // 使われていない / モード 3 だけ。観測が完全ならこれは違反ではない
+    if (modes.size === 0 && incomplete) hadUnobservedCandidate = true;
   }
-  return {
-    passed: missing.length === 0,
-    detail:
-      missing.length > 0
-        ? `Fonts without embedded program: ${missing.slice(0, 10).join(', ')}${missing.length > 10 ? ` (+${missing.length - 10} more)` : ''}`
-        : null,
-  };
+
+  if (missing.length > 0) {
+    return {
+      passed: false,
+      checked: true,
+      detail: `Fonts rendered without an embedded program: ${missing.slice(0, 10).join(', ')}${missing.length > 10 ? ` (+${missing.length - 10} more)` : ''}`,
+    };
+  }
+  if (hadUnobservedCandidate) {
+    return {
+      passed: false,
+      checked: false,
+      detail: `not decided — a font without an embedded program was found, but where it is used could not be observed: ${reasons.join('; ')}`,
+    };
+  }
+  return { passed: true, checked: true, detail: null };
 }
 
 /** Search all dicts for any of the given keys */
@@ -423,7 +474,7 @@ export async function validatePdfaNative(
 
   for (const rule of RULES) {
     if (rule.appliesToParts && !rule.appliesToParts.includes(flavour.part)) continue;
-    let outcome: { passed: boolean; detail: string | null };
+    let outcome: RuleOutcome;
     try {
       outcome = await rule.check(ctx);
     } catch (error) {
@@ -439,13 +490,22 @@ export async function validatePdfaNative(
       clause: rule.clause,
       description: rule.description,
       passed: outcome.passed,
+      checked: outcome.checked ?? true,
       detail: outcome.detail,
     });
   }
 
+  const undecided = results.filter((r) => !r.checked);
   const notes = [
     `Native engine checks a SUBSET of ISO 19005 (${results.length} rules) — passing does not certify conformance. Install veraPDF for authoritative validation.`,
   ];
+  if (undecided.length > 0) {
+    notes.push(
+      `${undecided.length} rule(s) were NOT decided because the document could not be observed far enough: ${undecided
+        .map((r) => `${r.ruleId} (${r.detail ?? 'no detail'})`)
+        .join('; ')}. A rule that was not decided is neither a pass nor a violation.`,
+    );
+  }
   if (flavour.part === 4) {
     notes.push(
       'PDF/A-4: these native rules were derived from ISO 19005-1/-2 and have NOT been checked against ISO 19005-4, which is outside the corpus of this family. Treat every native PDF/A-4 result as a hint that ranks below veraPDF, and validate with engine: "verapdf".',
@@ -454,7 +514,7 @@ export async function validatePdfaNative(
 
   return {
     flavour,
-    allCheckedRulesPassed: results.every((r) => r.passed),
+    allCheckedRulesPassed: results.every((r) => !r.checked || r.passed),
     results,
     notes,
   };

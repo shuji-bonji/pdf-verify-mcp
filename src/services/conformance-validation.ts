@@ -301,16 +301,21 @@ async function validate(
   // Native subset
   const doc = await loadPdfDocument(parsed.bytes);
   const native = await validatePdfaNative(parsed, doc, flavour);
-  const failed = native.results.filter((r) => !r.passed);
+  // 判定していない規則は pass にも violation にも数えない
+  // （PDF/UA 側の `skippedRules`・Issue #7 と同じ扱い）
+  const checked = native.results.filter((r) => r.checked);
+  const skipped = native.results.length - checked.length;
+  const failed = checked.filter((r) => !r.passed);
 
   return {
     engine: 'native',
     authoritativeValidation: status,
     flavour: flavourLabel(flavour),
     compliant: failed.length > 0 ? false : null,
-    checkedRules: native.results.length,
-    passedRules: native.results.length - failed.length,
+    checkedRules: checked.length,
+    passedRules: checked.length - failed.length,
     failedRules: failed.length,
+    ...(skipped > 0 ? { skippedRules: skipped } : {}),
     violations: failed.map((r) => ({
       ruleId: r.ruleId,
       clause: r.clause,
