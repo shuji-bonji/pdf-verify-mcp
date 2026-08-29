@@ -123,12 +123,32 @@ recover には `onDebug` の検査 4 件を新設した（呼ばれる / 空振�
 この状態で verify に tag を打つと CI の `npm ci` が落ちる。順序は:
 
 ```
-1. lib/recover を GitHub に置く（新規リポジトリ）→ push → tag v0.1.0
-   npmjs.com 側で Trusted Publisher（リポジトリ名 + publish.yml）を先に登録する
-2. verify で npm install → package-lock.json を commit
-3. CHANGELOG の [Unreleased] を [0.22.0] に移す → 版を 0.22.0 に上げる
-4. push --follow-tags（🔴 忘れると 0.20.0 と同じ欠番になる）
+1. lib/recover を GitHub に置く   ✅ 済み = https://github.com/shuji-bonji/recover
+2. 🔴 0.1.0 だけ手元から publish する（Trusted Publisher は使えない・下記）
+     npm publish --access public --provenance=false
+3. npmjs.com のパッケージ設定 → Trusted Publisher に
+     リポジトリ shuji-bonji/recover ・ workflow publish.yml を登録
+4. verify で npm install → package-lock.json を commit
+5. CHANGELOG の [Unreleased] を [0.22.0] に移す → 版を 0.22.0 に上げる
+6. push --follow-tags（🔴 忘れると 0.20.0 と同じ欠番になる）
 ```
+
+### 🔴 なぜ 0.1.0 だけ手元から出すのか
+
+**Trusted Publisher の設定画面はパッケージのページの中にあり、registry に
+まだ無いパッケージには設定できない。** 卵が先か鶏が先かで、npm はまだ
+解いていない（[npm/cli#8544](https://github.com/npm/cli/issues/8544) は
+2026-08-29 時点で open。PyPI は「存在しないパッケージへの事前登録」で
+解いていると同 issue が書いている）。
+
+実測（2026-08-29）: `https://registry.npmjs.org/@normativepdf%2frecover` は
+`{"error":"Not found"}`。
+
+`publishConfig.provenance: true` を宣言してあるので、CI の外で `npm publish`
+すると provenance を作れずに落ちる。初回だけ `--provenance=false` を付ける。
+**0.1.0 には provenance が付かない。0.1.1 以降は workflow が付ける。**
+`normativepdf` 本体も scoped パッケージも、この org では初めてになる ——
+scope `@normativepdf` への publish 権限が npm 側にあることを 2 で同時に確かめる。
 
 ### 手元の配線（publish 前に A/B を採るために作ったもの）
 
