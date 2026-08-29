@@ -45,6 +45,33 @@ export function handleStructuredError(error: unknown): StructuredError {
   return { error: true, code: 'INTERNAL_ERROR', message: String(error) };
 }
 
+/**
+ * 構造が条文に反していて読めなかった、を返す。
+ *
+ * 🔴 **これは文書についての所見であって、サーバの故障ではない。**
+ * `INTERNAL_ERROR` で返すと、受け側は「調べられませんでした」に落とす。
+ * 7 ツールすべてがこの 1 つの作り方を通ること —— 同じ事実に 2 つの名前が
+ * 付いていると、分岐する側は片方しか見ない。
+ */
+export function toStructuralRefusal(error: unknown): PdfVerifyError {
+  if (error instanceof PdfVerifyError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new PdfVerifyError(
+    `Failed to parse PDF: ${message}`,
+    'PARSE_FAILED',
+    STRUCTURAL_REFUSAL_HINT,
+  );
+}
+
+/**
+ * 受け側に「これは所見である」と伝える 1 文。`code` だけでは
+ * 「読めなかった」が「壊れていた」なのか「サーバが落ちた」なのか分かれない。
+ */
+export const STRUCTURAL_REFUSAL_HINT =
+  'The document does not satisfy the structural clause named in the message, so it could not be ' +
+  'read as written. This is a finding about the file, not a failure of this server — record it ' +
+  'as a structural violation, not as a check that could not be performed.';
+
 /** Validate a local PDF file path and size before reading */
 export async function assertReadablePdf(filePath: string): Promise<void> {
   if (!filePath) {

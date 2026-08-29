@@ -10,7 +10,7 @@
 import { readFile } from 'node:fs/promises';
 import type { CosDict, CosObject, PdfDocument } from 'normativepdf';
 import type { ParsedPdf, SignatureField } from '../types.js';
-import { assertReadablePdf, PdfVerifyError } from '../utils/error-handler.js';
+import { assertReadablePdf, PdfVerifyError, toStructuralRefusal } from '../utils/error-handler.js';
 import { logger } from '../utils/logger.js';
 import {
   asArray,
@@ -216,11 +216,7 @@ export async function parsePdfBytes(
   try {
     ({ doc, scope } = await openDocument(bytes, { password: options.password }));
   } catch (error) {
-    throw new PdfVerifyError(
-      `Failed to parse PDF: ${error instanceof Error ? error.message : String(error)}`,
-      'PARSE_FAILED',
-      'Verify the file is a well-formed PDF; encrypted or damaged files may not be parseable',
-    );
+    throw toStructuralRefusal(error);
   }
 
   // 暗号化文書は `openDocument` の時点で復号されている（§7.6）。復号できなければ

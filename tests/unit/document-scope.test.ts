@@ -12,12 +12,17 @@
  * ことを同じ表で確かめる。これが無いと「常に true を返す」実装でも緑になる。
  */
 
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error — 検体の組み立ては .mjs で、型宣言を持たない（tests は tsc の対象外）
 import { specimens, toBytes } from '../../scripts/lib/xref-specimen-builder.mjs';
+import { validateClauses } from '../../src/services/clause-validation.js';
 import { identifyConformance } from '../../src/services/conformance.js';
 import { openDocument } from '../../src/services/document.js';
 import { parsePdfBytes } from '../../src/services/pdf-parser.js';
+import { PdfVerifyError } from '../../src/utils/error-handler.js';
 import { formatReadingScope } from '../../src/utils/formatter.js';
 
 const open = async (name: keyof typeof specimens) =>
@@ -102,5 +107,31 @@ describe('ReadingScope — 出力に載る形', () => {
   it('sections は健全な文書でも数えてある（0 は「数えていない」の意味ではない）', async () => {
     const report = identifyConformance(await parsePdfBytes(toBytes(specimens.complete())));
     expect(report.scope.sections).toBeGreaterThan(0);
+  });
+});
+
+describe('条文を名指しする拒否は、サーバの故障ではない', () => {
+  async function writeSpecimen(name: keyof typeof specimens): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'pdf-verify-scope-'));
+    const file = join(dir, `${name}.pdf`);
+    await writeFile(file, Buffer.from(specimens[name](), 'latin1'));
+    return file;
+  }
+
+  it('🔴 相互参照節が条文に反する文書は PARSE_FAILED であって INTERNAL_ERROR ではない', async () => {
+    const file = await writeSpecimen('unreadableTable');
+    await expect(validateClauses(file)).rejects.toThrow(PdfVerifyError);
+    const error = await validateClauses(file).catch((e: unknown) => e as PdfVerifyError);
+    // INTERNAL_ERROR だと、受け側は「調べられませんでした」の枠に落とす
+    expect(error.code).toBe('PARSE_FAILED');
+    expect(error.message).toMatch(/§7\.5\.4|§7\.5\.8/);
+    expect(error.suggestion).toMatch(/finding about the file, not a failure of this server/);
+  });
+
+  it('条文どおりの文書では、そもそも拒否されない（空振り検査の対）', async () => {
+    const file = await writeSpecimen('complete');
+    const report = await validateClauses(file);
+    expect(report.scope.reconstructed).toBe(false);
+    expect(Object.keys(report)[0]).toBe('scope');
   });
 });

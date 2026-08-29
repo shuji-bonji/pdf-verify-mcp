@@ -17,6 +17,7 @@
 import { readFile } from 'node:fs/promises';
 import { checkFile, listTables } from '@shuji-bonji/pdf-constraints';
 import type { ReadingScope } from '../types.js';
+import { toStructuralRefusal } from '../utils/error-handler.js';
 import { openDocument, toReadingScope } from './document.js';
 
 /** 収録済み制約 1 件の結果（pdf-constraints の 4 状態をそのまま運ぶ） */
@@ -103,14 +104,31 @@ export async function validateClauses(
 ): Promise<ClauseValidationReport> {
   // 判定より先に「どう開いたか」を採る。checkFile は自分でファイルを読むので、
   // ここで開くのは射程を申告するためだけ（2,950 検体で 1 文書 0.3 ミリ秒）。
-  const scope = toReadingScope(
-    (await openDocument(new Uint8Array(await readFile(filePath)))).scope,
-  );
+  // 開く段でも条文で拒まれることがある（`startxref` がどこも指していない等）。
+  // ここを素通しにすると、その 1 件だけが INTERNAL_ERROR のまま残る —— 実測で
+  // 残った（ua-broken-startxref.pdf）。拒否の作り方は 1 つに寄せる。
+  let scope: ReadingScope;
+  try {
+    scope = toReadingScope((await openDocument(new Uint8Array(await readFile(filePath)))).scope);
+  } catch (error) {
+    throw toStructuralRefusal(error);
+  }
 
-  const report = await checkFile(filePath, {
-    domains: options.domains,
-    given: options.given,
-  });
+  let report: Awaited<ReturnType<typeof checkFile>>;
+  try {
+    report = await checkFile(filePath, {
+      domains: options.domains,
+      given: options.given,
+    });
+  } catch (error) {
+    // 🔴 **文書についての所見であって、このサーバの故障ではない。**
+    // pdf-constraints は §7.5 を条文どおり読み、反する文書を受け取らない。
+    // その拒否を INTERNAL_ERROR で返すと、受け側（pdf-trust の Trust Report）は
+    // 「未実施項目（ツール未接続・取得失敗）」の枠に落とす —— 条文違反が
+    // 「調べられませんでした」として報告され、下手な文書ほど無罪になる。
+    // 他の 6 ツールと同じ code にして、同じ事実を同じ名前で返す。
+    throw toStructuralRefusal(error);
+  }
 
   const results: ClauseResult[] = report.results.map((r) => ({
     constraintId: r.constraint,
