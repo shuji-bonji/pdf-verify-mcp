@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+**出力も判定も変わっていない。実行時依存が 1 つ増えた。**
+
+### Changed
+
+- 回復方針の 3 ファイル（`src/services/{cos,xref-walk,document}.ts`・1,189 行）を
+  `@normativepdf/recover` に切り出し、14 ファイルの import 元を替えた（ADR-0010）。
+  `ReadingScope` と `XrefKind` の定義もあちらに移り、`src/types.ts` は再 export で受ける。
+
+  **なぜ**: 同じ「消費者側に残した回復方針」を、消費者がそれぞれ独立に書いていた
+  （verify 1,189 行 / pdf-constraints の `src/facts/cos.ts` 141 行 / reader はまだ
+  pdf-lib の上）。reader の撤去で 3 通りになる前に 1 つに寄せる。
+
+  **移行**: 公開しているのは bin だけなので、利用者に影響は無い。
+
+- `DEBUG` を立てたときの stderr 出力は変わらない。パッケージ側は届け先を持たないので、
+  `openDocument` / `walkXrefChain` に `onDebug: logger.debug` を渡している。
+
+### 受入
+
+- A/B は **差 0 件**（`.golden/after-0.21.1.json` ↔ `.golden/after-recover.json`・
+  2,950 検体 × 7 ツール = 20,650 呼び出し）。計器自身の T-3 は 14 件とも差を報告する
+  （0 件が空振りでないことの対）。
+- `scripts/probe-scope.mjs` の分布も同じ —— `chainStop` 5 値・`reconstructed` 7 件・
+  `sections` の 0 が 7 件。
+- 単体テスト 191 件（`document-scope` 15 件を含む）が緑。
+
+### Fixed
+
+- `scripts/golden.mjs` の `depVersions()` が `@normativepdf/recover` の版を見ていなかった。
+  ヘッダに版が出ない依存は、上がっても計器がその日から何も言わない。
+
 ## [0.21.0] - 2026-08-29
 
 **破壊的変更が 1 つある。** `verify_signatures` と `detect_pades_level` の JSON は

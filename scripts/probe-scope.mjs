@@ -4,7 +4,7 @@
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { openDocument } from '../dist/services/document.js';
+import { openDocument } from '@normativepdf/recover';
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SETS = [

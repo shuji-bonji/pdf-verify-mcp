@@ -8,11 +8,20 @@
  * When veraPDF is available it should be preferred (see verapdf.ts).
  */
 
+import {
+  asArray,
+  asDict,
+  boolOf,
+  enumerateDicts,
+  get,
+  has,
+  nameOf,
+  resolved,
+} from '@normativepdf/recover';
 import type { CosDict, PdfDocument } from 'normativepdf';
 import type { ParsedPdf } from '../types.js';
 import { logger } from '../utils/logger.js';
 import { extractPdfaId } from './conformance.js';
-import { asArray, asDict, boolOf, enumerateDicts, get, has, nameOf, resolved } from './cos.js';
 
 const CONTEXT = 'pdfa-validator';
 

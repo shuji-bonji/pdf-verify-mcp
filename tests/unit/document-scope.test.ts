@@ -15,12 +15,12 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { openDocument, toReadingScope } from '@normativepdf/recover';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error — 検体の組み立ては .mjs で、型宣言を持たない（tests は tsc の対象外）
 import { specimens, toBytes } from '../../scripts/lib/xref-specimen-builder.mjs';
 import { validateClauses } from '../../src/services/clause-validation.js';
 import { identifyConformance } from '../../src/services/conformance.js';
-import { openDocument, toReadingScope } from '../../src/services/document.js';
 import { parsePdfBytes } from '../../src/services/pdf-parser.js';
 import { detectPadesLevels } from '../../src/services/verification-service.js';
 import { PdfVerifyError } from '../../src/utils/error-handler.js';

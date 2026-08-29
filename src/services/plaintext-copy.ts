@@ -16,9 +16,9 @@
  * `rewrite` のもう 1 つの拒否（チェーンを歩き切れていない文書）は、ここで同じ条件を課す。
  */
 
+import { openDocument } from '@normativepdf/recover';
 import { type CosDict, type CosObject, collectObjects, writeFile } from 'normativepdf';
 import { logger } from '../utils/logger.js';
-import { openDocument } from './document.js';
 
 const CONTEXT = 'plaintext-copy';
 
@@ -33,7 +33,7 @@ export async function decryptedCopy(
 ): Promise<Uint8Array | null> {
   let doc: Awaited<ReturnType<typeof openDocument>>;
   try {
-    doc = await openDocument(bytes, { password });
+    doc = await openDocument(bytes, { password, onDebug: logger.debug });
   } catch (error) {
     logger.debug(CONTEXT, `cannot open: ${String(error)}`);
     return null;

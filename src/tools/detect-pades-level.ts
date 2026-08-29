@@ -2,9 +2,9 @@
  * detect_pades_level - PAdES baseline level detection (B-B / B-T / B-LT / B-LTA).
  */
 import type { McpServer } from '@modelcontextprotocol/server';
+import { toReadingScope } from '@normativepdf/recover';
 import { ResponseFormat } from '../constants.js';
 import { type PdfToolInput, PdfToolInputSchema } from '../schemas/common.js';
-import { toReadingScope } from '../services/document.js';
 import { parsePdf } from '../services/pdf-parser.js';
 import { detectPadesLevels } from '../services/verification-service.js';
 import type { PadesLevelResult } from '../types.js';

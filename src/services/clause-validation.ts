@@ -15,10 +15,11 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { openDocument, toReadingScope } from '@normativepdf/recover';
 import { checkFile, listTables } from '@shuji-bonji/pdf-constraints';
 import type { ReadingScope } from '../types.js';
 import { toStructuralRefusal } from '../utils/error-handler.js';
-import { openDocument, toReadingScope } from './document.js';
+import { logger } from '../utils/logger.js';
 
 /** 収録済み制約 1 件の結果（pdf-constraints の 4 状態をそのまま運ぶ） */
 export interface ClauseResult {
@@ -109,7 +110,10 @@ export async function validateClauses(
   // 残った（ua-broken-startxref.pdf）。拒否の作り方は 1 つに寄せる。
   let scope: ReadingScope;
   try {
-    scope = toReadingScope((await openDocument(new Uint8Array(await readFile(filePath)))).scope);
+    scope = toReadingScope(
+      (await openDocument(new Uint8Array(await readFile(filePath)), { onDebug: logger.debug }))
+        .scope,
+    );
   } catch (error) {
     throw toStructuralRefusal(error);
   }

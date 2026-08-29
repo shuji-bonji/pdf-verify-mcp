@@ -7,13 +7,13 @@
  * services/policy-engine.ts. The judge is code; the narrative is the LLM.
  */
 import type { McpServer } from '@modelcontextprotocol/server';
+import { toReadingScope } from '@normativepdf/recover';
 import { z } from 'zod';
 import { ResponseFormat, RevocationMode, ValidationEngine } from '../constants.js';
 import { PdfToolInputShape } from '../schemas/common.js';
 import { extractPdfaId } from '../services/conformance.js';
 import type { ConformanceValidationReport } from '../services/conformance-validation.js';
 import { validateConformance } from '../services/conformance-validation.js';
-import { toReadingScope } from '../services/document.js';
 import { parsePdf } from '../services/pdf-parser.js';
 import {
   evaluatePolicy,

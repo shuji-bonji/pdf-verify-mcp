@@ -2,10 +2,10 @@
  * detect_pades_level / identify_conformance tests.
  */
 
+import { toReadingScope } from '@normativepdf/recover';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { PadesLevel } from '../../src/constants.js';
 import { identifyConformance } from '../../src/services/conformance.js';
-import { toReadingScope } from '../../src/services/document.js';
 import { parsePdfBytes } from '../../src/services/pdf-parser.js';
 import { detectPadesLevels } from '../../src/services/verification-service.js';
 import { formatPadesReports } from '../../src/utils/formatter.js';

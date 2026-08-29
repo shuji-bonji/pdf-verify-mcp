@@ -8,15 +8,12 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import type { CosDict, CosObject, PdfDocument } from 'normativepdf';
-import type { ParsedPdf, SignatureField } from '../types.js';
-import { assertReadablePdf, PdfVerifyError, toStructuralRefusal } from '../utils/error-handler.js';
-import { logger } from '../utils/logger.js';
 import {
   asArray,
   asDict,
   asStream,
   bytesOf,
+  type DocumentScope,
   decodedBytes,
   enumerateObjects,
   get,
@@ -24,10 +21,14 @@ import {
   integerOf,
   nameOf,
   numberOf,
+  openDocument,
   resolved,
   textOf,
-} from './cos.js';
-import { type DocumentScope, openDocument } from './document.js';
+} from '@normativepdf/recover';
+import type { CosDict, CosObject, PdfDocument } from 'normativepdf';
+import type { ParsedPdf, SignatureField } from '../types.js';
+import { assertReadablePdf, PdfVerifyError, toStructuralRefusal } from '../utils/error-handler.js';
+import { logger } from '../utils/logger.js';
 
 const CONTEXT = 'pdf-parser';
 
@@ -193,7 +194,7 @@ export async function loadPdfDocument(
   bytes: Uint8Array,
   options: ParseOptions = {},
 ): Promise<PdfDocument> {
-  return (await openDocument(bytes, { password: options.password })).doc;
+  return (await openDocument(bytes, { password: options.password, onDebug: logger.debug })).doc;
 }
 
 /**
@@ -214,7 +215,10 @@ export async function parsePdfBytes(
   let doc: PdfDocument;
   let scope: DocumentScope;
   try {
-    ({ doc, scope } = await openDocument(bytes, { password: options.password }));
+    ({ doc, scope } = await openDocument(bytes, {
+      password: options.password,
+      onDebug: logger.debug,
+    }));
   } catch (error) {
     throw toStructuralRefusal(error);
   }

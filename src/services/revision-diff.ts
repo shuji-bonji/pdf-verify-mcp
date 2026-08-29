@@ -49,9 +49,6 @@
  * file in an editor needs.
  */
 
-import type { XrefEntry } from 'normativepdf';
-import type { DocMdpChangeClass, RevisionObjectChange, RevisionSummary } from '../types.js';
-import { logger } from '../utils/logger.js';
 import {
   indexOfBytes,
   isDelimiter,
@@ -60,7 +57,10 @@ import {
   readToken,
   skipWhitespace,
   walkXrefChain,
-} from './xref-walk.js';
+} from '@normativepdf/recover';
+import type { XrefEntry } from 'normativepdf';
+import type { DocMdpChangeClass, RevisionObjectChange, RevisionSummary } from '../types.js';
+import { logger } from '../utils/logger.js';
 
 const CONTEXT = 'revision-diff';
 
@@ -322,7 +322,7 @@ export interface RevisionDiffResult {
  */
 export async function diffRevisions(input: RevisionDiffInput): Promise<RevisionDiffResult | null> {
   const { bytes, signedRanges } = input;
-  const walked = await walkXrefChain(bytes);
+  const walked = await walkXrefChain(bytes, undefined, { onDebug: logger.debug });
   if (!walked) {
     logger.debug(CONTEXT, 'cross-reference chain could not be walked');
     return null;

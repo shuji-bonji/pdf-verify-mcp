@@ -3,6 +3,7 @@
  * into the reports returned by the MCP tools.
  */
 
+import { toReadingScope } from '@normativepdf/recover';
 import {
   DOCMDP_PERMISSIONS,
   PadesLevel,
@@ -30,7 +31,6 @@ import type {
   TrustResult,
 } from '../types.js';
 import { extractCmsArtifacts, verifyCms, verifyTimestampImprint } from './cms-verifier.js';
-import { toReadingScope } from './document.js';
 import { coversEntireFile, extractSignedBytes } from './pdf-parser.js';
 import { diffRevisions } from './revision-diff.js';
 import {

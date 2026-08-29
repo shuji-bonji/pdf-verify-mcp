@@ -10,11 +10,20 @@
  * Prefer veraPDF (`--flavour ua1`) when available; see verapdf.ts.
  */
 
+import {
+  asArray,
+  asDict,
+  boolOf,
+  get,
+  nameOf,
+  numberOf,
+  resolved,
+  textOf,
+} from '@normativepdf/recover';
 import { type CosDict, type CosObject, type PdfDocument, readPageTree } from 'normativepdf';
 import type { ParsedPdf } from '../types.js';
 import { logger } from '../utils/logger.js';
 import { extractPdfuaPart } from './conformance.js';
-import { asArray, asDict, boolOf, get, nameOf, numberOf, resolved, textOf } from './cos.js';
 
 const CONTEXT = 'pdfua-validator';
 

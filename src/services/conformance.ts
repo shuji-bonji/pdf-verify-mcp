@@ -6,8 +6,8 @@
  * is planned for a later phase. See docs/PROJECT_PLAN.md.
  */
 
+import { toReadingScope } from '@normativepdf/recover';
 import type { ConformanceReport, ParsedPdf } from '../types.js';
-import { toReadingScope } from './document.js';
 
 function matchXmp(xmp: string, patterns: RegExp[]): string | null {
   for (const pattern of patterns) {

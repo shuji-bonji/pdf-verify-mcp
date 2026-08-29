@@ -2,10 +2,10 @@
  * verify_signatures - Cryptographic verification of PDF digital signatures.
  */
 import type { McpServer } from '@modelcontextprotocol/server';
+import { toReadingScope } from '@normativepdf/recover';
 import { z } from 'zod';
 import { ResponseFormat, RevocationMode } from '../constants.js';
 import { PdfToolInputShape } from '../schemas/common.js';
-import { toReadingScope } from '../services/document.js';
 import { parsePdf } from '../services/pdf-parser.js';
 import { verifySignatures } from '../services/verification-service.js';
 import type { SignatureVerificationResult } from '../types.js';

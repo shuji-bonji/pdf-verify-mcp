@@ -2,53 +2,16 @@
  * Shared types for pdf-verify-mcp
  */
 
+import type { ReadingScope, XrefKind } from '@normativepdf/recover';
 import type { PadesLevel, RevocationStatus, TrustStatus, Verdict } from './constants.js';
 
 /**
  * どこまで読んだか —— **判定ではなく、判定の射程**。
  *
- * 同じ規則を当てても、読めた範囲が違えば答えが違う。この構造体が無いと
- * 「制約に違反していない」と「その対象を観測していない」が同じ顔をする。
- * だから報告の**先頭**に置く。
- *
- * 🔴 `reconstructed: true` のとき、相互参照表は **verify が組み直したもの**で
- * あって、ファイルが持っているものではない。監査の読み手に伏せてよい事実ではない。
- *
- * `DocumentScope`（内部）から `encryptDict` を落としたもの。
- * COS 辞書は JSON にすると内部表現が出るので外には出さない。
+ * 定義は `@normativepdf/recover`（ADR-0010）。回復方針と対で意味を持つので
+ * そちらに置き、ここは再 export で受ける。**判定はあちらに書かない。**
  */
-export interface ReadingScope {
-  /** true = ライブラリがそのまま読んだのではなく、verify の回復方針で組み立てた */
-  recovered: boolean;
-  /**
-   * 回復に入った理由 —— ライブラリが投げた、条文を名指しするエラーの文面。
-   *
-   * 🔴 **文面で分岐しないこと。** これは normativepdf のメッセージそのままで、
-   * 版が上がれば言い回しが変わる。分岐するなら `recovered` と `chainStop.kind`。
-   */
-  refusal: string | null;
-  /** チェーンの歩きがどこで止まったか（§7.5.6） */
-  chainStop: { kind: string; offset?: number; reason?: string };
-  /** 最後の `startxref` が読めず、古い入口から入った = 末尾のバイトは代表されていない */
-  newestSectionUnreadable: boolean;
-  /**
-   * 読めた相互参照節の数。数えられなかったときは `null`。
-   * `0` は「節が 1 つも読めなかった」という観測結果のときだけ。
-   */
-  sections: number | null;
-  /** チェーンが止まったあと、`startxref` の値も頼りに読み進めた */
-  continuedPastStop: boolean;
-  /** 表に載っていないオブジェクトを数え上げて埋めた数（表にある定義は上書きしない） */
-  filledFromScan: number;
-  /** 🔴 相互参照表を組み直した。ファイルが持っている表ではない */
-  reconstructed: boolean;
-  /** 相互参照表に載っているオブジェクトの数 */
-  objects: number;
-  /** trailer に `/Encrypt` がある（§7.6） */
-  encrypted: boolean;
-  /** 暗号化文書の鍵が導けた。false のときオブジェクトは 1 つも読めない（ADR-0008） */
-  authenticated: boolean;
-}
+export type { ReadingScope, XrefKind } from '@normativepdf/recover';
 
 /**
  * `verify_signatures` が返すもの。
@@ -363,9 +326,6 @@ export interface RevisionCountAgreement {
  */
 export type RevisionCountCause = 'linearised' | 'chain-incomplete';
 
-/** Which form of cross-reference section a revision used */
-export type XrefKind = 'table' | 'stream' | 'hybrid';
-
 /** Outcome of comparing later changes against the DocMDP permission */
 export type DocMdpAssessment = 'permitted' | 'violated' | 'indeterminate';
 
@@ -555,7 +515,7 @@ export interface ParsedPdf {
   pdfVersion: string | null;
   /**
    * どこまで読めたか（判定ではない）。ライブラリがそのまま読めたのか、
-   * verify の回復方針で組み立てたのかを含む。出力に載せるかは道具ごとに決める。
+   * 回復方針で組み立てたのかを含む。出力に載せるかは道具ごとに決める。
    */
-  scope: import('./services/document.js').DocumentScope;
+  scope: import('@normativepdf/recover').DocumentScope;
 }

@@ -257,7 +257,7 @@ function keptOfError(raw, text) {
 function depVersions() {
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
   const out = { self: pkg.version };
-  for (const name of ['pdf-lib', 'normativepdf', '@shuji-bonji/pdf-constraints']) {
+  for (const name of ['pdf-lib', 'normativepdf', '@normativepdf/recover', '@shuji-bonji/pdf-constraints']) {
     const p = join(ROOT, 'node_modules', name, 'package.json');
     out[name] = existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')).version : null;
   }
