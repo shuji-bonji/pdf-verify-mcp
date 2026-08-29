@@ -458,19 +458,37 @@ function reportAxes(golden, outPath) {
   // 1 形しか無い軸 = kept の中で、全検体を通して 1 つの値しか取らない信号
   const signals = {};
   const push = (k, v) => ((signals[k] ??= new Set()).add(stable(v)));
+  /**
+   * kept の値を「動いているか」を見られる形に均す。
+   * 配列は数えない（行の集合は別の見方で見る）。
+   * 辞書は 1 段ずつ降りる —— L1 の `observation` のように、鍵の下に信号が入る。
+   * 降りずに捨てると、`observation` は 91 通りの値を取っているのに
+   * 「1 形しか無い軸 = null」として報告される（実測。0.19.0 の基準を採るときに出た）。
+   */
+  const pushSignal = (k, v, depth = 0) => {
+    if (Array.isArray(v)) return;
+    if (v && typeof v === 'object') {
+      if (depth >= 2) return;
+      for (const [k2, v2] of Object.entries(v)) pushSignal(`${k}.${k2}`, v2, depth + 1);
+      return;
+    }
+    push(k, v);
+  };
   for (const [, e] of files) {
     for (const tool of TOOLS) {
       const t = e.tools[tool];
       if (!t) continue;
       push(`${tool}.isError`, t.isError);
       if (t.isError || !t.kept) continue;
-      for (const [k, v] of Object.entries(t.kept)) {
-        if (Array.isArray(v) || (v && typeof v === 'object')) continue;
-        push(`${tool}.${k}`, v);
-      }
+      for (const [k, v] of Object.entries(t.kept)) pushSignal(`${tool}.${k}`, v);
     }
   }
-  const single = Object.entries(signals).filter(([, s]) => s.size <= 1);
+  // 鍵の下にさらに信号がある軸（`observation` が null のときだけ葉になる等）は
+  // 親を数えない。親は「その形が無かった」であって「動いていない」ではない。
+  const keys = Object.keys(signals);
+  const single = Object.entries(signals).filter(
+    ([k, s]) => s.size <= 1 && !keys.some((o) => o.startsWith(`${k}.`)),
+  );
   console.log(`\n  🔴 1 形しか無い軸 (${single.length}) —— この集合ではその軸が動いていない:`);
   for (const [k, s] of single) console.log(`    ${k.padEnd(40)} = ${[...s][0]}`);
 

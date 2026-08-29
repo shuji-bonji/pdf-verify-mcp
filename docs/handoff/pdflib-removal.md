@@ -1032,8 +1032,9 @@ veraPDF: /opt/homebrew/bin/verapdf (1.30.0)
 
 ## 15. 残り（B2 の外）
 
-- [ ] 版を上げて push（`ahead 8`）→ publish → stack ルートで
-      `node scripts/generate-stack.mjs --readme`
+- [x] 版を上げて push → publish（**0.19.0**・2026-08-29）。
+      stack ルートの `node scripts/generate-stack.mjs --readme` は
+      **npm が正典**なので publish が通ってから
 - [ ] `DocumentScope` をツール出力に載せるか決める。
       **`reconstructed`（相互参照表は verify の推測）は監査の読み手に隠してよい事実ではない**
 - [ ] Mac 側で `npm ci` を 1 回（`node_modules/.package-lock.json` が古い）
@@ -1042,3 +1043,99 @@ veraPDF: /opt/homebrew/bin/verapdf (1.30.0)
 - [ ] `agent/pdf-agent-pipeline` を SDK v2 のクライアントへ
 - [ ] **reader の pdf-lib 撤去**（family の第 3 弾）。B2 で作った 3 つ
       （`xref-walk.ts` / `document.ts` / `cos.ts`）と計器 2 本がそのまま型になる
+
+## 16. 0.19.0 の基準を採り直した（2026-08-29）
+
+`.golden/before-full.json` は **pdf-lib が在るうちの** 基準である。撤去が済んだ
+いま、これは「次に何かを変えたときの基準」にはならない —— 差分がすべて
+「B2 で動いたもの」に埋もれる。0.19.0 の出力で採り直した。
+
+```
+node scripts/golden.mjs take .golden/base-0.19.0.json --label 0.19.0
+```
+
+| | |
+|---|---|
+| 検体 | 2,947（specimens 21 / fixtures 9 / veraPDF 2,907 / pdf20examples 7 / _wout 3） |
+| 呼び出し | 20,629（7 ツール） |
+| `isError` | 26 |
+| 所要 | 25.9 秒 |
+| `deps.self` | `0.19.0` |
+
+### 16.1 版を上げても出力は動いていない
+
+```
+node scripts/golden.mjs diff .golden/after-L5.json .golden/base-0.19.0.json
+→ 差: 0 件（ファイル×ツール）
+```
+
+**この 0 件は 2 つを同時に言っている。**
+
+1. 版を上げた commit（`package.json` / `package-lock.json` / `plugin.json` /
+   `CHANGELOG.md`）はツールの出力に届いていない
+2. 採り直しは**決定論的**である —— `after-L5` の 02:05 と `base-0.19.0` の 03:17、
+   72 分あけた 2 回で 20,629 呼び出しが 1 件も動かなかった
+
+空振り検査の対（この 0 件が「計器が何も測っていない」ではないこと）は
+`node scripts/golden.mjs t3 .golden/base-0.19.0.json` = **14 件とも差を報告**。
+
+### 16.2 🔴 計器が嘘の行を出していた —— `observation` が「動いていない軸」に見えた
+
+`take` の報告に
+
+```
+🔴 1 形しか無い軸 (4) —— この集合ではその軸が動いていない:
+    validate_clauses.observation             = null
+```
+
+が出ていた。実測するとそうではない。`observation` は 2,947 件のうち
+**2,926 件で非 null、91 通りの値**を取っている。
+
+原因は報告側の 1 行である。
+
+```js
+if (Array.isArray(v) || (v && typeof v === 'object')) continue;  // 辞書を捨てていた
+```
+
+`observation` は辞書なので毎回捨てられ、**null のときだけ** 記録されていた。
+結果、その軸が取った値は `null` の 1 つだけになり、「動いていない」と報告された。
+
+L1 で足した `observation`、そして次に足すかもしれない `scope` は、どちらも
+辞書である。**捨てたままにすると、新しく足した信号ほど「死んでいる軸」に見える。**
+辞書を 1 段ずつ降りて葉を信号にするよう直した（深さ 2 まで、配列は数えない）。
+親が葉としても現れる場合（`observation` が null の 21 件）は、子がある限り
+親を「1 形しか無い軸」に数えない —— 親の `null` は「動いていない」ではなく
+「その形が無かった」だから。
+
+直したあとの報告:
+
+| 軸 | 形の数 |
+|---|---|
+| `validate_clauses.observation.objects` | 79 |
+| `validate_clauses.observation.pages` | 5 |
+| `validate_clauses.observation.xrefChain` | 3 |
+| `validate_clauses.observation.pagesReached` | 2 |
+
+「1 形しか無い軸」は 4 → **3** に減り、残った 3 つはすべて計器が固定している値である
+（`validate_conformance` の `engine: 'native'` 由来 2 つ、`evaluate_policy.profile`
+の既定値）。
+
+### 16.3 この基準が言っていない範囲
+
+`xrefChain` は 5 値（`complete` / `prev-zero` / `unreadable` / `cyclic` /
+`malformed`）のうち **3 値しか出ていない**。
+
+| 値 | 件数 |
+|---|---|
+| `complete` | 2,924 |
+| `prev-zero` | 1 |
+| `unreadable` | 1 |
+| `cyclic` | **0** |
+| `malformed` | **0** |
+
+`pagesReached: false` も 2,947 件中 **2 件**しかない。
+
+つまり **回復方針が当たる経路は、この集合ではほとんど踏まれていない**。
+B2 の A/B が「差 0 件」を言えるのは踏んだ範囲についてだけで、
+`cyclic` と `malformed` については何も言っていない。`scope` を出力に載せる前に、
+この 2 値の検体を `golden-specimens.mjs` に足すこと。
