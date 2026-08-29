@@ -912,7 +912,7 @@ the trailer carries /Encrypt
 |---|---|
 | **面 1 撤去** | ✅ `src` の import 0 / `npm ls --omit=dev pdf-lib` = `(empty)` |
 | **面 2 出力の A/B** | ✅ 全段で帰属済み（L1 = 43 件・L2+L3 = 25 件・L4+L5 = 0 件）。**誤った `pass` は 0 件** |
-| **面 3 独立オラクル** | ⏳ 1 回目で**欠陥を 1 つ捕まえた**（§13.5）。直して再実行待ち |
+| **面 3 独立オラクル** | ✅ 8 件とも `qpdf --decrypt` と同じ判定（§14）。1 回目は**欠陥を 1 つ捕まえた** |
 
 ### 13.5 🔴 面 3 は Mac で回す —— `npm run check:verapdf-oracle`
 
@@ -1003,3 +1003,42 @@ qpdf --decrypt の出力   ←→   decryptedCopy() の出力
 qpdf は verify とも normativepdf とも 1 行も共有しない復号器なので、
 **独立オラクルとしてはこちらが正しい形**である。`ua-plain.pdf` の判定は
 基準ではなく参考として 1 行目に出す。
+
+### 14.1 2 回目 —— 面 3 充足（2026-08-28）
+
+```
+veraPDF: /opt/homebrew/bin/verapdf (1.30.0)
+参考（ua-plain.pdf・暗号化していない元・1.7）: true []
+
+  OK   ua-enc-aesv2-pw.pdf          qpdf --check=ok header 1.7/1.7
+        qpdf の復号: true []      こちらの写し: true []
+  （他 7 件も同じ。RC4 40/128・AESV2・AESV3・パスワード付き・accessibility=n・objstm 無し）
+
+8 件とも、qpdf の復号と同じ判定を受けた（面 3 充足）
+```
+
+**受入 3 面が揃った。**
+
+| 面 | 結果 |
+|---|---|
+| 1 撤去 | `src` の pdf-lib import 0 / `npm ls --omit=dev pdf-lib` = `(empty)` |
+| 2 出力の A/B | L1 43 件・L2+L3 25 件・L4+L5 0 件、全部帰属。**誤った `pass` は 0 件** |
+| 3 独立オラクル | 暗号化 8 検体で `qpdf --decrypt` と veraPDF の判定が一致 |
+
+### 14.2 面 3 を回すのは 1 回では足りなかった
+
+1 回目は落ち、2 回目で通った。**落ちた 1 回目に価値があった** —— 面 1 と面 2 が
+緑のまま残っていた欠陥は、これでしか出なかった。段ごとに回すこと。
+
+## 15. 残り（B2 の外）
+
+- [ ] 版を上げて push（`ahead 8`）→ publish → stack ルートで
+      `node scripts/generate-stack.mjs --readme`
+- [ ] `DocumentScope` をツール出力に載せるか決める。
+      **`reconstructed`（相互参照表は verify の推測）は監査の読み手に隠してよい事実ではない**
+- [ ] Mac 側で `npm ci` を 1 回（`node_modules/.package-lock.json` が古い）
+- [ ] 3 つの Skill の README に Node 20 以上（B1・B2 完了時にまとめて・shuji 決定）
+- [ ] エラー契約の統一は別 Issue（未起票）
+- [ ] `agent/pdf-agent-pipeline` を SDK v2 のクライアントへ
+- [ ] **reader の pdf-lib 撤去**（family の第 3 弾）。B2 で作った 3 つ
+      （`xref-walk.ts` / `document.ts` / `cos.ts`）と計器 2 本がそのまま型になる
