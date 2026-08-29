@@ -30,6 +30,7 @@ import type {
   TrustResult,
 } from '../types.js';
 import { extractCmsArtifacts, verifyCms, verifyTimestampImprint } from './cms-verifier.js';
+import { toReadingScope } from './document.js';
 import { coversEntireFile, extractSignedBytes } from './pdf-parser.js';
 import { diffRevisions } from './revision-diff.js';
 import {
@@ -448,7 +449,12 @@ function assessDocMdp(input: {
  * normativepdf, whose section reader is async — a cross-reference stream has to
  * be inflated before its entries exist (ISO 32000-1 §7.5.8).
  */
+/** どこまで読んだかを先に置いてから、改ざん検知の結果を返す。 */
 export async function analyzeIntegrity(parsed: ParsedPdf): Promise<IntegrityReport> {
+  return { scope: toReadingScope(parsed.scope), ...(await analyze(parsed)) };
+}
+
+async function analyze(parsed: ParsedPdf): Promise<Omit<IntegrityReport, 'scope'>> {
   const notes: string[] = [];
   const signed = parsed.signatures.filter((s) => s.byteRange && s.contents?.length);
 

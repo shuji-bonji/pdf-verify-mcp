@@ -7,6 +7,7 @@
  */
 
 import type { ConformanceReport, ParsedPdf } from '../types.js';
+import { toReadingScope } from './document.js';
 
 function matchXmp(xmp: string, patterns: RegExp[]): string | null {
   for (const pattern of patterns) {
@@ -64,7 +65,15 @@ export function extractPdfuaPart(xmp: string | null | undefined): number | null 
   return part !== null ? Number(part) : null;
 }
 
+/**
+ * 宣言の識別。`scope` は「どう読んだか」なので、判定の前に置いて返す
+ * （下の `identify` は宣言だけを見る）。
+ */
 export function identifyConformance(parsed: ParsedPdf): ConformanceReport {
+  return { scope: toReadingScope(parsed.scope), ...identify(parsed) };
+}
+
+function identify(parsed: ParsedPdf): Omit<ConformanceReport, 'scope'> {
   const notes: string[] = [
     'This tool identifies declared conformance only; it does not validate actual conformance.',
   ];

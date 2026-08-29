@@ -78,6 +78,21 @@ describe('parseVeraPdfVersion', () => {
  */
 describe('formatConformanceValidation の版の位置', () => {
   const base = {
+    // 射程は判定の前に出るが、この test が見ているのは版の行の位置なので、
+    // 何も回復していない文書の射程を置く（scope 由来の行が 1 本だけ増える）。
+    scope: {
+      recovered: false,
+      refusal: null,
+      chainStop: { kind: 'complete' },
+      newestSectionUnreadable: false,
+      sections: 1,
+      continuedPastStop: false,
+      filledFromScan: 0,
+      reconstructed: false,
+      objects: 7,
+      encrypted: false,
+      authenticated: true,
+    },
     engine: 'verapdf' as const,
     flavour: 'PDF/A-2b',
     compliant: true,

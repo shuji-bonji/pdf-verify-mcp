@@ -14,7 +14,10 @@
  * テーブルを増やしたら constraints を publish → ここの依存を上げて verify も publish する。
  */
 
+import { readFile } from 'node:fs/promises';
 import { checkFile, listTables } from '@shuji-bonji/pdf-constraints';
+import type { ReadingScope } from '../types.js';
+import { openDocument, toReadingScope } from './document.js';
 
 /** 収録済み制約 1 件の結果（pdf-constraints の 4 状態をそのまま運ぶ） */
 export interface ClauseResult {
@@ -62,6 +65,14 @@ export interface ClauseObservation {
 }
 
 export interface ClauseValidationReport {
+  /**
+   * どこまで読んだか。**判定ではない。**
+   *
+   * `observation` と重なって見えるが別の測り方である。`scope` は
+   * **この文書をどう開いたか**（回復に入ったか・表を組み直したか）、
+   * `observation` は **pdf-constraints が何を見たか**（対象とページ）。
+   */
+  scope: ReadingScope;
   /** 判定の由来。同じ facts でも版が違えば規則が違いうるので必ず出す */
   constraintsVersion: string;
   tables: { name: string; version: string }[];
@@ -90,6 +101,12 @@ export async function validateClauses(
   filePath: string,
   options: ClauseValidationOptions = {},
 ): Promise<ClauseValidationReport> {
+  // 判定より先に「どう開いたか」を採る。checkFile は自分でファイルを読むので、
+  // ここで開くのは射程を申告するためだけ（2,950 検体で 1 文書 0.3 ミリ秒）。
+  const scope = toReadingScope(
+    (await openDocument(new Uint8Array(await readFile(filePath)))).scope,
+  );
+
   const report = await checkFile(filePath, {
     domains: options.domains,
     given: options.given,
@@ -144,6 +161,7 @@ export async function validateClauses(
   }
 
   return {
+    scope,
     constraintsVersion: report.packageVersion,
     tables: report.tables,
     observation: report.observation,

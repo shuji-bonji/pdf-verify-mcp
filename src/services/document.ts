@@ -30,6 +30,7 @@ import {
   type XrefChainStop,
   type XrefEntry,
 } from 'normativepdf';
+import type { ReadingScope } from '../types.js';
 import { logger } from '../utils/logger.js';
 import { asDict, asRef, bytesOf } from './cos.js';
 import {
@@ -55,8 +56,19 @@ export interface DocumentScope {
   chainStop: XrefChainStop;
   /** 最後の `startxref` が読めず、古い入口から入った = 末尾のバイトは代表されていない */
   newestSectionUnreadable: boolean;
-  /** 読めた相互参照節の数 */
-  sections: number;
+  /**
+   * 読めた相互参照節の数（§7.5.4/§7.5.6）。
+   *
+   * 🔴 **経路によらず同じ意味を持たせること。** 0.19.0 では、ライブラリが
+   * そのまま読んだ経路でこの値を数えておらず、**健全な文書がすべて `0`** を
+   * 返していた（2,947 検体のうち 2,931 件）。読み手はそれを「節が 0 個」と読む。
+   * 観測していないことと、観測して 0 だったことが同じ顔をしていた ——
+   * `observation` で直したのと同じ間違いを、この項目自身が持っていた。
+   *
+   * 数えられなかったときは `null`。`0` は「節が 1 つも読めなかった」という
+   * 観測結果のときだけ使う（表を組み直した経路）。
+   */
+  sections: number | null;
   /**
    * チェーンが止まったあと、`startxref` の値を頼りに読み続けて文書を組み立てた。
    * **`/Prev` が繋いだものではない**ので、リビジョンの一覧とは別の読み方である。
@@ -323,6 +335,9 @@ export async function openDocument(
   // リビジョンの一覧（`revision-diff`）は逆に、チェーンが言うとおりに厳密に読む。
   // **「ファイルが定義しているオブジェクト」と「チェーンが辿れるリビジョン」は別の問いである。**
   if (doc && doc.chainStop.kind === 'complete' && (await catalogReachable(doc))) {
+    // 節の数はライブラリが持っていないので、ここで歩いて数える。
+    // 2,950 検体で 87 ミリ秒（1 文書あたり 0.03 ミリ秒）—— 数えない理由にはならない。
+    const counted = await walkXrefChain(bytes, doc.origin);
     return {
       doc,
       scope: {
@@ -330,7 +345,7 @@ export async function openDocument(
         refusal: null,
         chainStop: doc.chainStop,
         newestSectionUnreadable: false,
-        sections: 0,
+        sections: counted ? counted.sections.length : null,
         continuedPastStop: false,
         filledFromScan: 0,
         reconstructed: false,
@@ -405,7 +420,8 @@ export async function openDocument(
         refusal: null,
         chainStop: doc.chainStop,
         newestSectionUnreadable: false,
-        sections: 0,
+        // ここは既に歩いてある。ライブラリの答えを使うだけで、読んだ節は同じ。
+        sections: chain.sections.length,
         continuedPastStop: false,
         filledFromScan: 0,
         reconstructed: false,
@@ -440,5 +456,28 @@ export async function openDocument(
       authenticated: built.authenticated,
       encryptDict: built.encryptDict,
     },
+  };
+}
+
+/**
+ * 内部の申告を、出力に載せる形にする。落とすのは `encryptDict` だけ
+ * —— COS 辞書なので JSON にすると内部表現が出る。`/V` `/R` `/Filter` の値が
+ * 要るなら、呼び出し側がそこから取り出す。
+ */
+export function toReadingScope(scope: DocumentScope): ReadingScope {
+  // 鍵の順は手で書く。分割代入の残りを広げると `chainStop` が末尾に回り、
+  // 読み手が最初に見る場所が変わってしまう。
+  return {
+    recovered: scope.recovered,
+    refusal: scope.refusal,
+    chainStop: { ...scope.chainStop },
+    newestSectionUnreadable: scope.newestSectionUnreadable,
+    sections: scope.sections,
+    continuedPastStop: scope.continuedPastStop,
+    filledFromScan: scope.filledFromScan,
+    reconstructed: scope.reconstructed,
+    objects: scope.objects,
+    encrypted: scope.encrypted,
+    authenticated: scope.authenticated,
   };
 }

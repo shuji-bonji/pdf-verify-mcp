@@ -10,6 +10,7 @@ import type {
   DocMdpAssessment,
   IntegrityReport,
   PadesLevelReport,
+  ReadingScope,
   RevisionChainCoverage,
   RevisionObjectChange,
   SignatureVerificationReport,
@@ -54,6 +55,54 @@ function formatCms(cms: CmsVerificationResult): string[] {
     lines.push(`  - Self-signed: ${yesNo(c.isSelfSigned)}`);
   }
   if (cms.error) lines.push(`- Diagnostic: ${cms.error}`);
+  return lines;
+}
+
+/**
+ * どこまで読んだかを、判定より前に置く行を組む。
+ *
+ * 数字だけを読ませない。`reconstructed` の文書では、相互参照表は verify が
+ * 組み直したものであって、ファイルが持っているものではない —— それを知らずに
+ * 「違反なし」を読むと、見ていない範囲を「問題なし」と受け取ることになる。
+ */
+export function formatReadingScope(scope: ReadingScope): string[] {
+  const head: string[] = [];
+  if (scope.sections !== null) head.push(`${scope.sections} cross-reference section(s)`);
+  head.push(`${scope.objects} object(s)`);
+  head.push(`chain ${scope.chainStop.kind}`);
+  if (scope.encrypted) {
+    head.push(
+      scope.authenticated
+        ? 'encrypted (key derived)'
+        : '**encrypted, key NOT derived — no object could be read**',
+    );
+  }
+  const lines = [`- Scope of this reading: ${head.join(', ')}`];
+  if (scope.reconstructed) {
+    lines.push(
+      '  - **The cross-reference table was rebuilt by this tool from the objects found in the ' +
+        'file. It is not the table the file carries, and revision boundaries cannot be stated.**',
+    );
+  }
+  if (scope.continuedPastStop) {
+    lines.push(
+      '  - The chain stopped before the end; reading continued from the `startxref` values, ' +
+        'which `/Prev` does not link.',
+    );
+  }
+  if (scope.filledFromScan > 0) {
+    lines.push(
+      `  - ${scope.filledFromScan} object(s) listed by no cross-reference section were filled in ` +
+        'by scanning the file for `N G obj`.',
+    );
+  }
+  if (scope.newestSectionUnreadable) {
+    lines.push(
+      '  - The newest cross-reference section could not be read, so the bytes at the end of the ' +
+        'file are not represented here.',
+    );
+  }
+  if (scope.refusal) lines.push(`  - Recovered after: ${scope.refusal}`);
   return lines;
 }
 
@@ -144,6 +193,7 @@ function revisionCountLine(report: IntegrityReport): string | null {
 
 export function formatIntegrityReport(report: IntegrityReport): string {
   const lines: string[] = ['# Integrity Analysis', ''];
+  lines.push(...formatReadingScope(report.scope));
   lines.push(`- File size: ${report.fileSize} bytes`);
   lines.push(
     `- Revisions: ${report.revisionCount} (incremental updates: ${report.incrementalUpdateCount})`,
@@ -243,6 +293,7 @@ function formatObjectChange(change: RevisionObjectChange): string {
 }
 
 interface PolicyReportForFormat {
+  scope: ReadingScope;
   profile: string;
   verdict: string;
   firedRules: { ruleId: string; verdict: string; reason: string }[];
@@ -275,6 +326,7 @@ interface PolicyReportForFormat {
 
 export function formatPolicyReport(report: PolicyReportForFormat): string {
   const lines: string[] = ['# Trust Policy Evaluation', ''];
+  lines.push(...formatReadingScope(report.scope));
   lines.push(`- Profile: ${report.profile}`);
   lines.push(`- Verdict: **${report.verdict}**`);
   lines.push(
@@ -374,6 +426,7 @@ export function formatConformanceValidation(
 ): string {
   const standard = report.flavour.startsWith('PDF/UA') ? 'PDF/UA' : 'PDF/A';
   const lines: string[] = [`# ${standard} Conformance Validation`, ''];
+  lines.push(...formatReadingScope(report.scope));
   lines.push(`- Flavour: ${report.flavour}`);
   lines.push(`- Engine: ${report.engine}`);
   // Before the numbers, not after them. A reader who meets "24 checked, 24
@@ -435,6 +488,7 @@ export function formatClauseValidation(
   report: import('../services/clause-validation.js').ClauseValidationReport,
 ): string {
   const lines: string[] = ['# ISO 32000 Clause Constraints', ''];
+  lines.push(...formatReadingScope(report.scope));
   lines.push(
     `- Decided by: @shuji-bonji/pdf-constraints ${report.constraintsVersion} ` +
       `(${report.tables.map((t) => `${t.name} v${t.version}`).join(', ')})`,
@@ -487,6 +541,7 @@ export function formatClauseValidation(
 
 export function formatConformanceReport(report: ConformanceReport): string {
   const lines: string[] = ['# Conformance Declaration', ''];
+  lines.push(...formatReadingScope(report.scope));
   lines.push(`- PDF version: ${report.pdfVersion ?? 'unknown'}`);
   lines.push(`- XMP metadata: ${yesNo(report.hasXmp)}`);
   lines.push(

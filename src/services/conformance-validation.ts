@@ -19,9 +19,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CosDict } from 'normativepdf';
 import { ValidationEngine, VERAPDF_ENV } from '../constants.js';
-import type { ParsedPdf } from '../types.js';
+import type { ParsedPdf, ReadingScope } from '../types.js';
 import { PdfVerifyError } from '../utils/error-handler.js';
 import { extractPdfaId, extractPdfuaPart } from './conformance.js';
+import { toReadingScope } from './document.js';
 import { loadPdfDocument } from './pdf-parser.js';
 import { type PdfaFlavour, resolveFlavour, validatePdfaNative } from './pdfa-validator.js';
 import { type PdfuaFlavour, resolvePdfuaFlavour, validatePdfuaNative } from './pdfua-validator.js';
@@ -67,6 +68,8 @@ export type AuthoritativeValidation =
     };
 
 export interface ConformanceValidationReport {
+  /** どこまで読んだか。**判定ではない。**報告の先頭に置く */
+  scope: ReadingScope;
   engine: 'native' | 'verapdf';
   /** Provenance of the verdict: which validator decided it, or why none did. */
   authoritativeValidation: AuthoritativeValidation;
@@ -222,11 +225,23 @@ function toVeraPdfUnavailableError(
       );
 }
 
+/** どこまで読んだかを先に置いてから、適合性の判定を返す。 */
 export async function validateConformance(
   parsed: ParsedPdf,
   filePath: string,
   options: ValidateConformanceOptions = {},
 ): Promise<ConformanceValidationReport> {
+  return {
+    scope: toReadingScope(parsed.scope),
+    ...(await validate(parsed, filePath, options)),
+  };
+}
+
+async function validate(
+  parsed: ParsedPdf,
+  filePath: string,
+  options: ValidateConformanceOptions = {},
+): Promise<Omit<ConformanceValidationReport, 'scope'>> {
   const notes: string[] = [];
 
   const engineChoice = options.engine ?? ValidationEngine.AUTO;
@@ -321,7 +336,7 @@ async function validatePdfua(
   veraPath: string | null,
   notes: string[],
   status: AuthoritativeValidation,
-): Promise<ConformanceValidationReport> {
+): Promise<Omit<ConformanceValidationReport, 'scope'>> {
   // Issue #7: an encrypted document's structures (object streams, strings)
   // are ciphertext — validating them as-is produces false findings. Rebuild a
   // plaintext document first (the empty user password covers

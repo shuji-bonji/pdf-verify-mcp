@@ -13,6 +13,7 @@ import { PdfToolInputShape } from '../schemas/common.js';
 import { extractPdfaId } from '../services/conformance.js';
 import type { ConformanceValidationReport } from '../services/conformance-validation.js';
 import { validateConformance } from '../services/conformance-validation.js';
+import { toReadingScope } from '../services/document.js';
 import { parsePdf } from '../services/pdf-parser.js';
 import {
   evaluatePolicy,
@@ -145,6 +146,8 @@ Examples:
         }
 
         const report = {
+          // どこまで読んだかを先に置く。判定はそのあと。
+          scope: toReadingScope(parsed.scope),
           ...evaluation,
           facts: {
             signatureCount: signatures.filter((s) => !s.isDocumentTimestamp).length,
