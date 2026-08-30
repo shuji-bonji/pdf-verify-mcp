@@ -526,10 +526,23 @@ export function formatClauseValidation(
       `${obs.pagesReached ? `${obs.pages} page(s) reached` : '**page tree NOT reached**'}`,
   );
   lines.push(`- Subjects examined: ${report.subjects}`);
-  lines.push(
-    `- Result: ${report.violations > 0 ? `**${report.violations} failure(s)**` : '**no failures in the constraints checked**'}` +
-      (report.notDecided > 0 ? `, ${report.notDecided} not decided` : ''),
-  );
+  // 🔴 **`checked` が 2 つを指す。** 表に載っている制約と、実際に当てられた制約である。
+  // 26 件のうち 26 件が `needs_external_fact` のとき、当てられた制約は 0 件なので、
+  // `no failures in the constraints checked` は何も言っていない。2 つを分けて、
+  // 1 件も判定していないときは「判定していない」と書く。
+  //
+  // 出自: 2026-08-30、鍵が導けない暗号化文書（`ua-enc-aesv3-pw.pdf` /
+  // `ua-enc-aesv2-pw.pdf`）。コーパス 2,953 件のうち該当は 2 件。
+  // 一部だけ未判定の 848 件では `no failures ..., N not decided` のままでよい。
+  const decided = report.results.length - report.notDecided;
+  const verdict =
+    report.violations > 0
+      ? `**${report.violations} failure(s)**`
+      : decided > 0
+        ? '**no failures in the constraints checked**'
+        : '**no constraint was decided**';
+  const undecidedTail = report.notDecided > 0 ? `, ${report.notDecided} not decided` : '';
+  lines.push(`- Result: ${verdict}${undecidedTail}`);
 
   const failed = report.results.filter((r) => r.status === 'fail');
   if (failed.length > 0) {

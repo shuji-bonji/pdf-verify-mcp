@@ -123,13 +123,35 @@ describe('条文を名指しする拒否は、サーバの故障ではない', (
     return file;
   }
 
-  it('🔴 相互参照節が条文に反する文書は PARSE_FAILED であって INTERNAL_ERROR ではない', async () => {
+  /**
+   * 🔴 **`unreadableTable` はもう拒否されない**（pdf-constraints 0.5.0 から）。
+   *
+   * あちらが `parsePdf` ではなく `openDocument` を通すようになり、相互参照表を
+   * 組み直して読むので、制約が当たるようになった。以前はここで PARSE_FAILED を
+   * 期待していたが、それは「読めないこと」を固定していた検査で、**読めるように
+   * なったこと自体が直し**である（ADR-0010 受入 3）。
+   *
+   * 拒否の作法（条文を名指しする拒否はサーバの故障ではない）は下の検査に移した。
+   */
+  it('相互参照表を組み直した文書は、拒否せずに読んで、組み直したと申告する', async () => {
     const file = await writeSpecimen('unreadableTable');
+    const report = await validateClauses(file);
+    expect(report.scope.reconstructed).toBe(true);
+    expect(report.scope.refusal).toMatch(/§7\.5\.4|§7\.5\.8/);
+    // 読めた以上、制約は当たっている（0 件なら「読めた」と言えない）
+    expect(report.results.length).toBeGreaterThan(0);
+  });
+
+  it('🔴 どうやっても読めない文書は PARSE_FAILED であって INTERNAL_ERROR ではない', async () => {
+    // 相互参照表も `N G obj` も無い = 組み直す材料が 1 つも無い
+    const dir = await mkdtemp(join(tmpdir(), 'pdf-verify-scope-'));
+    const file = join(dir, 'no-objects.pdf');
+    await writeFile(file, Buffer.from('%PDF-1.7\n%%EOF\n', 'latin1'));
+
     await expect(validateClauses(file)).rejects.toThrow(PdfVerifyError);
     const error = await validateClauses(file).catch((e: unknown) => e as PdfVerifyError);
     // INTERNAL_ERROR だと、受け側は「調べられませんでした」の枠に落とす
     expect(error.code).toBe('PARSE_FAILED');
-    expect(error.message).toMatch(/§7\.5\.4|§7\.5\.8/);
     expect(error.suggestion).toMatch(/finding about the file, not a failure of this server/);
   });
 

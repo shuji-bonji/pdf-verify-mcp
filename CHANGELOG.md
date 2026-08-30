@@ -4,6 +4,81 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-08-30
+
+`@shuji-bonji/pdf-constraints` を 0.4.0 から **0.6.0** に上げた。
+**条文に反する文書 20 件が `PARSE_FAILED` を返さなくなり**、そのうち 2 件は
+「読めた」ではなく「判定できない」と答えるようになった。
+
+### Changed
+
+- **依存: `@shuji-bonji/pdf-constraints` 0.4.0 -> 0.6.0**
+
+  0.5.0 で `parsePdf` から `openDocument`（`@normativepdf/recover`）に変わり、
+  条文に反する文書を拒否せず回復方針で読むようになった。0.24.0 では
+  `validate_clauses` がこれらに `PARSE_FAILED` を返し、**制約を 1 つも
+  当てていなかった**。コーパス 2,953 件のうち 20 件がこれにあたる。
+
+  0.6.0 で、**鍵が導けない暗号化文書が `pass` を出さなくなった**。
+  `/Encrypt` があり空パスワードで file key が導けない文書では、
+  `openDocument` は文書を返すがオブジェクトを渡さない（ADR-0008）。
+  すべての fact が null になり、`onlyWhen: exists` で守られた assert が
+  飛ばされ、違反 0 = `pass` になっていた。26 制約すべてが
+  `needs_external_fact` / `missing: given.password` になる。
+
+  `validate_clauses` の応答に `observation.scope` が乗る（2,927 件・追加のみ）。
+  **判定ではない。** `reconstructed` が true のときは相互参照表を
+  ファイルから読んだのではなく組み直している。
+
+- **`validate_clauses` の markdown の `Result:` 行**。26 制約のうち 26 件が
+  `needs_external_fact` のとき、`no failures in the constraints checked` と
+  書いていた。当てられた制約は 0 件なので、この文は何も言っていない。
+
+  ```
+  - Result: **no failures in the constraints checked**, 26 not decided   （0.24.0）
+  - Result: **no constraint was decided**, 26 not decided                （0.25.0）
+  ```
+
+  🔴 `checked` が 2 つを指していた —— **表に載っている制約**と、
+  **実際に当てられた制約**である。一部だけ未判定の 848 件では文言を変えない。
+  該当は 2 件（`ua-enc-aesv3-pw.pdf` / `ua-enc-aesv2-pw.pdf`）。
+
+### 受入（A/B・検体 2,953 件・json と markdown の 2 軸）
+
+```
+json      after-0.24.0-final.json <-> after-pc060.json
+  🔴 pass -> fail / 読めた -> 読めない / 行が消えた : 0 件
+  B  読めない -> 読めた                            : 20 件
+  F  観測できた対象が増えた                        :  1 件
+  G  帰属が要る                                    :  3 件
+  H  出力が切り詰められて JSON にならない          :  1 件
+  J  項目が増えただけ（判定は動いていない）        : 2,927 件
+
+markdown  md-0.25.0.json <-> md-pc060.json
+  B  読めない -> 読めた                            : 20 件
+  K/L 本文の行が入れ替わった                       : 2,932 件
+```
+
+**帰属**
+
+- **J 2,927 / K・L 2,928** —— `observation.scope` が全件に乗った（json）、
+  `Decided by` の版番号が動いた（markdown）。行の追加と版の文字列だけで、
+  1 行も判定は動いていない。プログラムで全件を突き合わせて確かめた。
+- **B 20** —— `PARSE_FAILED` を返していた 20 件。うち 2 件（`-pw`）は
+  26 制約すべてが `needs_external_fact`。残り 18 件は回復方針で読めた。
+- **F 1 / G 3** —— `dss-pades-5sigs-doctimestamp-w2.pdf`（subject 1 -> 10）、
+  `xref-cyclic.pdf` / `xref-malformed-prev.pdf` / veraPDF `6-1-4-t01-fail-a.pdf`。
+  いずれもチェーンが止まったあと読み進めてページツリーに到達し、
+  `objects` と `pages` が増えた。最後の 1 件は `not_applicable -> pass` が 2 行。
+  **観測できていなかった対象が観測できるようになった差**であって、
+  反証できなくなった差ではない。
+- **H 1** —— `Isartor test suite manual.pdf`。**前から**切り詰められて JSON に
+  ならない検体で、28,705 バイトのうち動いたのは `constraintsVersion` の
+  1 か所だけ（前後で同じ長さ）。新しい問題ではない。
+
+計器の T-3 は json 14 件・markdown 10 件とも差を報告した。
+単体 202 件（+3）。`check` / `typecheck` / `build` は緑。
+
 ## [0.24.0] - 2026-08-29
 
 **`fonts-embedded` が、文書に在るフォント辞書を数えていた。**

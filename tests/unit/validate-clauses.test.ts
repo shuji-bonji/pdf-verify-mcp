@@ -244,3 +244,67 @@ describe('validate_clauses は判定の射程を申告する', () => {
     );
   });
 });
+
+describe('Result 行は「当てられた制約が 0 件」と「違反が 0 件」を分ける', () => {
+  // formatter だけを見る。PDF は要らない —— 直したのは報告の文であって読み口ではない。
+  const scope = {
+    recovered: false,
+    refusal: null,
+    chainStop: { kind: 'complete' },
+    newestSectionUnreadable: false,
+    sections: 1,
+    continuedPastStop: false,
+    filledFromScan: 0,
+    reconstructed: false,
+    objects: 12,
+    encrypted: true,
+    authenticated: false,
+  } as unknown as import('../../src/types.js').ReadingScope;
+
+  const report = (results: { status: string; missing?: string }[]) =>
+    ({
+      scope,
+      constraintsVersion: '0.6.0',
+      tables: [{ name: 'document-metadata', version: '1' }],
+      observation: { xrefChain: 'complete', objects: 12, pagesReached: false, pages: 0 },
+      subjects: 1,
+      results: results.map((r, i) => ({
+        constraintId: `CT-META-${i + 1}`,
+        target: '(document)',
+        ...r,
+      })),
+      violations: 0,
+      notDecided: results.filter((r) => r.status === 'needs_external_fact').length,
+      notes: [],
+    }) as unknown as import('../../src/services/clause-validation.js').ClauseValidationReport;
+
+  it('🔴 全部が未判定なら「no failures」とは言わない', () => {
+    const md = formatClauseValidation(
+      report([
+        { status: 'needs_external_fact', missing: 'given.password' },
+        { status: 'needs_external_fact', missing: 'given.password' },
+      ]),
+    );
+
+    // 当てられた制約が 0 件のとき、「違反が無かった」は何も言っていない
+    expect(md).toContain('- Result: **no constraint was decided**, 2 not decided');
+    expect(md).not.toContain('no failures in the constraints checked');
+  });
+
+  // 空振り検査の対: 一部だけ未判定なら文言は変えない。この対が無いと、
+  // 「notDecided > 0 なら言い換える」という誤った直し方でも上の検査は通る。
+  it('一部だけ未判定なら、これまでどおり「no failures ..., N not decided」', () => {
+    const md = formatClauseValidation(
+      report([{ status: 'pass' }, { status: 'needs_external_fact', missing: 'given.password' }]),
+    );
+
+    expect(md).toContain('- Result: **no failures in the constraints checked**, 1 not decided');
+  });
+
+  it('未判定が無ければ、これまでどおり「no failures」だけ', () => {
+    const md = formatClauseValidation(report([{ status: 'pass' }, { status: 'not_applicable' }]));
+
+    expect(md).toContain('- Result: **no failures in the constraints checked**');
+    expect(md).not.toContain('not decided');
+  });
+});
