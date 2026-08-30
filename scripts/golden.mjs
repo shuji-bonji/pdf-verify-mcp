@@ -1025,7 +1025,18 @@ function runCases(src, base, write, keys, cases, missing, goldenPath, format) {
   }
   let failed = 0;
   for (const c of cases) {
-    const mutated = c.mutate(clone(src));
+    // 🔴 壊す先が無い検査は、飛ばすのではなく**落ちる**のが正しい —— と思って
+    // 書いていたら、本当に落ちて残りの検査も回らなくなった（2026-08-30、コーパスの
+    // isError が 0 件になった日）。回らなかった検査は「通った」でも「落ちた」でもなく
+    // **何も測っていない**ので、そう出して次へ進む。missing の警告は上に出ている。
+    let mutated;
+    try {
+      mutated = c.mutate(clone(src));
+    } catch (e) {
+      failed++;
+      console.log(`  🔴 NG ${c.name} —— 壊す先が無くて回らなかった: ${e.message}`);
+      continue;
+    }
     const p = write(`case-${c.name.split(' ')[0]}`, mutated);
     const { code, text } = capture(() => diff(base, p, {}));
     const ok = c.expect(text, code);

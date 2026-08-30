@@ -4,6 +4,97 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-08-30
+
+**コーパス 2,953 件に残っていた唯一の `isError` が消えた。**
+`ua-broken-startxref.pdf`（`startxref` がファイル長の外を指す）で全 7 ツールが
+`PARSE_FAILED` を返していた。
+
+### Changed
+
+- **依存: `@normativepdf/recover` 0.1.1 -> 0.1.2 /
+  `@shuji-bonji/pdf-constraints` 0.6.0 -> 0.6.1**
+
+  recover 0.1.2 は、`startxref` がどれも読めないとき**相互参照節そのものを
+  ファイルの中から探す**（§7.5.8.1 —— 相互参照ストリームは `N G obj` で書かれた
+  普通の間接オブジェクトなので走査で見つかる）。読むのはファイルが持っている表
+  そのもので、組み直しの推測ではない。
+
+  🔴 **pdf-constraints も一緒に上げないと効かない。** 0.6.0 は recover を
+  `"0.1.1"` に完全一致で固定していたので、npm は pdf-constraints の下に 0.1.1 を
+  入れ子で置く。`validate_clauses` だけが古い読み口を通り続ける。実測してある
+  （入れ子に 0.1.1 を置くと `ParseError`、外すと 11 オブジェクト・ページツリー到達）。
+
+### Added
+
+- **`.golden/specimens/ua-no-objects.pdf` / `ua-no-header.pdf`**（新スクリプト
+  `scripts/golden-specimens-unreadable.mjs`）。
+
+  🔴 `isError` が 0 件になった結果、**計器の T-3 が「読めない -> 読めた」を
+  試す先を失った**。壊す先が集合に無い検査は「通った」のではなく何も測っていない
+  （実際には落ちた）。読めるようになったのは良いことなので、**読めない側の軸を
+  検体で持ち直す**。回復方針の入口をすべて塞いだ 2 形（間接オブジェクトが 1 つも
+  無い / `%PDF-` が無い）で、どちらも 7 ツールとも `PARSE_FAILED` になる。
+
+### Fixed
+
+- **計器が「壊す先が無い」検査で落ちていた。** 警告は出していたが、そのあと
+  `undefined.tools` で例外になり、残りの検査も回らなかった。回らなかった検査を
+  `🔴 NG ... 壊す先が無くて回らなかった` と出して次へ進む。
+
+- **`verify-integrity` の「両端が欠けている」テストは前提が動いた。**
+  `startxref` を潰せば `unwalkable` になる、という前提だった。0.1.2 は節を探して
+  読むので、その文書はもう `partial` /`missing: ['newest']` である。2 件に分けた:
+
+  ```
+  入口が読めないだけ        -> partial    / missing ['newest']
+  節がどこにも無い          -> unwalkable / missing ['oldest','newest']
+  ```
+
+  後者は `xref` キーワードも潰して作る。`unwalkable` が `partial` の一種ではない
+  という元の主張は、後者が引き続き担う。
+
+### 受入（A/B・検体 2,955 件・json と markdown の 2 軸）
+
+```
+json      after-pc060.json <-> after-0.26.0.json
+  🔴 pass -> fail / 読めた -> 読めない / 行が消えた : 0 件
+  検体が増えた                                     :  2 件（上記の読めない検体）
+  B  読めない -> 読めた                            :  7 件（1 検体 × 7 ツール）
+  F  観測できた対象が増えた                        :  1 件
+  G  帰属が要る                                    :  6 件
+  H  出力が切り詰められて JSON にならない          :  1 件
+
+markdown  md-pc060.json <-> md-0.26.0.json
+  B  読めない -> 読めた                            :  7 件
+  K/L 本文の行が入れ替わった                       : 2,958 件
+```
+
+**帰属**
+
+- **B 7** —— `ua-broken-startxref.pdf` が 7 ツールとも読めるようになった。
+  11 オブジェクト（うち 7 件はオブジェクトストリームの中）・ページツリー到達。
+  `evaluate_policy` は `use_with_caution`（署名が無いため）で、
+  「末尾のバイトは代表されていない」を射程の行に出す。
+- **F 1 / G 6** —— veraPDF `PDF_A-1b/6.1.2 File header/6-1-2-t01-fail-a.pdf` の
+  7 ツール。`reconstructed: true -> false` / `objects: 17 -> 18` /
+  `sections: 0 -> 1` / `chainStop: unreadable -> complete`。
+  **推測で組み直していたのをやめ、ファイルが持っている表を読むようになった。**
+  `verify_integrity` はさらに `revisions: null -> [1 件]`、
+  `revisionChain: unwalkable -> partial`、`revisionCountAgreement: accounted -> agree`
+  （`listed === startxrefCount` が成り立った）。
+- **H 1** —— `Isartor test suite manual.pdf`。前から切り詰められて JSON にならない
+  検体で、28,705 バイトのうち動いたのは `constraintsVersion` の 1 か所だけ
+  （前後で同じ長さ）。
+- **markdown 2,951 件**は `Decided by` の版番号の行だけ。全件をプログラムで
+  突き合わせて確かめた。残り 14 件は上の 2 検体 × 7 ツール。
+
+**verdict は 2,952 件で 1 つも動いていない。** 動いたのは拒否していた 1 件だけで、
+`(拒否) -> use_with_caution` である。
+
+計器の T-3 は json 14 件・markdown 10 件とも差を報告した。単体 203 件（+1）。
+`check` / `typecheck` / `build` は緑。
+
 ## [0.25.0] - 2026-08-30
 
 `@shuji-bonji/pdf-constraints` を 0.4.0 から **0.6.0** に上げた。

@@ -391,21 +391,48 @@ describe('analyzeIntegrity — how the cross-reference chain is walked', () => {
   });
 
   /**
+   * 入口が壊れているだけの文書と、節がどこにも無い文書は別である。
+   *
+   * `@normativepdf/recover` 0.1.2 から、`startxref` がどれも読めなくても
+   * **節そのものをファイルの中から探して**読む。だから前者はもう `unwalkable`
+   * ではない —— 読めた節のぶんは歩けており、代表していないのは末尾だけである。
+   *
+   * 出自: 2026-08-30。この 2 件は 0.1.1 まで 1 件のテストで、`startxref` を潰せば
+   * `unwalkable` になるという前提だった。前提のほうが動いた。
+   */
+  const wreckStartxref = (text: string) =>
+    // Point every `startxref` at an offset with no cross-reference section,
+    // padded so that nothing else in the file moves (§7.2.3: white space is a
+    // separator).
+    text.replace(/startxref\s*\r?\n\d+/g, (m) => 'startxref\n1'.padEnd(m.length, ' '));
+
+  it('入口が読めないだけなら、節を探して歩き、代表していないのは末尾だけと言う', async () => {
+    const chain = appendObjectRevision(signedPdf, { objects: [annotation] });
+    const wrecked = Buffer.from(wreckStartxref(Buffer.from(chain).toString('latin1')), 'latin1');
+    expect(wrecked.length).toBe(chain.length);
+
+    const report = await analyzeIntegrity(await parsePdfBytes(new Uint8Array(wrecked)));
+
+    // 節は読めているので一覧が出る。`unwalkable`（一覧が null）ではない
+    expect(report.revisions).not.toBeNull();
+    expect(report.revisionChain.status).toBe('partial');
+    // 入口を自分で選んだので、末尾のバイトは代表されていない
+    expect(report.revisionChain.missing).toEqual(['newest']);
+  });
+
+  /**
    * `unwalkable` is a third state, not a flavour of `partial`. A caller that
    * treats "missing is empty" as "nothing is missing" would read a file whose
    * chain could not be entered at all as a complete history, which is the
    * misreading `violationAssessment: 'indeterminate'` exists to prevent
    * elsewhere in this report.
    */
-  it('names both ends absent when no cross-reference section could be read', async () => {
+  it('節がどこにも無ければ、両端とも欠けていると言う', async () => {
     const chain = appendObjectRevision(signedPdf, { objects: [annotation] });
-    const text = Buffer.from(chain).toString('latin1');
-    // Point every `startxref` at an offset with no cross-reference section,
-    // padded so that nothing else in the file moves (§7.2.3: white space is a
-    // separator). Measured on tests/fixtures/generated/appended.pdf: this is
-    // what makes `walkChain` return null.
+    // 入口を潰したうえで、`xref` キーワード自体も潰す。走査しても節が見つからない
+    // ので、`walkChain` は null を返す（文書は `N G obj` の走査で組み直されて開く）。
     const wrecked = Buffer.from(
-      text.replace(/startxref\s*\r?\n\d+/g, (m) => 'startxref\n1'.padEnd(m.length, ' ')),
+      wreckStartxref(Buffer.from(chain).toString('latin1')).split('\nxref\n').join('\nxrEf\n'),
       'latin1',
     );
     expect(wrecked.length).toBe(chain.length);
