@@ -12,7 +12,7 @@ PDF の**真正性・準拠性**を判定する MCP サーバ。PDF family に�
 | 生成 | [pdf-writer-mcp](https://github.com/shuji-bonji/pdf-writer-mcp) | 仕様どおりに書けるか |
 
 - 責務分担の提案: `mcps/pdf-family-role-architecture.md`
-- 上位仕様: `Document-Note/mcps/PDFfamily/specs/01-pdf-verify-mcp.md`
+- 上位仕様: `pdf-agent-stack/docs/specs/01-pdf-verify-mcp.md`
   ⚠️ **名称衝突に注意**: specs/01 の主題は「AI 抽出結果と原本の照合」で**未実装**。
   本リポジトリの実装は「原本の真正性検証」であり、別スコープ（specs/00 付記 6 参照）
 
