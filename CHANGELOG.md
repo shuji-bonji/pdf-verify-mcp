@@ -2,7 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.26.1] - 2026-09-16
+
+**暗号化文書の PDF/A + veraPDF が `INTERNAL_ERROR` を出さなくなった。**
+Grok Build UC10（官報、`validate_conformance` flavour=`pdfa-3b`）で、veraPDF が
+空の報告を返し、素の `Error`（`veraPDF report contains no validation result`）が
+`INTERNAL_ERROR` になっていた。
+
+### Fixed
+
+- **`validate_conformance` の PDF/A + veraPDF は、`/Encrypt` があるファイルを
+  veraPDF に渡さない。** 応答は `ENCRYPTED_PDF`。PDF/A は暗号化そのものが規格外
+  （ISO 19005-1, 6.1.3）。復号写しを採点すると別ファイルの判定になるので、
+  PDF/UA 経路のような写しは作らない。
+
+- **veraPDF の報告に `validationResult` が無いとき、素の `Error` ではなく
+  `VERAPDF_NO_RESULT` を返す。** 呼び出し側はこれを pass にも `INTERNAL_ERROR`
+  にもしない。暗号化なら先の `ENCRYPTED_PDF` が先に立つ。
+
+- **`engine: "native"` の `no-encryption` はそのまま。** 規格外として fail する。
+  投げない。
+
+stack #38 / pdf-agent-stack UC10。単体は暗号化 PDF/A（veraPDF 経路で
+`ENCRYPTED_PDF`、native で `no-encryption`）を見る。`check` / 単体 / `build` は緑
 
 ## [0.26.0] - 2026-08-30
 
@@ -407,16 +429,16 @@ report    「Scope of this reading」の行数が 7 ツールとも 1 になっ�
   `evaluate_policy`）。**判定ではなく、判定の射程**である。報告の先頭、
   markdown では判定より前の `Scope of this reading` に置く。
 
-  | 項目 | 意味 |
-  |---|---|
-  | `recovered` | ライブラリがそのまま読んだのではなく、verify が組み立てた |
-  | `refusal` | 回復に入った理由（条文を名指しする文面）。**文面で分岐しないこと** |
-  | `chainStop` | チェーンの歩きがどこで止まったか（§7.5.6・5 値） |
-  | `newestSectionUnreadable` | 末尾のバイトが代表されていない |
-  | `sections` / `objects` | 読めた相互参照節の数 / 表に載っているオブジェクト数 |
-  | `continuedPastStop` / `filledFromScan` | 止まったあと読み進めた / 表に無い分を数え上げて埋めた |
-  | `reconstructed` | 🔴 **相互参照表を組み直した。ファイルが持っている表ではない** |
-  | `encrypted` / `authenticated` | `/Encrypt` がある / 鍵が導けた |
+  | 項目                                   | 意味                                                               |
+  | -------------------------------------- | ------------------------------------------------------------------ |
+  | `recovered`                            | ライブラリがそのまま読んだのではなく、verify が組み立てた          |
+  | `refusal`                              | 回復に入った理由（条文を名指しする文面）。**文面で分岐しないこと** |
+  | `chainStop`                            | チェーンの歩きがどこで止まったか（§7.5.6・5 値）                   |
+  | `newestSectionUnreadable`              | 末尾のバイトが代表されていない                                     |
+  | `sections` / `objects`                 | 読めた相互参照節の数 / 表に載っているオブジェクト数                |
+  | `continuedPastStop` / `filledFromScan` | 止まったあと読み進めた / 表に無い分を数え上げて埋めた              |
+  | `reconstructed`                        | 🔴 **相互参照表を組み直した。ファイルが持っている表ではない**      |
+  | `encrypted` / `authenticated`          | `/Encrypt` がある / 鍵が導けた                                     |
 
   🔴 いちばん重いのは `reconstructed` である。この文書の「違反なし」は
   **verify が推測した表の上での違反なし**であって、ファイルが持っている表の
@@ -515,7 +537,7 @@ report    「Scope of this reading」の行数が 7 ツールとも 1 になっ�
   - パスワードの分からない暗号化文書で、XMP に暗号文が入ることが無くなった
   - `fonts-embedded` の誤報が消えた。pdf-lib の `PDFDict.has` が
     オブジェクトストリーム由来の辞書で鍵を見つけられず、埋め込み済みのフォントを
-    「埋め込まれていない」と報告していた（veraPDF の *pass* 検体にも出ていた）
+    「埋め込まれていない」と報告していた（veraPDF の _pass_ 検体にも出ていた）
   - trailer に `/ID` が無い文書で `file-id` が違反を出すようになった
 - 依存を上げた: `normativepdf` 0.2.0 → **0.9.0**、
   `@shuji-bonji/pdf-constraints` 0.3.0 → **0.4.0**。
@@ -525,7 +547,7 @@ report    「Scope of this reading」の行数が 7 ツールとも 1 になっ�
     パスワード付きの文書は読めないままだが、エラーが条文（§7.6.4.4）を名指しする
   - **相互参照節や `stream` キーワードが ISO 32000 に反する文書を受け取らなくなった。**
     エラーは条文を名指しする。コーパス 2,947 件のうち 17 件が該当し、14 件は
-    veraPDF / Isartor の *fail* 検体である
+    veraPDF / Isartor の _fail_ 検体である
   - UTF-8 のバイト順マーク付きテキスト文字列（R-7.9.2.2.1-4・PDF 2.0）を扱えるようになった。
     0.3.0 は適合している日付に「文法に合わない」と誤報していた
 
@@ -550,7 +572,7 @@ changed. Three things reach callers — read **Changed** before upgrading.
   `-32602 Unrecognized key`. Until now such a key was silently dropped and the
   call ran: `tools/list` already stated `additionalProperties: false`, but that
   statement was produced by zod 3's JSON Schema conversion and nothing enforced
-  it — zod 3's default for an object is *strip*, not *strict*. Measured on 0.17.0
+  it — zod 3's default for an object is _strip_, not _strict_. Measured on 0.17.0
   with `{file_path, response_format, no_such_arg}`: the call returned a result.
   The statement and the behaviour now agree.
 - **`inputSchema` in `tools/list`**: `$schema` is now
@@ -582,10 +604,10 @@ changed. Three things reach callers — read **Changed** before upgrading.
 - **`verify_integrity` now says why the two revision counts differ, as a field (V-F7).**
   `revisionCountAgreement: { status, causes }`:
 
-  | `status` | meaning |
-  |---|---|
-  | `agree` | `revisionCount` and `revisions.length` are equal |
-  | `accounted` | they differ, and every entry in `causes` says why |
+  | `status`      | meaning                                                |
+  | ------------- | ------------------------------------------------------ |
+  | `agree`       | `revisionCount` and `revisions.length` are equal       |
+  | `accounted`   | they differ, and every entry in `causes` says why      |
   | `unaccounted` | they differ and nothing read from the file explains it |
 
   `causes` holds `'linearised'` (the file is linearised, so its first-page and main
@@ -623,7 +645,6 @@ changed. Three things reach callers — read **Changed** before upgrading.
   the string `Linearized`, so the code that folds a linearised file's two cross-reference
   sections into one revision — the code the field above reports on — had never been executed by
   a test. Two fixtures now cover it:
-
   - `tests/helpers/linearized-pdf.ts` builds a one-page linearised PDF byte by byte, in the part
     order of ISO 32000-2 Annex F, with every entry of Table F.1 filled in from measured offsets.
     It runs everywhere. The primary hint stream's **contents** are a placeholder and are
@@ -642,11 +663,11 @@ changed. Three things reach callers — read **Changed** before upgrading.
 - **`verify_integrity` now says whether the revision list is the whole history, as a field
   (V-F6).** `revisionChain: { status, missing }`:
 
-  | `status` | meaning |
-  |---|---|
-  | `complete` | walked from the newest cross-reference section back to the original revision |
-  | `partial` | a list came back, but `missing` names the end that is absent |
-  | `unwalkable` | no section could be read at all; `revisions` is `null` |
+  | `status`     | meaning                                                                      |
+  | ------------ | ---------------------------------------------------------------------------- |
+  | `complete`   | walked from the newest cross-reference section back to the original revision |
+  | `partial`    | a list came back, but `missing` names the end that is absent                 |
+  | `unwalkable` | no section could be read at all; `revisions` is `null`                       |
 
   `missing` holds `'oldest'` when the chain ended before the original revision (a damaged or
   cyclic `/Prev`, or the revision cap) and `'newest'` when the last `startxref` did not point
@@ -654,7 +675,7 @@ changed. Three things reach callers — read **Changed** before upgrading.
   Both can be absent at once; `missing` is empty **only** when `status` is `complete`, and
   `unwalkable` names both, because saying `missing: []` there would read as "nothing is missing".
 
-  **Why this is a minor release and not a patch.** 0.15.2 corrected the tool *description* to
+  **Why this is a minor release and not a patch.** 0.15.2 corrected the tool _description_ to
   warn that a returned list may be partial, but left the only signal in English prose —
   `pdf-trust`'s `legal` and `medical` profiles decided whether they could promise a full
   history by matching sentences in `notes`. A dependent that starts requiring this field
@@ -676,7 +697,7 @@ changed. Three things reach callers — read **Changed** before upgrading.
 
 ### Unchanged
 
-- **The two `notes` sentences stay.** They carry the *cause* (a damaged or cyclic `/Prev`, the
+- **The two `notes` sentences stay.** They carry the _cause_ (a damaged or cyclic `/Prev`, the
   revision cap, an unparseable newest section); the field carries the consequence. A human
   reads the first, a machine branches on the second.
 - No verdict moves. `evaluate_policy` already reached `violationAssessment: 'indeterminate'`
@@ -698,10 +719,10 @@ changed. Three things reach callers — read **Changed** before upgrading.
   **0.15.0 made this consequential.** That release started reporting an unfollowable `/Prev`
   as what it is instead of swallowing it, so more files now report a cut chain. Correcting the
   signal without correcting the description left the wrong reading in the place a caller reads
-  first — a tool description is read *before* the tool is called, `notes` only after.
+  first — a tool description is read _before_ the tool is called, `notes` only after.
 
   🔴 **There is no boolean to test.** Both cases reach the caller through `notes` alone, and
-  no note says the chain WAS complete — completeness is the *absence* of those two notes. The
+  no note says the chain WAS complete — completeness is the _absence_ of those two notes. The
   description now sends the reader to `notes` rather than naming a field that does not exist.
   Making them machine-readable is filed as **V-F6**.
 
@@ -721,7 +742,7 @@ changed. Three things reach callers — read **Changed** before upgrading.
   `authoritativeValidation` gained a `version` field, and the provenance line reads
   `Validated by veraPDF (<path>, version 1.30.0) — authoritative result.`
 
-  A rule count is only comparable across runs of the *same* build. Without the version,
+  A rule count is only comparable across runs of the _same_ build. Without the version,
   a change from `146 / 146` to anything else cannot be attributed to the document rather
   than to the validator, and the reports this server feeds
   (`pdf-writer-mcp`'s `docs/CONFORMANCE.md`) carry exactly such counts.
@@ -742,7 +763,7 @@ changed. Three things reach callers — read **Changed** before upgrading.
 - **The version reached the reader after the numbers it qualifies.** In the default
   markdown output the provenance line was printed under `## Notes` at the bottom, so a
   reader met `Rules: 146 checked, 146 passed` first and had already formed a verdict by
-  the time the build appeared. The formatter already placed the *not performed* case
+  the time the build appeared. The formatter already placed the _not performed_ case
   above the counts for that exact reason; the performed case now gets the same position.
 
   The line is moved rather than duplicated — it no longer appears in `## Notes`.
@@ -781,8 +802,8 @@ changed. Three things reach callers — read **Changed** before upgrading.
   Scope, stated precisely: on a **certified** document both the old and the new code reach
   `violationAssessment: 'indeterminate'`, so no DocMDP verdict flips. What changes is the
   reason, and the reason is the part that was false — the old one read "no changed object
-  could be listed" (i.e. *we looked and found nothing*) where the truth is "the chain could
-  not be followed" (i.e. *there is more file to go and look at*). On a document with no
+  could be listed" (i.e. _we looked and found nothing_) where the truth is "the chain could
+  not be followed" (i.e. _there is more file to go and look at_). On a document with no
   DocMDP certification the revision list simply came back one entry long with nothing
   saying so.
 
@@ -801,7 +822,7 @@ changed. Three things reach callers — read **Changed** before upgrading.
   of its own. The old token-based reader did not care.
 
   Measured over the 2,987 PDFs in this repository: **6 files affected, all of them veraPDF
-  corpus *fail* specimens** (deliberately malformed cross-references). Causes: `xref` not on
+  corpus _fail_ specimens** (deliberately malformed cross-references). Causes: `xref` not on
   a line of its own (3), a subsection header whose entry count is not a number (1), 19-byte
   entries (1), and a section that is neither a table nor a cross-reference stream (1).
 
@@ -836,7 +857,7 @@ changed. Three things reach callers — read **Changed** before upgrading.
 
   **Correction (2026-08-13).** This entry as published said "matching pdf-spec-mcp 0.4.5,
   reader 0.9.2 and writer 0.15.1". That was false: those three releases are where each
-  server began *sending* `instructions` at all, which is a different thing from naming its
+  server began _sending_ `instructions` at all, which is a different thing from naming its
   own version inside them. At the time this shipped, **this server was the only one that
   named its version** — the other three had the change written but unreleased. writer
   followed in 0.19.0, reader in 0.11.2 and spec in 0.4.6.
