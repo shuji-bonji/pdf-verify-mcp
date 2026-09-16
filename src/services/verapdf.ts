@@ -90,7 +90,7 @@ export async function resolveVeraPdf(): Promise<VeraPdfAvailability> {
   if (envPath) {
     try {
       await accessAsync(envPath, constants.X_OK);
-      cachedAvailability = { available: true; path: envPath, source: 'env' };
+      cachedAvailability = { available: true, path: envPath, source: 'env' };
     } catch (error) {
       // Deliberately NOT falling through to PATH: an explicit setting that is
       // wrong must surface, not be papered over by a different executable.
