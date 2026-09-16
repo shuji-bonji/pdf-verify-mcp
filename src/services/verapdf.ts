@@ -11,6 +11,7 @@ import { execFile } from 'node:child_process';
 import { access, constants } from 'node:fs';
 import { promisify } from 'node:util';
 import { VERAPDF_ENV, VERAPDF_TIMEOUT } from '../constants.js';
+import { PdfVerifyError } from '../utils/error-handler.js';
 import { logger } from '../utils/logger.js';
 
 const CONTEXT = 'verapdf';
@@ -89,7 +90,7 @@ export async function resolveVeraPdf(): Promise<VeraPdfAvailability> {
   if (envPath) {
     try {
       await accessAsync(envPath, constants.X_OK);
-      cachedAvailability = { available: true, path: envPath, source: 'env' };
+      cachedAvailability = { available: true; path: envPath, source: 'env' };
     } catch (error) {
       // Deliberately NOT falling through to PATH: an explicit setting that is
       // wrong must surface, not be papered over by a different executable.
@@ -268,7 +269,11 @@ export async function runVeraPdf(
 
   const validation = json.report?.jobs?.[0]?.validationResult?.[0];
   if (!validation) {
-    throw new Error('veraPDF report contains no validation result');
+    throw new PdfVerifyError(
+      'veraPDF report contains no validation result',
+      'VERAPDF_NO_RESULT',
+      'The validator ran but returned no validationResult. If the file is encrypted, expect ENCRYPTED_PDF from validate_conformance instead. Do not treat this as INTERNAL_ERROR or as a pass.',
+    );
   }
 
   const summaries = validation.details?.ruleSummaries ?? [];
