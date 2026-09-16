@@ -279,6 +279,17 @@ async function validate(
   }
 
   if (veraPath) {
+    // PDF/A は暗号化そのものが規格外（ISO 19005-1, 6.1.3）。
+    // 暗号文を veraPDF に渡すと validationResult が空になり、素の Error が
+    // INTERNAL_ERROR になる（Grok 実機 UC10、官報、2026-09-15）。
+    // 復号して渡すと別ファイルを採点することになるので、ここは渡さない。
+    if (parsed.isEncrypted) {
+      throw new PdfVerifyError(
+        'Document is encrypted; veraPDF cannot validate PDF/A against the file as received',
+        'ENCRYPTED_PDF',
+        'PDF/A forbids encryption (ISO 19005-1, 6.1.3). Record the veraPDF run as not performed. Use engine: "native" to run the subset — the no-encryption rule will fail. This is a finding about the file, not INTERNAL_ERROR.',
+      );
+    }
     const report = await runVeraPdf(veraPath, filePath, veraFlavourId(flavour));
     return {
       engine: 'verapdf',
