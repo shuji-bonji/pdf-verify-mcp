@@ -44,6 +44,8 @@ const EXPECTED_PROPERTIES: Record<string, string[]> = {
     'response_format',
     'trust_anchors',
     'check_revocation',
+    'revocation_freshness',
+    'trusted_ocsp_responders',
     'password',
   ],
   verify_integrity: ['file_path', 'response_format'],
@@ -57,6 +59,8 @@ const EXPECTED_PROPERTIES: Record<string, string[]> = {
     'profile',
     'trust_anchors',
     'check_revocation',
+    'revocation_freshness',
+    'trusted_ocsp_responders',
     'password',
   ],
 };

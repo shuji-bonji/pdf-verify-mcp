@@ -75,7 +75,14 @@ async function collectEnvPaths(): Promise<string[]> {
 
 /** Load trust anchors from explicit paths plus the environment directory */
 export async function loadTrustAnchors(paths: string[] = []): Promise<TrustStore> {
-  const allPaths = [...paths, ...(await collectEnvPaths())];
+  return loadCertificateFiles([...paths, ...(await collectEnvPaths())]);
+}
+
+/**
+ * Load certificates from explicit paths only (no environment variable).
+ * Used for trusted OCSP responders (v0.28.0).
+ */
+export async function loadCertificateFiles(allPaths: string[]): Promise<TrustStore> {
   const store: TrustStore = { certificates: [], sources: [], errors: [] };
 
   for (const path of allPaths) {
@@ -95,7 +102,7 @@ export async function loadTrustAnchors(paths: string[] = []): Promise<TrustStore
 
   logger.debug(
     CONTEXT,
-    `loaded ${store.certificates.length} anchor(s) from ${store.sources.length} file(s)`,
+    `loaded ${store.certificates.length} certificate(s) from ${store.sources.length} file(s)`,
   );
   return store;
 }

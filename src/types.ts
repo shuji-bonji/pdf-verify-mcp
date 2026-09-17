@@ -44,6 +44,16 @@ export interface TrustResult {
   detail: string | null;
   /** Subjects along the validated certificate path (leaf first) */
   certificatePath: string[] | null;
+  /**
+   * Revocation status of each intermediate CA in the path (v0.28.0).
+   * `null` when not checked (no path, or check_revocation is "none").
+   */
+  chainRevocation: ChainRevocationEntry[] | null;
+}
+
+/** Revocation result for one intermediate CA certificate */
+export interface ChainRevocationEntry extends RevocationResult {
+  subject: string;
 }
 
 /** Result of revocation checking for the signer certificate */
@@ -58,6 +68,10 @@ export interface RevocationResult {
   origin: RevocationOrigin | null;
   /** Revocation time reported by the CRL / OCSP response (ISO string), when revoked */
   revocationTime: string | null;
+  /** thisUpdate of the decisive CRL / OCSP response (ISO string) — v0.28.0 */
+  thisUpdate: string | null;
+  /** nextUpdate of the decisive CRL / OCSP response (ISO string) — v0.28.0 */
+  nextUpdate: string | null;
   detail: string | null;
 }
 

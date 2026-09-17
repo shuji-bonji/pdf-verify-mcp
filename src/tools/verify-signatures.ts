@@ -5,7 +5,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { toReadingScope } from '@normativepdf/recover';
 import { z } from 'zod';
 import { ResponseFormat, RevocationMode } from '../constants.js';
-import { PdfToolInputShape } from '../schemas/common.js';
+import { PdfToolInputShape, RevocationOptionShape } from '../schemas/common.js';
 import { parsePdf } from '../services/pdf-parser.js';
 import { verifySignatures } from '../services/verification-service.js';
 import type { SignatureVerificationResult } from '../types.js';
@@ -27,6 +27,7 @@ const VerifySignaturesSchema = z
       .describe(
         'Revocation checking: "none", "embedded" (OCSP/CRL data inside the PDF/CMS, default), or "online" (additionally query OCSP responders and CRL distribution points over HTTP).',
       ),
+    ...RevocationOptionShape,
     password: z
       .string()
       .optional()
@@ -41,6 +42,8 @@ type VerifySignaturesInput = {
   response_format: ResponseFormat;
   trust_anchors?: string[];
   check_revocation: RevocationMode;
+  revocation_freshness: number;
+  trusted_ocsp_responders?: string[];
   password?: string;
 };
 
@@ -58,6 +61,8 @@ Args:
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
   - trust_anchors (string[], optional): Paths to trust anchor certificates (PEM/DER). Also reads the PDF_VERIFY_TRUST_ANCHORS env var (directory).
   - check_revocation ('none' | 'embedded' | 'online'): Revocation mode (default: 'embedded'; 'online' queries OCSP/CRL endpoints over HTTP)
+  - revocation_freshness (integer seconds, default 86400): How long before the validation time a CRL / OCSP response may have been issued and still count as "good"
+  - trusted_ocsp_responders (string[], optional): Certificates of locally trusted OCSP responders (RFC 6960 §4.2.2.2)
   - password (string, optional): Password for an encrypted PDF (permission-encrypted PDFs are decrypted automatically with the empty user password)
 
 Returns:
@@ -65,9 +70,9 @@ Returns:
 
   Every report begins with a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table. For this tool it matters most: when scope.reconstructed is true, a signature the rebuild did not reach is absent from the list, so a short or empty list is not proof that the file carries no other signatures.
 
-  Per-signature verdict ('valid' / 'invalid' / 'indeterminate'), trust status ('trusted' / 'untrusted' / 'not_evaluated' with certificate path), revocation status ('good' / 'revoked' / 'revoked_after_validation_time' / 'unknown' / 'not_checked'; 'not_checked' when check_revocation is 'none') with source, origin ('dss' / 'cms_signed_data' / 'cms_revocation_info_archival') and revocationTime, validationTime ({ time, source: 'signature_timestamp' | 'document_timestamp' | 'current_time' }), and signature timestamp verification.
+  Per-signature verdict ('valid' / 'invalid' / 'indeterminate'), trust status ('trusted' / 'untrusted' / 'not_evaluated' with certificate path), revocation status ('good' / 'revoked' / 'revoked_after_validation_time' / 'unknown' / 'not_checked'; 'not_checked' when check_revocation is 'none') with source, origin ('dss' / 'cms_signed_data' / 'cms_revocation_info_archival'), revocationTime, thisUpdate and nextUpdate, per-intermediate-CA results in trust.chainRevocation, validationTime ({ time, source: 'signature_timestamp' | 'document_timestamp' | 'current_time' }), and signature timestamp verification.
 
-  Validation time: a verified timestamp (the signature's own, else the earliest document timestamp covering it) or, without one, the current time. The CMS signingTime attribute is written by the signer and is never used. A revoked signer certificate makes the verdict 'indeterminate' unless a timestamp proves the signature predates the revocation (then the status is 'revoked_after_validation_time' and the verdict is unchanged). CRLs and OCSP responses whose signatures cannot be verified give 'unknown'.
+  Validation time: a verified timestamp (the signature's own, else the earliest document timestamp covering it) or, without one, the current time. The CMS signingTime attribute is written by the signer and is never used. A revoked signer certificate makes the verdict 'indeterminate' unless a timestamp proves the signature predates the revocation (then the status is 'revoked_after_validation_time' and the verdict is unchanged). CRLs and OCSP responses whose signatures cannot be verified, that expired before the validation time, or that were issued more than revocation_freshness seconds before it give 'unknown'.
 
 Note: without trust_anchors (or the env var), trust is reported as not_evaluated — a 'valid' verdict then means cryptographic integrity, not signer identity assurance.
 
@@ -96,6 +101,8 @@ Examples:
           signatures: await verifySignatures(parsed, {
             trustAnchorPaths: params.trust_anchors,
             revocationMode: params.check_revocation,
+            revocationFreshnessSeconds: params.revocation_freshness,
+            trustedOcspResponderPaths: params.trusted_ocsp_responders,
           }),
         };
         const raw =

@@ -2,6 +2,62 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.28.0]　- 2026-09-17
+
+**失効情報の鮮度と、失効情報に署名した証明書を確かめるようにした（#16）。**
+`verify_signatures` と `evaluate_policy` に引数を 2 つ足した。
+
+### Added
+
+- **引数 `revocation_freshness`（秒、既定 86400）。** CRL / OCSP 応答の `thisUpdate` が、
+  検証時刻からこの秒数より前なら `good` の根拠にしない（`unknown`、`detail` に「too old」）。
+  `0` にすると、検証時刻以降に発行された失効情報だけを使う。失効（`revoked`）の判定には
+  効かない（失効の記録は古くなっても正しい）。
+- **引数 `trusted_ocsp_responders`（証明書ファイルのパス配列）。** RFC 6960 §4.2.2.2 の
+  「ローカルに設定した信頼できる応答者」。指定した証明書で署名された OCSP 応答は、
+  発行 CA との関係を問わず検証済みとする。
+- **`trust.chainRevocation`。** 経路上の中間 CA ごとの失効確認の結果
+  （`subject`・`status`・`source`・`origin`・`revocationTime`・`thisUpdate`・`nextUpdate`・`detail`）。
+  `check_revocation: "online"` では中間 CA の OCSP / CRL にも問い合わせる。
+  トラストアンカーが無い、経路が組めない、`check_revocation: "none"` のときは `null`。
+- **`revocation.thisUpdate` / `revocation.nextUpdate`。** 判定に使った失効情報の発行時刻と次回更新時刻。
+
+### Changed
+
+- **失効情報に署名した証明書の確認。**
+  - CRL：発行者証明書が CRL の `thisUpdate` の時点で有効期間内でなければ `unknown`
+  - OCSP の委任応答者：`producedAt` の時点で有効期間内でなければ `unknown`。
+    `id-pkix-ocsp-nocheck` 拡張が無い委任応答者は、その証明書自体の失効も確かめ、
+    `producedAt` 以前に失効していれば応答を使わない（確認できなかったときは使う）
+- **`check_revocation: "none"` では中間 CA の失効も確かめない。** 0.27.0 では
+  `none` でも埋め込みデータで中間 CA を確かめていた。
+
+### 実測
+
+公開検体 209 件（0.27.0 のときの 61 件に、esig/dss の PAdES 検証用 PDF 140 件と
+normativepdf コーパスの署名付き 8 件を足した）で 0.27.0 と A/B。判定が動いたのは 3 署名で、
+予測（24 時間を超える失効情報だけで `good` になっていた署名）と一致した。
+
+| 検体                                              | 0.27.0 | 0.28.0    | 理由                                                                                                |
+| ------------------------------------------------- | ------ | --------- | --------------------------------------------------------------------------------------------------- |
+| `dss-2058-QC-LTA-test.pdf` の 2 番目の署名        | `good` | `unknown` | CRL が検証時刻の約 26 時間前                                                                        |
+| `pades-ocsp-archiveCutOff-invalid.pdf` Signature3 | `good` | `unknown` | `nextUpdate` の無い OCSP 応答が現在時刻の約 15 か月前                                               |
+| `selfmade-pades-crl.pdf` Sig1                     | `good` | `unknown` | CRL が署名タイムスタンプの約 46 時間前。pdf-agent-stack のサイトが `trust_and_use` の例に使っている |
+
+残りの差は、項目の追加（`chainRevocation`・`thisUpdate`・`nextUpdate`）、`detail` の文言、
+現在時刻で検証した署名の `validationTime` だった。
+
+`good` になっていた 82 署名の内訳（`thisUpdate` と検証時刻の差）：検証時刻以降 51、
+1 時間以内 17、1〜24 時間 11、24 時間超 3。既定の 24 時間はこの分布から決めた。
+
+単体 233 件（Node 20 / 22）・`check`・`typecheck`・`build`・`check:public-types` は緑。
+
+### まだできないこと
+
+- 中間 CA の失効情報に署名した証明書の、さらに上の確認（深さ 2 で打ち切る）
+- 鮮度の許容幅を、失効情報の種類（CRL / OCSP）ごとに分けること
+- OCSP の `archiveCutoff` 拡張（RFC 6960 §4.4.4）を読むこと
+
 ## [0.27.0]　- 2026-09-17
 
 **失効と検証時刻の扱いを ISO 32000-2 §12.8.3.4.5・§12.8.3.4.6 に合わせた。**

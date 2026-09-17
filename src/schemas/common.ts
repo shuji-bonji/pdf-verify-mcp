@@ -3,7 +3,7 @@
  */
 
 import { z } from 'zod';
-import { ResponseFormat } from '../constants.js';
+import { DEFAULT_REVOCATION_FRESHNESS_SECONDS, ResponseFormat } from '../constants.js';
 
 /** File path parameter for local PDF files */
 export const FilePathSchema = z
@@ -21,6 +21,26 @@ export const ResponseFormatSchema = z
 export const PdfToolInputShape = {
   file_path: FilePathSchema,
   response_format: ResponseFormatSchema,
+};
+
+/**
+ * 失効確認の細かな指定（v0.28.0, #16）。verify_signatures と evaluate_policy が共有する。
+ */
+export const RevocationOptionShape = {
+  revocation_freshness: z
+    .number()
+    .int()
+    .min(0)
+    .default(DEFAULT_REVOCATION_FRESHNESS_SECONDS)
+    .describe(
+      'Seconds before the validation time that a CRL / OCSP response may have been issued (thisUpdate) and still support "good". Default 86400 (24 h); 0 accepts only data issued at or after the validation time. Older data gives "unknown".',
+    ),
+  trusted_ocsp_responders: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Absolute paths to certificates (PEM or DER) of locally trusted OCSP responders (RFC 6960 §4.2.2.2). A response signed by one of them is accepted even when the responder is not the issuing CA or its delegate.',
+    ),
 };
 
 /**

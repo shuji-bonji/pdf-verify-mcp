@@ -10,7 +10,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { toReadingScope } from '@normativepdf/recover';
 import { z } from 'zod';
 import { ResponseFormat, RevocationMode, ValidationEngine } from '../constants.js';
-import { PdfToolInputShape } from '../schemas/common.js';
+import { PdfToolInputShape, RevocationOptionShape } from '../schemas/common.js';
 import { extractPdfaId } from '../services/conformance.js';
 import type { ConformanceValidationReport } from '../services/conformance-validation.js';
 import { validateConformance } from '../services/conformance-validation.js';
@@ -54,6 +54,7 @@ const EvaluatePolicySchema = z
       .describe(
         'Revocation checking: "none", "embedded" (default), or "online" (queries OCSP/CRL endpoints over HTTP).',
       ),
+    ...RevocationOptionShape,
     password: z
       .string()
       .optional()
@@ -69,6 +70,8 @@ type EvaluatePolicyInput = {
   profile: PolicyProfileId;
   trust_anchors?: string[];
   check_revocation: RevocationMode;
+  revocation_freshness: number;
+  trusted_ocsp_responders?: string[];
   password?: string;
 };
 
@@ -87,6 +90,8 @@ Args:
   - profile ('general' | 'contract' | 'financial' | 'legal' | 'medical' | 'government'): Judgment profile (default: 'general')
   - trust_anchors (string[], optional): Trust anchor certificate paths. Without them, signer identity stays not_evaluated and the verdict is capped at use_with_caution
   - check_revocation ('none' | 'embedded' | 'online'): Revocation mode (default: 'embedded')
+  - revocation_freshness (integer seconds, default 86400): How long before the validation time a CRL / OCSP response may have been issued and still count as "good"
+  - trusted_ocsp_responders (string[], optional): Certificates of locally trusted OCSP responders (RFC 6960 §4.2.2.2)
   - password (string, optional): Password for an encrypted PDF
 
 Returns:
@@ -114,6 +119,8 @@ Examples:
         const signatures = await verifySignatures(parsed, {
           trustAnchorPaths: params.trust_anchors,
           revocationMode: params.check_revocation,
+          revocationFreshnessSeconds: params.revocation_freshness,
+          trustedOcspResponderPaths: params.trusted_ocsp_responders,
         });
         const integrity = await analyzeIntegrity(parsed);
         const pades = await detectPadesLevels(parsed);

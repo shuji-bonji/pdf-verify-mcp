@@ -66,7 +66,7 @@ PDF の**真正性・準拠性検証**に特化した MCP サーバ — 電子�
 
 `trust_anchors`（PEM/DER ファイルパス配列）を渡すか、環境変数 `PDF_VERIFY_TRUST_ANCHORS`（証明書ディレクトリ）を設定すると、署名者のチェーンを評価します。結果は `trusted` / `untrusted` / `not_evaluated` と証明書パスで報告されます。検証時刻は、検証できた署名タイムスタンプ、この署名を覆う文書タイムスタンプ、現在時刻の順に選びます（v0.27.0）。CMS の `signingTime` 属性は署名者が書く値なので使いません。選んだ時刻は `validationTime` に出ます。
 
-`check_revocation` で失効確認を制御します: `embedded`（デフォルト — DSS、CMS の `SignedData.crls`、CMS 署名属性 `adbe-revocationInfoArchival` の OCSP/CRL。置き場所は `revocation.origin`）、`online`（さらに OCSP レスポンダ・CRL 配布点へ HTTP 照会）、`none`（`revocation.status: not_checked`）。署名を検証できない CRL / OCSP 応答と、`nextUpdate` が検証時刻より前のものは `unknown` になります。署名者証明書が失効している場合、タイムスタンプが失効日時より前を証明していれば `revoked_after_validation_time`（verdict は変わりません）、それ以外は `revoked` で verdict は `indeterminate` です。online モードでは、発行者証明書が未同梱の場合に AIA caIssuers から取得してチェーンを補完します（v0.4）。アンカー指定時は RFC 3161 タイムスタンプの TSA 証明書チェーンも評価します（`tsaTrust`）。
+`check_revocation` で失効確認を制御します: `embedded`（デフォルト — DSS、CMS の `SignedData.crls`、CMS 署名属性 `adbe-revocationInfoArchival` の OCSP/CRL。置き場所は `revocation.origin`）、`online`（さらに OCSP レスポンダ・CRL 配布点へ HTTP 照会）、`none`（`revocation.status: not_checked`）。署名を検証できない CRL / OCSP 応答、`nextUpdate` が検証時刻より前のもの、`thisUpdate` が検証時刻より `revocation_freshness` 秒（既定 86400）以上前のものは `unknown` になります（v0.28.0）。発行 CA とは別の CA が発行した OCSP 応答者を信頼するときは、`trusted_ocsp_responders` に証明書を渡します。中間 CA ごとの失効確認の結果は `trust.chainRevocation` に出ます。署名者証明書が失効している場合、タイムスタンプが失効日時より前を証明していれば `revoked_after_validation_time`（verdict は変わりません）、それ以外は `revoked` で verdict は `indeterminate` です。online モードでは、発行者証明書が未同梱の場合に AIA caIssuers から取得してチェーンを補完します（v0.4）。アンカー指定時は RFC 3161 タイムスタンプの TSA 証明書チェーンも評価します（`tsaTrust`）。
 
 | 段 | 確かめること | 通信 |
 | --- | --- | --- |

@@ -85,6 +85,8 @@ export const X509_OID = {
   CRL_DISTRIBUTION_POINTS: '2.5.29.31',
   EXTENDED_KEY_USAGE: '2.5.29.37',
   KP_OCSP_SIGNING: '1.3.6.1.5.5.7.3.9',
+  /** id-pkix-ocsp-nocheck (RFC 6960 §4.2.2.2.1) */
+  OCSP_NOCHECK: '1.3.6.1.5.5.7.48.1.5',
 } as const;
 
 /** Maximum chain depth when fetching issuer certificates via AIA */
@@ -105,6 +107,17 @@ export enum ValidationEngine {
   NATIVE = 'native',
   VERAPDF = 'verapdf',
 }
+
+/**
+ * Default revocation freshness (seconds): how long before the validation time
+ * a CRL / OCSP response may have been issued and still support "good"
+ * (v0.28.0, #16). Measured on 82 real "good" signatures: 51 have data issued
+ * at or after the validation time, 68 within 1 hour, 79 within 24 hours.
+ */
+export const DEFAULT_REVOCATION_FRESHNESS_SECONDS = 24 * 3600;
+
+/** Depth limit when checking the revocation of revocation-data signers */
+export const REVOCATION_SIGNER_CHECK_DEPTH = 2;
 
 /** Timeout for online OCSP/CRL fetches (ms) */
 export const REVOCATION_FETCH_TIMEOUT = 10_000;

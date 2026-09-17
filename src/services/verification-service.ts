@@ -43,15 +43,18 @@ import { coversEntireFile, extractSignedBytes } from './pdf-parser.js';
 import { diffRevisions } from './revision-diff.js';
 import {
   checkRevocation,
+  type EmbeddedCrl,
+  type EmbeddedOcsp,
   evaluateTrust,
   fetchMissingIssuers,
   parseCertificates,
   parseCrls,
   parseOcspResponses,
+  type RevocationPolicy,
   tagCrls,
   tagOcsps,
 } from './revocation.js';
-import { loadTrustAnchors } from './trust-store.js';
+import { loadCertificateFiles, loadTrustAnchors } from './trust-store.js';
 
 function bytesAfterRange(fileSize: number, byteRange: number[] | null): number | null {
   if (byteRange?.length !== 4) return null;
@@ -63,6 +66,13 @@ export interface VerifyOptions {
   trustAnchorPaths?: string[];
   /** Revocation checking mode (default: embedded) */
   revocationMode?: RevocationMode;
+  /**
+   * Seconds before the validation time that a CRL / OCSP response may have
+   * been issued and still support "good" (default 24 h) — v0.28.0
+   */
+  revocationFreshnessSeconds?: number;
+  /** PEM/DER file paths of locally trusted OCSP responders — v0.28.0 */
+  trustedOcspResponderPaths?: string[];
 }
 
 // Note: the `password` option is handled at parse time (see parsePdf),
@@ -72,6 +82,7 @@ const NOT_EVALUATED_TRUST: TrustResult = {
   status: TrustStatus.NOT_EVALUATED,
   detail: null,
   certificatePath: null,
+  chainRevocation: null,
 };
 
 /** A verified document timestamp usable as proof of existence (v0.27.0) */
@@ -163,6 +174,23 @@ export async function verifySignatures(
   const revocationMode = options.revocationMode ?? RevocationMode.EMBEDDED;
   const trustStore = await loadTrustAnchors(options.trustAnchorPaths ?? []);
   const anchorsGiven = trustStore.certificates.length > 0;
+  const responderStore = await loadCertificateFiles(options.trustedOcspResponderPaths ?? []);
+  const freshnessSeconds = options.revocationFreshnessSeconds;
+  const online = revocationMode === RevocationMode.ONLINE;
+  /** Revocation policy for a given set of embedded data (null = do not check) */
+  const policyFor = (
+    embeddedOcsps: EmbeddedOcsp[],
+    embeddedCrls: EmbeddedCrl[],
+  ): RevocationPolicy | undefined =>
+    revocationMode === RevocationMode.NONE
+      ? undefined
+      : {
+          embeddedOcsps,
+          embeddedCrls,
+          online,
+          freshnessSeconds,
+          trustedResponders: responderStore.certificates,
+        };
 
   // DSS materials are shared by all signatures in the document
   const dssCerts = parseCertificates(parsed.dss?.certs ?? []);
@@ -191,6 +219,9 @@ export async function verifySignatures(
 
     for (const err of trustStore.errors) {
       notes.push(`Trust anchor load error: ${err}`);
+    }
+    for (const err of responderStore.errors) {
+      notes.push(`Trusted OCSP responder load error: ${err}`);
     }
 
     if (parsed.isEncrypted && parsed.decrypted) {
@@ -255,8 +286,7 @@ export async function verifySignatures(
           availableCerts: [...tsaArtifacts.certificates, ...dssCerts],
           trustAnchors: trustStore.certificates,
           checkDate: now,
-          crls: dssCrls,
-          ocsps: dssOcsps,
+          revocation: policyFor(dssOcsps, dssCrls),
         });
       }
       reports.push(report);
@@ -333,8 +363,7 @@ export async function verifySignatures(
             checkDate: cms.signatureTimestamp.genTime
               ? new Date(cms.signatureTimestamp.genTime)
               : new Date(),
-            crls: embeddedCrls,
-            ocsps: embeddedOcsps,
+            revocation: policyFor(embeddedOcsps, embeddedCrls),
           });
           if (cms.signatureTimestamp.tsaTrust.status === TrustStatus.UNTRUSTED) {
             notes.push(`TSA chain evaluation failed: ${cms.signatureTimestamp.tsaTrust.detail}`);
@@ -358,9 +387,8 @@ export async function verifySignatures(
         availableCerts,
         trustAnchors: trustStore.certificates,
         checkDate,
-        crls: embeddedCrls,
-        ocsps: embeddedOcsps,
         checkDateProven: proven,
+        revocation: policyFor(embeddedOcsps, embeddedCrls),
       });
       if (report.trust.status === TrustStatus.UNTRUSTED) {
         notes.push(`Trust evaluation failed: ${report.trust.detail}`);
@@ -373,15 +401,15 @@ export async function verifySignatures(
           source: null,
           origin: null,
           revocationTime: null,
+          thisUpdate: null,
+          nextUpdate: null,
           detail: 'check_revocation is "none"',
         };
       } else {
         report.revocation = await checkRevocation({
+          ...(policyFor(embeddedOcsps, embeddedCrls) as RevocationPolicy),
           signerCert: artifacts.signerCert,
           availableCerts,
-          embeddedOcsps,
-          embeddedCrls,
-          online: revocationMode === RevocationMode.ONLINE,
           validationTime: checkDate,
         });
         applyRevocationToVerdict(report, checkDate, proven);

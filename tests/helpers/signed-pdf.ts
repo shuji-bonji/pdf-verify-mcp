@@ -71,6 +71,8 @@ interface CertificateOptions {
   notAfter?: Date;
   /** Add an ExtendedKeyUsage extension with these purposes */
   extKeyUsage?: string[];
+  /** Add id-pkix-ocsp-nocheck (RFC 6960 §4.2.2.2.1) */
+  ocspNoCheck?: boolean;
 }
 
 /** Create a certificate (self-signed when no issuer is given) */
@@ -139,6 +141,15 @@ export async function createIdentity(options: CertificateOptions): Promise<TestI
         extnValue: new pkijs.ExtKeyUsage({ keyPurposes: options.extKeyUsage })
           .toSchema()
           .toBER(false),
+      }),
+    );
+  }
+  if (options.ocspNoCheck) {
+    certificate.extensions.push(
+      new pkijs.Extension({
+        extnID: '1.3.6.1.5.5.7.48.1.5',
+        critical: false,
+        extnValue: new asn1js.Null().toBER(false),
       }),
     );
   }
@@ -228,6 +239,7 @@ export interface OcspResponseOptions {
   includeResponderCert?: boolean;
   /** Sign with this key instead of the responder's (forged response) */
   signingKey?: CryptoKey;
+  producedAt?: Date;
 }
 
 /** Create a DER OCSPResponse (successful, id-pkix-ocsp-basic) */
@@ -264,7 +276,7 @@ export async function createOcspResponse(options: OcspResponseOptions): Promise<
 
   const basic = new pkijs.BasicOCSPResponse();
   basic.tbsResponseData.responderID = options.responder.certificate.subject;
-  basic.tbsResponseData.producedAt = new Date();
+  basic.tbsResponseData.producedAt = options.producedAt ?? new Date();
   basic.tbsResponseData.responses.push(single);
   if (options.includeResponderCert !== false) basic.certs = [options.responder.certificate];
   await basic.sign(options.signingKey ?? options.responder.privateKey, 'SHA-256');

@@ -133,13 +133,18 @@ export function formatSignatureReports(result: SignatureVerificationResult): str
     if (r.trust.certificatePath && r.trust.certificatePath.length > 0) {
       lines.push(`  - Path: ${r.trust.certificatePath.join(' → ')}`);
     }
+    for (const ca of r.trust.chainRevocation ?? []) {
+      lines.push(
+        `  - CA revocation: ${ca.subject} — **${ca.status}**${ca.source ? ` (${[ca.source, ca.origin].filter(Boolean).join(', ')})` : ''}${ca.revocationTime ? ` — revoked at ${ca.revocationTime}` : ''}`,
+      );
+    }
     if (r.validationTime) {
       lines.push(`- Validation time: ${r.validationTime.time} (${r.validationTime.source})`);
     }
     if (r.revocation) {
       const where = [r.revocation.source, r.revocation.origin].filter(Boolean).join(', ');
       lines.push(
-        `- Revocation: **${r.revocation.status}**${where ? ` (${where})` : ''}${r.revocation.revocationTime ? ` — revoked at ${r.revocation.revocationTime}` : ''}${r.revocation.detail ? ` — ${r.revocation.detail}` : ''}`,
+        `- Revocation: **${r.revocation.status}**${where ? ` (${where})` : ''}${r.revocation.revocationTime ? ` — revoked at ${r.revocation.revocationTime}` : ''}${r.revocation.thisUpdate ? ` — thisUpdate ${r.revocation.thisUpdate}` : ''}${r.revocation.detail ? ` — ${r.revocation.detail}` : ''}`,
       );
     }
     lines.push(`- SubFilter: ${r.subFilter ?? '(none)'}`);
