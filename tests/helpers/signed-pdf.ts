@@ -67,6 +67,10 @@ interface CertificateOptions {
   caIssuersUrl?: string;
   /** Add a CRLDistributionPoints extension pointing to this URL */
   crlUrl?: string;
+  notBefore?: Date;
+  notAfter?: Date;
+  /** Add an ExtendedKeyUsage extension with these purposes */
+  extKeyUsage?: string[];
 }
 
 /** Create a certificate (self-signed when no issuer is given) */
@@ -84,8 +88,8 @@ export async function createIdentity(options: CertificateOptions): Promise<TestI
     : [cnAttribute(options.commonName)];
   certificate.issuer.typesAndValues.push(...issuerSubject);
   certificate.subject.typesAndValues.push(cnAttribute(options.commonName));
-  certificate.notBefore.value = new Date(Date.now() - 24 * 3600 * 1000);
-  certificate.notAfter.value = new Date(Date.now() + 365 * 24 * 3600 * 1000);
+  certificate.notBefore.value = options.notBefore ?? new Date(Date.now() - 24 * 3600 * 1000);
+  certificate.notAfter.value = options.notAfter ?? new Date(Date.now() + 365 * 24 * 3600 * 1000);
 
   certificate.extensions = [];
   if (options.isCa) {
@@ -127,6 +131,17 @@ export async function createIdentity(options: CertificateOptions): Promise<TestI
       }),
     );
   }
+  if (options.extKeyUsage) {
+    certificate.extensions.push(
+      new pkijs.Extension({
+        extnID: '2.5.29.37',
+        critical: false,
+        extnValue: new pkijs.ExtKeyUsage({ keyPurposes: options.extKeyUsage })
+          .toSchema()
+          .toBER(false),
+      }),
+    );
+  }
   if (options.crlUrl) {
     const cdp = new pkijs.CRLDistributionPoints({
       distributionPoints: [
@@ -163,27 +178,109 @@ export async function createTestCa(commonName = 'pdf-verify-mcp test CA'): Promi
 }
 
 /** Create a CRL issued by the CA, revoking the given serial numbers */
+export interface CrlOptions {
+  revocationDate?: Date;
+  thisUpdate?: Date;
+  nextUpdate?: Date;
+}
+
 export async function createCrl(
   ca: TestIdentity,
   revokedSerials: asn1js.Integer[] = [],
+  options: CrlOptions = {},
 ): Promise<Uint8Array> {
   ensureCryptoEngine();
   const crl = new pkijs.CertificateRevocationList();
   crl.version = 1;
   crl.issuer.typesAndValues.push(...ca.certificate.subject.typesAndValues);
-  crl.thisUpdate = new pkijs.Time({ type: 0, value: new Date(Date.now() - 3600 * 1000) });
-  crl.nextUpdate = new pkijs.Time({ type: 0, value: new Date(Date.now() + 30 * 24 * 3600 * 1000) });
+  crl.thisUpdate = new pkijs.Time({
+    type: 0,
+    value: options.thisUpdate ?? new Date(Date.now() - 3600 * 1000),
+  });
+  crl.nextUpdate = new pkijs.Time({
+    type: 0,
+    value: options.nextUpdate ?? new Date(Date.now() + 30 * 24 * 3600 * 1000),
+  });
   if (revokedSerials.length > 0) {
     crl.revokedCertificates = revokedSerials.map(
       (serial) =>
         new pkijs.RevokedCertificate({
           userCertificate: serial,
-          revocationDate: new pkijs.Time({ type: 0, value: new Date() }),
+          revocationDate: new pkijs.Time({ type: 0, value: options.revocationDate ?? new Date() }),
         }),
     );
   }
   await crl.sign(ca.privateKey, 'SHA-256');
   return new Uint8Array(crl.toSchema(true).toBER(false));
+}
+
+export interface OcspResponseOptions {
+  /** Who signs the response (the CA itself, or a delegated responder) */
+  responder: TestIdentity;
+  /** The CA that issued `subject` */
+  issuer: TestIdentity;
+  subject: TestIdentity;
+  status: 'good' | 'revoked' | 'unknown';
+  revocationTime?: Date;
+  thisUpdate?: Date;
+  nextUpdate?: Date;
+  /** Include the responder certificate in the response (default true) */
+  includeResponderCert?: boolean;
+  /** Sign with this key instead of the responder's (forged response) */
+  signingKey?: CryptoKey;
+}
+
+/** Create a DER OCSPResponse (successful, id-pkix-ocsp-basic) */
+export async function createOcspResponse(options: OcspResponseOptions): Promise<Uint8Array> {
+  ensureCryptoEngine();
+  const certID = new pkijs.CertID();
+  await certID.createForCertificate(options.subject.certificate, {
+    hashAlgorithm: 'SHA-1',
+    issuerCertificate: options.issuer.certificate,
+  });
+  let certStatus: asn1js.BaseBlock;
+  if (options.status === 'good') {
+    certStatus = new asn1js.Primitive({
+      idBlock: { tagClass: 3, tagNumber: 0 },
+      lenBlockLength: 1,
+    });
+  } else if (options.status === 'revoked') {
+    certStatus = new asn1js.Constructed({
+      idBlock: { tagClass: 3, tagNumber: 1 },
+      value: [new asn1js.GeneralizedTime({ valueDate: options.revocationTime ?? new Date() })],
+    });
+  } else {
+    certStatus = new asn1js.Primitive({
+      idBlock: { tagClass: 3, tagNumber: 2 },
+      lenBlockLength: 1,
+    });
+  }
+  const single = new pkijs.SingleResponse({
+    certID,
+    certStatus,
+    thisUpdate: options.thisUpdate ?? new Date(Date.now() - 60 * 1000),
+  });
+  if (options.nextUpdate) single.nextUpdate = options.nextUpdate;
+
+  const basic = new pkijs.BasicOCSPResponse();
+  basic.tbsResponseData.responderID = options.responder.certificate.subject;
+  basic.tbsResponseData.producedAt = new Date();
+  basic.tbsResponseData.responses.push(single);
+  if (options.includeResponderCert !== false) basic.certs = [options.responder.certificate];
+  await basic.sign(options.signingKey ?? options.responder.privateKey, 'SHA-256');
+
+  const response = new pkijs.OCSPResponse();
+  response.responseStatus.valueBlock.valueDec = 0;
+  response.responseBytes = new pkijs.ResponseBytes({
+    responseType: '1.3.6.1.5.5.7.48.1.1',
+    response: new asn1js.OctetString({ valueHex: basic.toSchema().toBER(false) }),
+  });
+  return new Uint8Array(response.toSchema().toBER(false));
+}
+
+/** DER of a certificate */
+export function certificateDer(identity: TestIdentity): Uint8Array {
+  return new Uint8Array(identity.certificate.toSchema(true).toBER(false));
 }
 
 /** Export a certificate as PEM text (for trust anchor files) */
@@ -197,6 +294,7 @@ export function certificateToPem(identity: TestIdentity): string {
 export async function createTimestampToken(
   tsa: TestIdentity,
   data: Uint8Array,
+  genTime: Date = new Date(),
 ): Promise<Uint8Array> {
   ensureCryptoEngine();
   const imprint = await webcrypto.subtle.digest('SHA-256', toArrayBuffer(data));
@@ -209,7 +307,7 @@ export async function createTimestampToken(
       hashedMessage: new asn1js.OctetString({ valueHex: imprint }),
     }),
     serialNumber: new asn1js.Integer({ value: Date.now() % 1_000_000 }),
-    genTime: new Date(),
+    genTime,
   });
   const tstDer = tstInfo.toSchema().toBER(false);
 
@@ -271,6 +369,27 @@ export interface BuildPdfOptions {
   tsa?: TestIdentity;
   /** Corrupt the CMS payload before embedding (for negative tests) */
   mutateCms?: (cms: Uint8Array) => Uint8Array;
+  /** Extra material for the CMS signature */
+  cms?: CmsSignatureExtras;
+}
+
+export interface CmsSignatureExtras {
+  /** Additional certificates in SignedData.certificates (e.g. the CA) */
+  certificates?: TestIdentity[];
+  /** CRLs in SignedData.crls (DER) */
+  crls?: Uint8Array[];
+  /** adbe-revocationInfoArchival signed attribute contents (DER) */
+  revocationArchival?: { crls?: Uint8Array[]; ocsps?: Uint8Array[] };
+  /** signingTime signed attribute value (default: now) */
+  signingTime?: Date;
+  /** genTime of the signature timestamp (default: now) */
+  tsaGenTime?: Date;
+}
+
+function derToAsn1(der: Uint8Array): asn1js.AsnType {
+  const parsed = asn1js.fromBER(toArrayBuffer(der));
+  if (parsed.offset === -1) throw new Error('bad DER');
+  return parsed.result;
 }
 
 interface PdfTemplate {
@@ -403,6 +522,7 @@ export async function createCmsSignature(
   identity: TestIdentity,
   data: Uint8Array,
   tsa?: TestIdentity,
+  extras: CmsSignatureExtras = {},
 ): Promise<Uint8Array> {
   ensureCryptoEngine();
   const digest = await webcrypto.subtle.digest('SHA-256', toArrayBuffer(data));
@@ -419,8 +539,40 @@ export async function createCmsSignature(
         }),
       }),
     ],
-    certificates: [identity.certificate],
+    certificates: [identity.certificate, ...(extras.certificates ?? []).map((c) => c.certificate)],
   });
+  if (extras.crls?.length) {
+    signedData.crls = extras.crls.map(
+      (der) => new pkijs.CertificateRevocationList({ schema: derToAsn1(der) }),
+    );
+  }
+
+  const archivalAttrs: pkijs.Attribute[] = [];
+  if (extras.revocationArchival) {
+    const parts: asn1js.AsnType[] = [];
+    if (extras.revocationArchival.crls?.length) {
+      parts.push(
+        new asn1js.Constructed({
+          idBlock: { tagClass: 3, tagNumber: 0 },
+          value: [new asn1js.Sequence({ value: extras.revocationArchival.crls.map(derToAsn1) })],
+        }),
+      );
+    }
+    if (extras.revocationArchival.ocsps?.length) {
+      parts.push(
+        new asn1js.Constructed({
+          idBlock: { tagClass: 3, tagNumber: 1 },
+          value: [new asn1js.Sequence({ value: extras.revocationArchival.ocsps.map(derToAsn1) })],
+        }),
+      );
+    }
+    archivalAttrs.push(
+      new pkijs.Attribute({
+        type: '1.2.840.113583.1.1.8',
+        values: [new asn1js.Sequence({ value: parts })],
+      }),
+    );
+  }
 
   signedData.signerInfos[0].signedAttrs = new pkijs.SignedAndUnsignedAttributes({
     type: 0,
@@ -431,12 +583,13 @@ export async function createCmsSignature(
       }),
       new pkijs.Attribute({
         type: OID.SIGNING_TIME,
-        values: [new asn1js.UTCTime({ valueDate: new Date() })],
+        values: [new asn1js.UTCTime({ valueDate: extras.signingTime ?? new Date() })],
       }),
       new pkijs.Attribute({
         type: OID.MESSAGE_DIGEST,
         values: [new asn1js.OctetString({ valueHex: digest })],
       }),
+      ...archivalAttrs,
     ],
   });
 
@@ -448,7 +601,7 @@ export async function createCmsSignature(
     const signatureValue = new Uint8Array(
       signedData.signerInfos[0].signature.valueBlock.valueHexView,
     );
-    const token = await createTimestampToken(tsa, signatureValue);
+    const token = await createTimestampToken(tsa, signatureValue, extras.tsaGenTime);
     const tokenAsn1 = asn1js.fromBER(toArrayBuffer(token));
     if (tokenAsn1.offset === -1) throw new Error('failed to re-parse timestamp token');
     signedData.signerInfos[0].unsignedAttrs = new pkijs.SignedAndUnsignedAttributes({
@@ -488,7 +641,7 @@ export async function createSignedPdf(
   let cms =
     options.subFilter === 'ETSI.RFC3161'
       ? await createTimestampToken(options.tsa ?? identity, signedBytes)
-      : await createCmsSignature(identity, signedBytes, options.tsa);
+      : await createCmsSignature(identity, signedBytes, options.tsa, options.cms);
   if (options.mutateCms) cms = options.mutateCms(cms);
   if (cms.length * 2 > PLACEHOLDER_HEX_LEN) {
     throw new Error('CMS payload exceeds placeholder size');

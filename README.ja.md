@@ -64,9 +64,9 @@ PDF の**真正性・準拠性検証**に特化した MCP サーバ — 電子�
 
 ## 信頼評価と失効確認（v0.2）
 
-`trust_anchors`（PEM/DER ファイルパス配列）を渡すか、環境変数 `PDF_VERIFY_TRUST_ANCHORS`（証明書ディレクトリ）を設定すると、署名者のチェーンを評価します。結果は `trusted` / `untrusted` / `not_evaluated` と証明書パスで報告され、検証基準時刻は署名時刻です。
+`trust_anchors`（PEM/DER ファイルパス配列）を渡すか、環境変数 `PDF_VERIFY_TRUST_ANCHORS`（証明書ディレクトリ）を設定すると、署名者のチェーンを評価します。結果は `trusted` / `untrusted` / `not_evaluated` と証明書パスで報告されます。検証時刻は、検証できた署名タイムスタンプ、この署名を覆う文書タイムスタンプ、現在時刻の順に選びます（v0.27.0）。CMS の `signingTime` 属性は署名者が書く値なので使いません。選んだ時刻は `validationTime` に出ます。
 
-`check_revocation` で失効確認を制御します: `embedded`（デフォルト — PDF の DSS や CMS 内の OCSP/CRL）、`online`（さらに OCSP レスポンダ・CRL 配布点へ HTTP 照会）、`none`。署名者証明書が失効している場合、verdict は `invalid` になります。online モードでは、発行者証明書が未同梱の場合に AIA caIssuers から取得してチェーンを補完します（v0.4）。アンカー指定時は RFC 3161 タイムスタンプの TSA 証明書チェーンも評価します（`tsaTrust`）。
+`check_revocation` で失効確認を制御します: `embedded`（デフォルト — DSS、CMS の `SignedData.crls`、CMS 署名属性 `adbe-revocationInfoArchival` の OCSP/CRL。置き場所は `revocation.origin`）、`online`（さらに OCSP レスポンダ・CRL 配布点へ HTTP 照会）、`none`（`revocation.status: not_checked`）。署名を検証できない CRL / OCSP 応答と、`nextUpdate` が検証時刻より前のものは `unknown` になります。署名者証明書が失効している場合、タイムスタンプが失効日時より前を証明していれば `revoked_after_validation_time`（verdict は変わりません）、それ以外は `revoked` で verdict は `indeterminate` です。online モードでは、発行者証明書が未同梱の場合に AIA caIssuers から取得してチェーンを補完します（v0.4）。アンカー指定時は RFC 3161 タイムスタンプの TSA 証明書チェーンも評価します（`tsaTrust`）。
 
 | 段 | 確かめること | 通信 |
 | --- | --- | --- |
@@ -76,7 +76,7 @@ PDF の**真正性・準拠性検証**に特化した MCP サーバ — 電子�
 | 失効 | 署名者証明書の OCSP / CRL | `embedded` はなし。`online` は埋め込みで答えが出ないときに HTTP で照会 |
 | タイムスタンプ | RFC 3161 トークンと TSA 署名の検証 | なし |
 
-`verdict: valid` は完全性と署名値が通ったことを表します（失効が `revoked` なら `invalid`）。`online` の結果は問い合わせた時点の CA の状態で、日をおくと変わることがあります。各段の詳細とモードの選び方は[サイトの解説](https://shuji-bonji.github.io/pdf-agent-stack/ja/mcp/pdf-verify#署名の検証で確かめること)にあります。
+`verdict: valid` は完全性と署名値が通ったことを表します（失効が `revoked` なら `indeterminate`）。`online` の結果は問い合わせた時点の CA の状態で、日をおくと変わることがあります。各段の詳細とモードの選び方は[サイトの解説](https://shuji-bonji.github.io/pdf-agent-stack/ja/mcp/pdf-verify#署名の検証で確かめること)にあります。
 
 > トラストアンカー未指定時は `trust: not_evaluated` のままです。その場合の `valid` は「暗号学的な完全性」であり、署名者の身元保証ではありません。
 

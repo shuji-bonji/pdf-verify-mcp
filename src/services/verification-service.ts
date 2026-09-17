@@ -4,6 +4,7 @@
  */
 
 import { toReadingScope } from '@normativepdf/recover';
+import type * as pkijs from 'pkijs';
 import {
   DOCMDP_PERMISSIONS,
   PadesLevel,
@@ -15,6 +16,7 @@ import {
   WEAK_DIGESTS,
 } from '../constants.js';
 import type {
+  CmsVerificationResult,
   DocMdpAssessment,
   DocMdpChangeClass,
   IntegrityReport,
@@ -29,8 +31,14 @@ import type {
   SignatureField,
   SignatureVerificationReport,
   TrustResult,
+  ValidationTime,
 } from '../types.js';
-import { extractCmsArtifacts, verifyCms, verifyTimestampImprint } from './cms-verifier.js';
+import {
+  extractCmsArtifacts,
+  verifyCms,
+  verifyTimestampImprint,
+  verifyTimestampToken,
+} from './cms-verifier.js';
 import { coversEntireFile, extractSignedBytes } from './pdf-parser.js';
 import { diffRevisions } from './revision-diff.js';
 import {
@@ -40,6 +48,8 @@ import {
   parseCertificates,
   parseCrls,
   parseOcspResponses,
+  tagCrls,
+  tagOcsps,
 } from './revocation.js';
 import { loadTrustAnchors } from './trust-store.js';
 
@@ -64,6 +74,86 @@ const NOT_EVALUATED_TRUST: TrustResult = {
   certificatePath: null,
 };
 
+/** A verified document timestamp usable as proof of existence (v0.27.0) */
+export interface DocTimestampProof {
+  /** Start of the timestamp's /Contents: everything before it is covered */
+  coversUpTo: number;
+  genTime: Date;
+}
+
+/** TSA trust is required only when the caller supplied trust anchors */
+function tsaAcceptable(trust: TrustResult | null, anchorsGiven: boolean): boolean {
+  return !anchorsGiven || trust?.status === TrustStatus.TRUSTED;
+}
+
+/** Collect document timestamps that verify (imprint + TSA signature [+ TSA trust]) */
+async function collectDocTimestampProofs(
+  parsed: ParsedPdf,
+  trustAnchors: pkijs.Certificate[],
+  dssCerts: pkijs.Certificate[],
+): Promise<DocTimestampProof[]> {
+  const proofs: DocTimestampProof[] = [];
+  for (const sig of parsed.signatures) {
+    if (!(sig.isDocumentTimestamp || sig.subFilter === SUB_FILTER.ETSI_RFC3161)) continue;
+    if (sig.byteRange?.length !== 4 || !sig.contents || sig.contents.length === 0) continue;
+    let signedBytes: Uint8Array;
+    try {
+      signedBytes = extractSignedBytes(parsed.bytes, sig.byteRange);
+    } catch {
+      continue;
+    }
+    const token = await verifyTimestampToken(sig.contents, signedBytes);
+    if (token.imprintMatches !== true || !token.signatureVerified || !token.genTime) continue;
+    let trust: TrustResult | null = null;
+    const tsa = extractCmsArtifacts(sig.contents);
+    if (tsa?.signerCert && trustAnchors.length > 0) {
+      trust = await evaluateTrust({
+        signerCert: tsa.signerCert,
+        availableCerts: [...tsa.certificates, ...dssCerts],
+        trustAnchors,
+        checkDate: new Date(),
+      });
+    }
+    if (!tsaAcceptable(trust, trustAnchors.length > 0)) continue;
+    proofs.push({ coversUpTo: sig.byteRange[1], genTime: new Date(token.genTime) });
+  }
+  return proofs;
+}
+
+/**
+ * Pick the validation time (ISO 32000-2 §12.8.3.4.5 b) / §12.8.3.4.6):
+ * 1. a verified signature timestamp of this signature,
+ * 2. the earliest verified document timestamp that covers this signature,
+ * 3. the current time.
+ * The CMS signingTime attribute is written by the signer and is not proof.
+ */
+export function chooseValidationTime(
+  sig: SignatureField,
+  signatureTimestamp: CmsVerificationResult['signatureTimestamp'],
+  anchorsGiven: boolean,
+  docProofs: DocTimestampProof[],
+): ValidationTime {
+  if (
+    signatureTimestamp?.imprintMatches === true &&
+    signatureTimestamp.signatureVerified &&
+    signatureTimestamp.genTime &&
+    tsaAcceptable(signatureTimestamp.tsaTrust, anchorsGiven)
+  ) {
+    return { time: signatureTimestamp.genTime, source: 'signature_timestamp' };
+  }
+  const br = sig.byteRange;
+  if (br?.length === 4) {
+    const sigEnd = br[2] + br[3];
+    const covering = docProofs
+      .filter((p) => sigEnd <= p.coversUpTo)
+      .sort((a, b) => a.genTime.getTime() - b.genTime.getTime());
+    if (covering.length > 0) {
+      return { time: covering[0].genTime.toISOString(), source: 'document_timestamp' };
+    }
+  }
+  return { time: new Date().toISOString(), source: 'current_time' };
+}
+
 /** Verify all signatures in the document */
 export async function verifySignatures(
   parsed: ParsedPdf,
@@ -72,11 +162,13 @@ export async function verifySignatures(
   const reports: SignatureVerificationReport[] = [];
   const revocationMode = options.revocationMode ?? RevocationMode.EMBEDDED;
   const trustStore = await loadTrustAnchors(options.trustAnchorPaths ?? []);
+  const anchorsGiven = trustStore.certificates.length > 0;
 
   // DSS materials are shared by all signatures in the document
   const dssCerts = parseCertificates(parsed.dss?.certs ?? []);
-  const dssOcsps = parseOcspResponses(parsed.dss?.ocsps ?? []);
-  const dssCrls = parseCrls(parsed.dss?.crls ?? []);
+  const dssOcsps = tagOcsps(parseOcspResponses(parsed.dss?.ocsps ?? []), 'dss');
+  const dssCrls = tagCrls(parseCrls(parsed.dss?.crls ?? []), 'dss');
+  const docProofs = await collectDocTimestampProofs(parsed, trustStore.certificates, dssCerts);
 
   for (const sig of parsed.signatures) {
     const notes: string[] = [];
@@ -86,6 +178,7 @@ export async function verifySignatures(
       verdict: Verdict.INDETERMINATE,
       trust: { ...NOT_EVALUATED_TRUST },
       revocation: null,
+      validationTime: null,
       coversEntireFile: null,
       bytesAfterSignedRange: null,
       cms: null,
@@ -154,12 +247,14 @@ export async function verifySignatures(
 
       // v0.4: evaluate the TSA chain of a document timestamp against anchors
       const tsaArtifacts = extractCmsArtifacts(sig.contents);
-      if (tsaArtifacts?.signerCert && trustStore.certificates.length > 0) {
+      if (tsaArtifacts?.signerCert && anchorsGiven) {
+        const now = new Date();
+        report.validationTime = { time: now.toISOString(), source: 'current_time' };
         report.trust = await evaluateTrust({
           signerCert: tsaArtifacts.signerCert,
           availableCerts: [...tsaArtifacts.certificates, ...dssCerts],
           trustAnchors: trustStore.certificates,
-          checkDate: new Date(),
+          checkDate: now,
           crls: dssCrls,
           ocsps: dssOcsps,
         });
@@ -204,11 +299,16 @@ export async function verifySignatures(
     const artifacts = extractCmsArtifacts(sig.contents);
     if (artifacts?.signerCert) {
       const availableCerts = [...artifacts.certificates, ...dssCerts];
-      const embeddedOcsps = dssOcsps;
-      const embeddedCrls = [...artifacts.crls, ...dssCrls];
-      const checkDate =
-        artifacts.signingTime ??
-        (cms.signatureTimestamp?.genTime ? new Date(cms.signatureTimestamp.genTime) : new Date());
+      // v0.27.0 (#15): OCSP and CRLs from every place a PDF can hold them
+      const embeddedOcsps = [
+        ...dssOcsps,
+        ...tagOcsps(artifacts.archival.ocsps, 'cms_revocation_info_archival'),
+      ];
+      const embeddedCrls = [
+        ...tagCrls(artifacts.crls, 'cms_signed_data'),
+        ...tagCrls(artifacts.archival.crls, 'cms_revocation_info_archival'),
+        ...dssCrls,
+      ];
 
       // v0.4: complete the chain via AIA caIssuers (online mode only)
       if (revocationMode === RevocationMode.ONLINE) {
@@ -221,6 +321,38 @@ export async function verifySignatures(
         }
       }
 
+      // v0.4: evaluate the TSA chain against trust anchors — before the
+      // validation time is chosen, since an untrusted TSA proves nothing.
+      if (cms.signatureTimestamp && artifacts.signatureTimestampToken && anchorsGiven) {
+        const tsaArtifacts = extractCmsArtifacts(artifacts.signatureTimestampToken);
+        if (tsaArtifacts?.signerCert) {
+          cms.signatureTimestamp.tsaTrust = await evaluateTrust({
+            signerCert: tsaArtifacts.signerCert,
+            availableCerts: [...tsaArtifacts.certificates, ...availableCerts],
+            trustAnchors: trustStore.certificates,
+            checkDate: cms.signatureTimestamp.genTime
+              ? new Date(cms.signatureTimestamp.genTime)
+              : new Date(),
+            crls: embeddedCrls,
+            ocsps: embeddedOcsps,
+          });
+          if (cms.signatureTimestamp.tsaTrust.status === TrustStatus.UNTRUSTED) {
+            notes.push(`TSA chain evaluation failed: ${cms.signatureTimestamp.tsaTrust.detail}`);
+          }
+        }
+      }
+
+      // v0.27.0 (#12): validation time from proof only
+      const validationTime = chooseValidationTime(
+        sig,
+        cms.signatureTimestamp,
+        anchorsGiven,
+        docProofs,
+      );
+      report.validationTime = validationTime;
+      const checkDate = new Date(validationTime.time);
+      const proven = validationTime.source !== 'current_time';
+
       report.trust = await evaluateTrust({
         signerCert: artifacts.signerCert,
         availableCerts,
@@ -228,25 +360,31 @@ export async function verifySignatures(
         checkDate,
         crls: embeddedCrls,
         ocsps: embeddedOcsps,
+        checkDateProven: proven,
       });
       if (report.trust.status === TrustStatus.UNTRUSTED) {
         notes.push(`Trust evaluation failed: ${report.trust.detail}`);
       }
 
-      if (revocationMode !== RevocationMode.NONE) {
+      if (revocationMode === RevocationMode.NONE) {
+        // v0.27.0 (#14): say that nothing was checked, rather than null
+        report.revocation = {
+          status: RevocationStatus.NOT_CHECKED,
+          source: null,
+          origin: null,
+          revocationTime: null,
+          detail: 'check_revocation is "none"',
+        };
+      } else {
         report.revocation = await checkRevocation({
           signerCert: artifacts.signerCert,
           availableCerts,
           embeddedOcsps,
           embeddedCrls,
           online: revocationMode === RevocationMode.ONLINE,
+          validationTime: checkDate,
         });
-        if (report.revocation.status === RevocationStatus.REVOKED) {
-          report.verdict = Verdict.INVALID;
-          notes.push(
-            `Signer certificate is REVOKED (${report.revocation.source}): ${report.revocation.detail}`,
-          );
-        }
+        applyRevocationToVerdict(report, checkDate, proven);
       }
 
       if (cms.signatureTimestamp) {
@@ -256,26 +394,6 @@ export async function verifySignatures(
           notes.push(
             `Signature timestamp verified (TSA: ${cms.signatureTimestamp.tsaSubject ?? 'unknown'}, genTime: ${cms.signatureTimestamp.genTime ?? 'unknown'}).`,
           );
-        }
-
-        // v0.4: evaluate the TSA chain against trust anchors
-        if (artifacts.signatureTimestampToken && trustStore.certificates.length > 0) {
-          const tsaArtifacts = extractCmsArtifacts(artifacts.signatureTimestampToken);
-          if (tsaArtifacts?.signerCert) {
-            cms.signatureTimestamp.tsaTrust = await evaluateTrust({
-              signerCert: tsaArtifacts.signerCert,
-              availableCerts: [...tsaArtifacts.certificates, ...availableCerts],
-              trustAnchors: trustStore.certificates,
-              checkDate: cms.signatureTimestamp.genTime
-                ? new Date(cms.signatureTimestamp.genTime)
-                : checkDate,
-              crls: embeddedCrls,
-              ocsps: embeddedOcsps,
-            });
-            if (cms.signatureTimestamp.tsaTrust.status === TrustStatus.UNTRUSTED) {
-              notes.push(`TSA chain evaluation failed: ${cms.signatureTimestamp.tsaTrust.detail}`);
-            }
-          }
         }
       }
     }
@@ -298,6 +416,43 @@ export async function verifySignatures(
   }
 
   return reports;
+}
+
+/**
+ * Apply a REVOKED status to the verdict (v0.27.0, #13).
+ *
+ * ETSI EN 319 102-1 reading: a verified timestamp is proof that the signature
+ * existed at that time. The timestamp is an upper bound on the signing time,
+ * never a lower bound, so:
+ * - revoked after the proven time → the signature predates the revocation:
+ *   status `revoked_after_validation_time`, verdict unchanged;
+ * - otherwise (no proof, proof not earlier than the revocation, or no
+ *   revocation time) → it cannot be decided: verdict `indeterminate`
+ *   (REVOKED_NO_POE). Nothing here proves the signature was made after the
+ *   revocation, so `invalid` is not claimed.
+ */
+function applyRevocationToVerdict(
+  report: SignatureVerificationReport,
+  validationTime: Date,
+  proven: boolean,
+): void {
+  const revocation = report.revocation;
+  if (revocation?.status !== RevocationStatus.REVOKED) return;
+  const revokedAt = revocation.revocationTime ? new Date(revocation.revocationTime) : null;
+  if (proven && revokedAt && revokedAt > validationTime) {
+    revocation.status = RevocationStatus.REVOKED_AFTER_VALIDATION_TIME;
+    report.notes.push(
+      `Signer certificate was revoked at ${revocation.revocationTime}, after the proven validation time ${validationTime.toISOString()} (${report.validationTime?.source}); the signature predates the revocation.`,
+    );
+    return;
+  }
+  if (report.verdict === Verdict.VALID) report.verdict = Verdict.INDETERMINATE;
+  report.notes.push(
+    `Signer certificate is REVOKED${revocation.revocationTime ? ` (at ${revocation.revocationTime})` : ''} (${revocation.source}): ${revocation.detail}. ` +
+      (proven
+        ? 'The timestamp does not predate the revocation, so whether the signature was made before it cannot be decided.'
+        : 'No verified timestamp proves the signature predates the revocation.'),
+  );
 }
 
 /**
@@ -733,9 +888,11 @@ export async function detectPadesLevels(parsed: ParsedPdf): Promise<PadesLevelRe
           const revocation = await checkRevocation({
             signerCert: artifacts.signerCert,
             availableCerts: [...artifacts.certificates, ...dssCerts],
-            embeddedOcsps: dssOcsps,
-            embeddedCrls: [...artifacts.crls, ...dssCrls],
+            // v0.27.0 (#15): B-LT is about the DSS, so only DSS data counts
+            embeddedOcsps: tagOcsps(dssOcsps, 'dss'),
+            embeddedCrls: tagCrls(dssCrls, 'dss'),
             online: false,
+            validationTime: new Date(),
           });
           coversSigner = revocation.source !== null;
         }

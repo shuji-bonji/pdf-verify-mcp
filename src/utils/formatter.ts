@@ -133,9 +133,13 @@ export function formatSignatureReports(result: SignatureVerificationResult): str
     if (r.trust.certificatePath && r.trust.certificatePath.length > 0) {
       lines.push(`  - Path: ${r.trust.certificatePath.join(' → ')}`);
     }
+    if (r.validationTime) {
+      lines.push(`- Validation time: ${r.validationTime.time} (${r.validationTime.source})`);
+    }
     if (r.revocation) {
+      const where = [r.revocation.source, r.revocation.origin].filter(Boolean).join(', ');
       lines.push(
-        `- Revocation: **${r.revocation.status}**${r.revocation.source ? ` (${r.revocation.source})` : ''}${r.revocation.detail ? ` — ${r.revocation.detail}` : ''}`,
+        `- Revocation: **${r.revocation.status}**${where ? ` (${where})` : ''}${r.revocation.revocationTime ? ` — revoked at ${r.revocation.revocationTime}` : ''}${r.revocation.detail ? ` — ${r.revocation.detail}` : ''}`,
       );
     }
     lines.push(`- SubFilter: ${r.subFilter ?? '(none)'}`);

@@ -51,7 +51,36 @@ export interface RevocationResult {
   status: RevocationStatus;
   /** Where the decisive revocation information came from */
   source: 'ocsp_embedded' | 'crl_embedded' | 'ocsp_online' | 'crl_online' | null;
+  /**
+   * Which part of the PDF held embedded revocation data (v0.27.0).
+   * `null` for online sources and when no data was found.
+   */
+  origin: RevocationOrigin | null;
+  /** Revocation time reported by the CRL / OCSP response (ISO string), when revoked */
+  revocationTime: string | null;
   detail: string | null;
+}
+
+/** Where embedded revocation data sits in the PDF */
+export type RevocationOrigin =
+  /** Document Security Store (ISO 32000-2 §12.8.4.3) */
+  | 'dss'
+  /** CMS SignedData.crls */
+  | 'cms_signed_data'
+  /** CMS signed attribute adbe-revocationInfoArchival (ISO 32000-2 §12.8.3.3.1) */
+  | 'cms_revocation_info_archival';
+
+/**
+ * The time a signature is validated against (v0.27.0).
+ *
+ * ISO 32000-2 §12.8.3.4.5 b) / §12.8.3.4.6: a time other than now only when a
+ * timestamp proves the signature existed then. The CMS signingTime attribute
+ * is written by the signer and is never used here.
+ */
+export interface ValidationTime {
+  /** ISO string */
+  time: string;
+  source: 'signature_timestamp' | 'document_timestamp' | 'current_time';
 }
 
 /** Result of RFC 3161 timestamp token verification */
@@ -138,6 +167,8 @@ export interface SignatureVerificationReport {
   trust: TrustResult;
   /** Revocation check result for the signer certificate (v0.2+) */
   revocation: RevocationResult | null;
+  /** Time used for certificate validity and revocation (v0.27.0); null when not reached */
+  validationTime: ValidationTime | null;
   /** Whether the ByteRange covers the entire file (except /Contents) */
   coversEntireFile: boolean | null;
   /** Byte count that follows the signed range (revisions after signing) */

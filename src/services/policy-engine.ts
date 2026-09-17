@@ -255,6 +255,23 @@ const RULES: RuleDef[] = [
     },
   },
   {
+    // v0.27.0 (#13): a timestamp proves the signature predates the revocation,
+    // so the signature stands — but the certificate is revoked now, which a
+    // reader acting on the document today should know.
+    ruleId: 'POL-CAUTION-REVOKED-AFTER-SIGNING',
+    verdict: 'use_with_caution',
+    applies: (f) => {
+      const later = contentSignatures(f).filter(
+        (s) =>
+          s.verdict === Verdict.VALID &&
+          s.revocation?.status === RevocationStatus.REVOKED_AFTER_VALIDATION_TIME,
+      );
+      return later.length > 0
+        ? `Signer certificate was revoked after the time a timestamp proves the signature existed (signature stands; the certificate must not be relied on for new signatures): ${later.map(label).join(', ')}`
+        : null;
+    },
+  },
+  {
     ruleId: 'POL-CAUTION-WEAK-DIGEST',
     verdict: 'use_with_caution',
     applies: (f) => {

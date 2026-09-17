@@ -7,6 +7,7 @@
  *   CRLDistributionPoints (opt-in, check_revocation='online')
  */
 
+import { createHash } from 'node:crypto';
 import * as asn1js from 'asn1js';
 import * as pkijs from 'pkijs';
 import {
@@ -18,7 +19,7 @@ import {
   TrustStatus,
   X509_OID,
 } from '../constants.js';
-import type { RevocationResult, TrustResult } from '../types.js';
+import type { RevocationOrigin, RevocationResult, TrustResult } from '../types.js';
 import { logger } from '../utils/logger.js';
 import { canonicalName, formatRdn } from '../utils/rdn.js';
 
@@ -85,13 +86,28 @@ export interface ChainEvaluationInput {
   /** All certificates available for chain building (CMS + DSS) */
   availableCerts: pkijs.Certificate[];
   trustAnchors: pkijs.Certificate[];
-  /** Validation reference time (signing time when known) */
+  /** Validation time (see ValidationTime) */
   checkDate: Date;
-  crls?: pkijs.CertificateRevocationList[];
-  ocsps?: pkijs.BasicOCSPResponse[];
+  /**
+   * Embedded revocation data for the CA certificates in the path (v0.27.0).
+   * The signer's own status is reported separately by checkRevocation.
+   */
+  ocsps?: EmbeddedOcsp[];
+  crls?: EmbeddedCrl[];
+  /** True when checkDate is proven by a verified timestamp */
+  checkDateProven?: boolean;
 }
 
-/** Evaluate the signer's chain against the given trust anchors */
+/**
+ * Evaluate the signer's chain against the given trust anchors.
+ *
+ * v0.27.0: revocation is no longer handed to pkijs's chain engine. pkijs
+ * treats any listed certificate as revoked regardless of the revocation date,
+ * and refuses the whole path when some certificate has no revocation data.
+ * The path is built and time-checked by pkijs; revocation of intermediate CA
+ * certificates is checked here with the same rules as the signer's
+ * (ISO 32000-2 §12.8.3.4.6).
+ */
 export async function evaluateTrust(input: ChainEvaluationInput): Promise<TrustResult> {
   if (input.trustAnchors.length === 0) {
     return {
@@ -105,17 +121,49 @@ export async function evaluateTrust(input: ChainEvaluationInput): Promise<TrustR
     const engine = new pkijs.CertificateChainValidationEngine({
       trustedCerts: input.trustAnchors,
       certs: [...input.availableCerts.filter((c) => c !== input.signerCert), input.signerCert],
-      crls: input.crls ?? [],
-      ocsps: input.ocsps ?? [],
       checkDate: input.checkDate,
     });
     const result = await engine.verify();
+    const pathCerts = result.certificatePath ?? [];
     const path = result.certificatePath?.map((c) => formatRdn(c.subject)) ?? null;
+    if (!result.result) {
+      return {
+        status: TrustStatus.UNTRUSTED,
+        detail: `Chain validation failed: ${result.resultMessage || `code ${result.resultCode}`}`,
+        certificatePath: path,
+      };
+    }
+
+    // Intermediate CAs: path[0] is the signer, the last element the anchor.
+    const caNotes: string[] = [];
+    for (let i = 1; i < pathCerts.length - 1; i++) {
+      const ca = pathCerts[i];
+      const status = await checkRevocation({
+        signerCert: ca,
+        availableCerts: pathCerts,
+        embeddedOcsps: input.ocsps ?? [],
+        embeddedCrls: input.crls ?? [],
+        online: false,
+        validationTime: input.checkDate,
+      });
+      if (status.status !== RevocationStatus.REVOKED) continue;
+      const revokedAt = status.revocationTime ? new Date(status.revocationTime) : null;
+      if (input.checkDateProven && revokedAt && revokedAt > input.checkDate) {
+        caNotes.push(
+          `intermediate CA ${formatRdn(ca.subject)} was revoked at ${status.revocationTime}, after the validation time`,
+        );
+        continue;
+      }
+      return {
+        status: TrustStatus.UNTRUSTED,
+        detail: `Intermediate CA ${formatRdn(ca.subject)} is revoked${status.revocationTime ? ` (at ${status.revocationTime})` : ''} and no timestamp proves the signature predates it`,
+        certificatePath: path,
+      };
+    }
+
     return {
-      status: result.result ? TrustStatus.TRUSTED : TrustStatus.UNTRUSTED,
-      detail: result.result
-        ? `Chain validated against ${input.trustAnchors.length} trust anchor(s) at ${input.checkDate.toISOString()}`
-        : `Chain validation failed: ${result.resultMessage || `code ${result.resultCode}`}`,
+      status: TrustStatus.TRUSTED,
+      detail: `Chain validated against ${input.trustAnchors.length} trust anchor(s) at ${input.checkDate.toISOString()}${caNotes.length > 0 ? `; ${caNotes.join('; ')}` : ''}`,
       certificatePath: path,
     };
   } catch (error) {
@@ -267,12 +315,270 @@ export async function fetchMissingIssuers(
   return fetched;
 }
 
+/** Embedded OCSP response, tagged with where it sits in the PDF */
+export interface EmbeddedOcsp {
+  response: pkijs.BasicOCSPResponse;
+  origin: RevocationOrigin;
+}
+
+/** Embedded CRL, tagged with where it sits in the PDF */
+export interface EmbeddedCrl {
+  crl: pkijs.CertificateRevocationList;
+  origin: RevocationOrigin;
+}
+
+/** Tag parsed items with their origin */
+export function tagOcsps(
+  items: pkijs.BasicOCSPResponse[],
+  origin: RevocationOrigin,
+): EmbeddedOcsp[] {
+  return items.map((response) => ({ response, origin }));
+}
+
+/** Tag parsed items with their origin */
+export function tagCrls(
+  items: pkijs.CertificateRevocationList[],
+  origin: RevocationOrigin,
+): EmbeddedCrl[] {
+  return items.map((crl) => ({ crl, origin }));
+}
+
+/**
+ * What one CRL or OCSP response says about one certificate.
+ *
+ * `verified` is false when the CRL / response signature could not be checked
+ * against the issuer (or a delegated OCSP responder). An unverified statement
+ * never becomes GOOD or REVOKED: a REVOKED status can turn a verdict, so it
+ * must come from data we checked (v0.27.0, #13).
+ */
+interface StatusFinding {
+  status: RevocationStatus.GOOD | RevocationStatus.REVOKED | RevocationStatus.UNKNOWN;
+  revocationTime: Date | null;
+  detail: string;
+  /** UNKNOWN only: the unverified data itself says "revoked" */
+  claimsRevoked?: boolean;
+}
+
+function serialHex(value: asn1js.Integer): string {
+  return Array.from(new Uint8Array(value.valueBlock.valueHexView), (b) =>
+    b.toString(16).padStart(2, '0'),
+  ).join('');
+}
+
+function sameCertificate(a: pkijs.Certificate, b: pkijs.Certificate): boolean {
+  return (
+    canonicalName(a.subject) === canonicalName(b.subject) &&
+    serialHex(a.serialNumber) === serialHex(b.serialNumber)
+  );
+}
+
+function hasOcspSigningEku(cert: pkijs.Certificate): boolean {
+  const ext = cert.extensions?.find((e) => e.extnID === X509_OID.EXTENDED_KEY_USAGE);
+  const eku = ext?.parsedValue as pkijs.ExtKeyUsage | undefined;
+  return eku?.keyPurposes?.includes(X509_OID.KP_OCSP_SIGNING) ?? false;
+}
+
+function sha1Hex(bytes: Uint8Array): string {
+  return createHash('sha1').update(bytes).digest('hex');
+}
+
+/**
+ * Verify a BasicOCSPResponse signature (RFC 6960 §4.2.2.2): the responder is
+ * the issuing CA itself, or a delegate whose certificate is signed by that CA
+ * and carries id-kp-OCSPSigning.
+ */
+async function verifyOcspResponse(
+  basic: pkijs.BasicOCSPResponse,
+  issuer: pkijs.Certificate,
+): Promise<{ verified: boolean; reason: string | null }> {
+  try {
+    const rid = basic.tbsResponseData.responderID;
+    const candidates = [issuer, ...(basic.certs ?? [])];
+    let responder: pkijs.Certificate | null = null;
+    if (rid instanceof pkijs.RelativeDistinguishedNames) {
+      responder = candidates.find((c) => c.subject.isEqual(rid)) ?? null;
+    } else if (rid instanceof asn1js.OctetString) {
+      const want = Buffer.from(rid.valueBlock.valueHexView).toString('hex');
+      for (const c of candidates) {
+        const keyHash = sha1Hex(
+          new Uint8Array(c.subjectPublicKeyInfo.subjectPublicKey.valueBlock.valueHexView),
+        );
+        if (keyHash === want) {
+          responder = c;
+          break;
+        }
+      }
+    }
+    if (!responder) return { verified: false, reason: 'responder certificate not found' };
+
+    if (!sameCertificate(responder, issuer)) {
+      const signedByIssuer = await responder.verify(issuer).catch(() => false);
+      if (!signedByIssuer) {
+        return { verified: false, reason: 'delegated responder is not signed by the issuer' };
+      }
+      if (!hasOcspSigningEku(responder)) {
+        return { verified: false, reason: 'delegated responder lacks id-kp-OCSPSigning' };
+      }
+    }
+
+    const ok = await pkijs
+      .getCrypto(true)
+      .verifyWithPublicKey(
+        toArrayBuffer(basic.tbsResponseData.tbsView),
+        basic.signature,
+        responder.subjectPublicKeyInfo,
+        basic.signatureAlgorithm,
+      );
+    return ok
+      ? { verified: true, reason: null }
+      : { verified: false, reason: 'signature verification failed' };
+  } catch (error) {
+    return {
+      verified: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/** The revocationTime of a revoked SingleResponse (RevokedInfo [1]) */
+function ocspRevocationTime(single: pkijs.SingleResponse): Date | null {
+  try {
+    const status = single.certStatus as asn1js.Constructed;
+    const first = status.valueBlock.value[0] as asn1js.GeneralizedTime | undefined;
+    return first ? first.toDate() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What an OCSP response says about `cert`, or null when it is not about it.
+ */
+async function ocspFinding(
+  basic: pkijs.BasicOCSPResponse,
+  cert: pkijs.Certificate,
+  issuer: pkijs.Certificate,
+  validationTime: Date,
+  label: string,
+): Promise<StatusFinding | null> {
+  let status: number;
+  try {
+    const answer = await basic.getCertificateStatus(cert, issuer);
+    if (!answer.isForCertificate) return null;
+    status = answer.status;
+  } catch {
+    return null;
+  }
+  const wanted = serialHex(cert.serialNumber);
+  const single = basic.tbsResponseData.responses.find(
+    (r) => serialHex(r.certID.serialNumber) === wanted,
+  );
+
+  const check = await verifyOcspResponse(basic, issuer);
+  if (!check.verified) {
+    return {
+      status: RevocationStatus.UNKNOWN,
+      revocationTime: null,
+      detail: `${label} — OCSP response signature NOT verified (${check.reason}); status not trusted${status === 1 ? ' (the response says "revoked")' : ''}`,
+      claimsRevoked: status === 1,
+    };
+  }
+  if (status === 1) {
+    return {
+      status: RevocationStatus.REVOKED,
+      revocationTime: single ? ocspRevocationTime(single) : null,
+      detail: `${label} (OCSP signature verified)`,
+    };
+  }
+  if (status === 0) {
+    if (single?.nextUpdate && single.nextUpdate < validationTime) {
+      return {
+        status: RevocationStatus.UNKNOWN,
+        revocationTime: null,
+        detail: `${label} — OCSP response expired (nextUpdate ${single.nextUpdate.toISOString()} is before the validation time)`,
+      };
+    }
+    return {
+      status: RevocationStatus.GOOD,
+      revocationTime: null,
+      detail: `${label} (OCSP signature verified)`,
+    };
+  }
+  return {
+    status: RevocationStatus.UNKNOWN,
+    revocationTime: null,
+    detail: `${label} — responder answered "unknown"`,
+  };
+}
+
+/**
+ * What a CRL says about `cert`. The caller has already matched the issuer
+ * name. A CRL whose signature cannot be checked (issuer certificate missing,
+ * or verification failed) yields UNKNOWN.
+ */
+async function crlFinding(
+  crl: pkijs.CertificateRevocationList,
+  cert: pkijs.Certificate,
+  issuer: pkijs.Certificate | null,
+  validationTime: Date,
+  label: string,
+): Promise<StatusFinding> {
+  const target = serialHex(cert.serialNumber);
+  const listed = crl.revokedCertificates?.some((rc) => serialHex(rc.userCertificate) === target);
+  const claim = listed ? ' (the CRL lists the certificate)' : '';
+  if (!issuer) {
+    return {
+      status: RevocationStatus.UNKNOWN,
+      revocationTime: null,
+      detail: `${label} — CRL signature NOT verified (issuer certificate unavailable); status not trusted${claim}`,
+      claimsRevoked: listed,
+    };
+  }
+  let verified = false;
+  try {
+    verified = await crl.verify({ issuerCertificate: issuer });
+  } catch {
+    verified = false;
+  }
+  if (!verified) {
+    return {
+      status: RevocationStatus.UNKNOWN,
+      revocationTime: null,
+      detail: `${label} — CRL signature verification failed; status not trusted${claim}`,
+      claimsRevoked: listed,
+    };
+  }
+  const entry = crl.revokedCertificates?.find((rc) => serialHex(rc.userCertificate) === target);
+  if (entry) {
+    return {
+      status: RevocationStatus.REVOKED,
+      revocationTime: entry.revocationDate.value,
+      detail: `${label} (CRL signature verified)`,
+    };
+  }
+  // A revocation entry never expires, but "not listed" is only as good as the
+  // CRL's validity window.
+  if (crl.nextUpdate && crl.nextUpdate.value < validationTime) {
+    return {
+      status: RevocationStatus.UNKNOWN,
+      revocationTime: null,
+      detail: `${label} — CRL expired (nextUpdate ${crl.nextUpdate.value.toISOString()} is before the validation time)`,
+    };
+  }
+  return {
+    status: RevocationStatus.GOOD,
+    revocationTime: null,
+    detail: `${label} (CRL signature verified)`,
+  };
+}
+
 /** Query an OCSP responder for the certificate's status */
 async function fetchOcspStatus(
   cert: pkijs.Certificate,
   issuer: pkijs.Certificate,
   url: string,
-): Promise<{ status: RevocationStatus; detail: string } | null> {
+  validationTime: Date,
+): Promise<StatusFinding | null> {
   try {
     const request = new pkijs.OCSPRequest();
     await request.createForCertificate(cert, { hashAlgorithm: 'SHA-1', issuerCertificate: issuer });
@@ -282,36 +588,42 @@ async function fetchOcspStatus(
       headers: { 'Content-Type': 'application/ocsp-request' },
       body: Buffer.from(body),
     });
-    if (!response.ok)
-      return { status: RevocationStatus.UNKNOWN, detail: `OCSP HTTP ${response.status}` };
+    if (!response.ok) {
+      return {
+        status: RevocationStatus.UNKNOWN,
+        revocationTime: null,
+        detail: `OCSP HTTP ${response.status}`,
+      };
+    }
     const der = new Uint8Array(await response.arrayBuffer());
-    const ocspResponse = fromBerOrNull(der, (s) => new pkijs.OCSPResponse({ schema: s }));
-    if (!ocspResponse)
-      return { status: RevocationStatus.UNKNOWN, detail: 'OCSP response unparseable' };
-    const { isForCertificate, status } = await ocspResponse.getCertificateStatus(cert, issuer);
-    if (!isForCertificate)
-      return { status: RevocationStatus.UNKNOWN, detail: 'OCSP response not for this certificate' };
-    return {
-      status:
-        status === 0
-          ? RevocationStatus.GOOD
-          : status === 1
-            ? RevocationStatus.REVOKED
-            : RevocationStatus.UNKNOWN,
-      detail: `OCSP responder ${url}`,
-    };
+    const [basic] = parseOcspResponses([der]);
+    if (!basic) {
+      return {
+        status: RevocationStatus.UNKNOWN,
+        revocationTime: null,
+        detail: 'OCSP response unparseable',
+      };
+    }
+    return (
+      (await ocspFinding(basic, cert, issuer, validationTime, `OCSP responder ${url}`)) ?? {
+        status: RevocationStatus.UNKNOWN,
+        revocationTime: null,
+        detail: 'OCSP response not for this certificate',
+      }
+    );
   } catch (error) {
     logger.debug(CONTEXT, `OCSP fetch failed: ${error instanceof Error ? error.message : error}`);
     return null;
   }
 }
 
-/** Download and check a CRL against a certificate (issuer used for verification) */
+/** Download and check a CRL against a certificate */
 async function fetchCrlStatus(
   cert: pkijs.Certificate,
   url: string,
   issuer: pkijs.Certificate | null,
-): Promise<{ status: RevocationStatus; detail: string } | null> {
+  validationTime: Date,
+): Promise<StatusFinding | null> {
   try {
     const response = await fetchWithTimeout(url, { method: 'GET' });
     if (!response.ok) return null;
@@ -322,135 +634,136 @@ async function fetchCrlStatus(
     // certificate's issuer, otherwise an on-path attacker could serve a forged
     // CRL that reports GOOD. Skip mismatched CRLs entirely.
     if (canonicalName(cert.issuer) !== canonicalName(crl.issuer)) return null;
-    const checked = await evaluateCrl(cert, crl, issuer);
-    return { status: checked.status, detail: `CRL from ${url}${checked.detailSuffix}` };
+    return await crlFinding(crl, cert, issuer, validationTime, `CRL from ${url}`);
   } catch (error) {
     logger.debug(CONTEXT, `CRL fetch failed: ${error instanceof Error ? error.message : error}`);
     return null;
   }
 }
 
-function serialHex(value: asn1js.Integer): string {
-  return Array.from(new Uint8Array(value.valueBlock.valueHexView), (b) =>
-    b.toString(16).padStart(2, '0'),
-  ).join('');
+const ORIGIN_LABEL: Record<RevocationOrigin, string> = {
+  dss: 'DSS',
+  cms_signed_data: 'CMS SignedData.crls',
+  cms_revocation_info_archival: 'CMS adbe-revocationInfoArchival',
+};
+
+export interface RevocationCheckInput {
+  /** The certificate whose status is wanted (the signer, or a CA in the path) */
+  signerCert: pkijs.Certificate;
+  availableCerts: pkijs.Certificate[];
+  embeddedOcsps: EmbeddedOcsp[];
+  embeddedCrls: EmbeddedCrl[];
+  /** Query OCSP / CRL endpoints when embedded data gives no verified answer */
+  online: boolean;
+  /** Validation time: expired "good" statements are not accepted (v0.27.0) */
+  validationTime: Date;
 }
 
-function crlStatusFor(
-  cert: pkijs.Certificate,
-  crl: pkijs.CertificateRevocationList,
-): RevocationStatus {
-  const target = serialHex(cert.serialNumber);
-  const revoked = crl.revokedCertificates?.some((rc) => serialHex(rc.userCertificate) === target);
-  return revoked ? RevocationStatus.REVOKED : RevocationStatus.GOOD;
+interface Candidate {
+  finding: StatusFinding;
+  source: NonNullable<RevocationResult['source']>;
+  origin: RevocationOrigin | null;
+}
+
+function toResult(c: Candidate): RevocationResult {
+  return {
+    status: c.finding.status,
+    source: c.source,
+    origin: c.origin,
+    revocationTime: c.finding.revocationTime?.toISOString() ?? null,
+    detail: c.finding.detail,
+  };
 }
 
 /**
- * Determine a certificate's status against a CRL, verifying the CRL signature
- * with the issuer certificate when available. A REVOKED verdict feeds directly
- * into an INVALID signature verdict, so an unverified CRL is reported with a
- * caveat rather than trusted blindly.
+ * Check a certificate's revocation status.
+ *
+ * Order: embedded OCSP → embedded CRLs → (online) OCSP → (online) CRL.
+ * A verified REVOKED ends the search. A verified GOOD ends the search.
+ * Unverified or expired data is kept as the fallback answer (UNKNOWN, with
+ * the source that held it) only when nothing better is found.
+ *
+ * REVOKED is reported as-is: whether it invalidates the signature depends on
+ * the validation time's proof, which the caller owns.
  */
-async function evaluateCrl(
-  cert: pkijs.Certificate,
-  crl: pkijs.CertificateRevocationList,
-  issuer: pkijs.Certificate | null,
-): Promise<{ status: RevocationStatus; detailSuffix: string }> {
-  const status = crlStatusFor(cert, crl);
-  if (!issuer) {
-    return {
-      status,
-      detailSuffix: ' (CRL signature NOT verified: issuer certificate unavailable)',
-    };
-  }
-  let verified = false;
-  try {
-    verified = await crl.verify({ issuerCertificate: issuer });
-  } catch {
-    verified = false;
-  }
-  if (!verified) {
-    // Downgrade a signature-unverified REVOKED/GOOD to UNKNOWN: we cannot trust
-    // an unsigned CRL to force an INVALID verdict.
-    return {
-      status: RevocationStatus.UNKNOWN,
-      detailSuffix: ' (CRL signature verification failed — status not trusted)',
-    };
-  }
-  return { status, detailSuffix: ' (CRL signature verified)' };
-}
-
-export interface RevocationCheckInput {
-  signerCert: pkijs.Certificate;
-  availableCerts: pkijs.Certificate[];
-  embeddedOcsps: pkijs.BasicOCSPResponse[];
-  embeddedCrls: pkijs.CertificateRevocationList[];
-  /** Allow network access to OCSP responders / CRL distribution points */
-  online: boolean;
-}
-
-/** Determine the signer certificate's revocation status */
 export async function checkRevocation(input: RevocationCheckInput): Promise<RevocationResult> {
-  const { signerCert } = input;
+  const { signerCert, validationTime } = input;
   const issuer = findIssuerCert(signerCert, input.availableCerts);
-
-  // 1. Embedded OCSP responses
-  if (issuer) {
-    for (const basic of input.embeddedOcsps) {
-      try {
-        const { isForCertificate, status } = await basic.getCertificateStatus(signerCert, issuer);
-        if (isForCertificate) {
-          return {
-            status:
-              status === 0
-                ? RevocationStatus.GOOD
-                : status === 1
-                  ? RevocationStatus.REVOKED
-                  : RevocationStatus.UNKNOWN,
-            source: 'ocsp_embedded',
-            detail: 'Embedded OCSP response (DSS/CMS)',
-          };
-        }
-      } catch {
-        // try next response
+  let fallback: Candidate | null = null;
+  // Unverified data that claims "revoked" is not trusted, but it must not
+  // disappear either: a verified GOOD found later says so in its detail.
+  const unverifiedRevocationClaims: string[] = [];
+  const consider = (c: Candidate): RevocationResult | null => {
+    if (c.finding.status !== RevocationStatus.UNKNOWN) {
+      const result = toResult(c);
+      if (result.status === RevocationStatus.GOOD && unverifiedRevocationClaims.length > 0) {
+        result.detail = `${result.detail}; note: unverified data claims the certificate is revoked — ${unverifiedRevocationClaims.join('; ')}`;
       }
+      return result;
+    }
+    if (c.finding.claimsRevoked) unverifiedRevocationClaims.push(c.finding.detail);
+    fallback ??= c;
+    return null;
+  };
+
+  // 1. Embedded OCSP responses (need the issuer to match the CertID)
+  if (issuer) {
+    for (const { response, origin } of input.embeddedOcsps) {
+      const finding = await ocspFinding(
+        response,
+        signerCert,
+        issuer,
+        validationTime,
+        `Embedded OCSP response (${ORIGIN_LABEL[origin]})`,
+      );
+      if (!finding) continue;
+      const done = consider({ finding, source: 'ocsp_embedded', origin });
+      if (done) return done;
     }
   }
 
-  // 2. Embedded CRLs (issuer name must match; signature verified when possible)
-  for (const crl of input.embeddedCrls) {
+  // 2. Embedded CRLs (issuer name must match)
+  for (const { crl, origin } of input.embeddedCrls) {
     if (canonicalName(crl.issuer) !== canonicalName(signerCert.issuer)) continue;
-    const checked = await evaluateCrl(signerCert, crl, issuer);
-    return {
-      status: checked.status,
-      source: 'crl_embedded',
-      detail: `Embedded CRL (DSS/CMS)${checked.detailSuffix}`,
-    };
+    const finding = await crlFinding(
+      crl,
+      signerCert,
+      issuer,
+      validationTime,
+      `Embedded CRL (${ORIGIN_LABEL[origin]})`,
+    );
+    const done = consider({ finding, source: 'crl_embedded', origin });
+    if (done) return done;
   }
 
   // 3. Online (opt-in)
   if (input.online) {
     const ocspUrl = extractOcspUrl(signerCert);
     if (ocspUrl && issuer) {
-      const result = await fetchOcspStatus(signerCert, issuer, ocspUrl);
-      if (result) return { ...result, source: 'ocsp_online' };
+      const finding = await fetchOcspStatus(signerCert, issuer, ocspUrl, validationTime);
+      if (finding) {
+        const done = consider({ finding, source: 'ocsp_online', origin: null });
+        if (done) return done;
+      }
     }
     for (const url of extractCrlUrls(signerCert)) {
-      const result = await fetchCrlStatus(signerCert, url, issuer);
-      if (result) return { ...result, source: 'crl_online' };
+      const finding = await fetchCrlStatus(signerCert, url, issuer, validationTime);
+      if (finding) {
+        const done = consider({ finding, source: 'crl_online', origin: null });
+        if (done) return done;
+      }
     }
-    return {
-      status: RevocationStatus.UNKNOWN,
-      source: null,
-      detail:
-        'No usable revocation source (embedded data absent; online endpoints unreachable or undeclared)',
-    };
   }
+
+  if (fallback) return toResult(fallback);
 
   return {
     status: RevocationStatus.UNKNOWN,
     source: null,
-    detail:
-      'No embedded revocation information found (use check_revocation="online" to query OCSP/CRL endpoints)',
+    origin: null,
+    revocationTime: null,
+    detail: input.online
+      ? 'No usable revocation source (embedded data absent; online endpoints unreachable or undeclared)'
+      : 'No embedded revocation information found (use check_revocation="online" to query OCSP/CRL endpoints)',
   };
 }

@@ -37,6 +37,8 @@ export const OID = {
   MESSAGE_DIGEST: '1.2.840.113549.1.9.4',
   SIGNING_TIME: '1.2.840.113549.1.9.5',
   SIGNATURE_TIME_STAMP: '1.2.840.113549.1.9.16.2.14',
+  /** Adobe's signed attribute carrying CRLs / OCSP responses (ISO 32000-2 §12.8.3.3.1) */
+  ADBE_REVOCATION_INFO_ARCHIVAL: '1.2.840.113583.1.1.8',
   /** id-ct-TSTInfo — eContentType of an RFC 3161 timestamp token (RFC 3161 §2.4.2) */
   TST_INFO: '1.2.840.113549.1.9.16.1.4',
   MD5: '1.2.840.113549.2.5',
@@ -81,6 +83,8 @@ export const X509_OID = {
   ACCESS_METHOD_OCSP: '1.3.6.1.5.5.7.48.1',
   ACCESS_METHOD_CA_ISSUERS: '1.3.6.1.5.5.7.48.2',
   CRL_DISTRIBUTION_POINTS: '2.5.29.31',
+  EXTENDED_KEY_USAGE: '2.5.29.37',
+  KP_OCSP_SIGNING: '1.3.6.1.5.5.7.3.9',
 } as const;
 
 /** Maximum chain depth when fetching issuer certificates via AIA */
@@ -134,6 +138,11 @@ export enum TrustStatus {
 export enum RevocationStatus {
   GOOD = 'good',
   REVOKED = 'revoked',
+  /**
+   * Revoked, but a verified timestamp proves the signature existed before the
+   * revocation time (ISO 32000-2 §12.8.3.4.6 case 2). Does not invalidate.
+   */
+  REVOKED_AFTER_VALIDATION_TIME = 'revoked_after_validation_time',
   UNKNOWN = 'unknown',
   NOT_CHECKED = 'not_checked',
 }

@@ -69,9 +69,9 @@ bytes could be a form field's appearance stream (which P=2 permits) or a page's 
 
 ## Trust & revocation (v0.2)
 
-Pass `trust_anchors` (PEM/DER file paths) or set the `PDF_VERIFY_TRUST_ANCHORS` env var (a directory of certificates) to evaluate the signer's chain: results are `trusted` / `untrusted` / `not_evaluated` with the certificate path, validated at signing time.
+Pass `trust_anchors` (PEM/DER file paths) or set the `PDF_VERIFY_TRUST_ANCHORS` env var (a directory of certificates) to evaluate the signer's chain: results are `trusted` / `untrusted` / `not_evaluated` with the certificate path. The validation time is a verified signature timestamp, else the earliest document timestamp covering the signature, else the current time (v0.27.0); the CMS `signingTime` attribute is written by the signer and is not used. The chosen time is reported as `validationTime`.
 
-`check_revocation` controls revocation checking: `embedded` (default — OCSP/CRL data inside the PDF's DSS or the CMS payload), `online` (additionally query OCSP responders and CRL distribution points over HTTP), or `none`. A revoked signer certificate forces verdict `invalid`. In online mode, missing issuer certificates are fetched via AIA caIssuers to complete the chain (v0.4). When anchors are provided, TSA certificate chains of RFC 3161 timestamps are evaluated too (`tsaTrust`).
+`check_revocation` controls revocation checking: `embedded` (default — OCSP/CRL data in the DSS, CMS `SignedData.crls`, or the CMS signed attribute `adbe-revocationInfoArchival`; reported as `revocation.origin`), `online` (additionally query OCSP responders and CRL distribution points over HTTP), or `none` (`revocation.status: not_checked`). CRLs and OCSP responses whose signatures cannot be verified, or whose `nextUpdate` is before the validation time, give `unknown`. A revoked signer certificate gives `revoked_after_validation_time` (verdict unchanged) when a timestamp proves the signature predates the revocation; otherwise `revoked` with verdict `indeterminate`. In online mode, missing issuer certificates are fetched via AIA caIssuers to complete the chain (v0.4). When anchors are provided, TSA certificate chains of RFC 3161 timestamps are evaluated too (`tsaTrust`).
 
 | Step | What is checked | Network |
 | --- | --- | --- |
@@ -81,7 +81,7 @@ Pass `trust_anchors` (PEM/DER file paths) or set the `PDF_VERIFY_TRUST_ANCHORS` 
 | Revocation | OCSP / CRL for the signer certificate | none under `embedded`; under `online`, HTTP queries when embedded data gives no answer |
 | Timestamp | RFC 3161 token and TSA signature | none |
 
-`verdict: valid` means integrity and signature value passed (`revoked` turns it into `invalid`). `online` results reflect the CA's state at query time and can change later. See the [site guide](https://shuji-bonji.github.io/pdf-agent-stack/mcp/pdf-verify#what-signature-verification-checks) for each step and how to choose a mode.
+`verdict: valid` means integrity and signature value passed (`revoked` turns it into `indeterminate`). `online` results reflect the CA's state at query time and can change later. See the [site guide](https://shuji-bonji.github.io/pdf-agent-stack/mcp/pdf-verify#what-signature-verification-checks) for each step and how to choose a mode.
 
 > Without trust anchors, `trust` stays `not_evaluated` and a `valid` verdict asserts cryptographic integrity, not signer identity.
 

@@ -2,6 +2,89 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.27.0]　- 2026-09-17
+
+**失効と検証時刻の扱いを ISO 32000-2 §12.8.3.4.5・§12.8.3.4.6 に合わせた。**
+`verify_signatures` と `evaluate_policy` の判定が変わる（#12 / #13 / #14 / #15）。
+
+### Changed
+
+- **検証時刻（#12）。** 証明書の有効期間と失効の判定に使う時刻を、次の順で選ぶ。
+  検証できた署名タイムスタンプの `genTime` → この署名を覆う文書タイムスタンプのうち
+  最も早い `genTime` → 現在時刻。CMS の `signingTime` 属性は署名者が書く値なので
+  使わない（出力の `cms.signingTimeAttribute` には残る）。トラストアンカーを渡したときは、
+  TSA の証明書チェーンが `trusted` のタイムスタンプだけを使う。
+  選んだ時刻は各署名の `validationTime`（`{ time, source }`）に出る。
+  タイムスタンプが無く、証明書がすでに期限切れの署名は `trust: untrusted` になる
+  （`verdict` は変わらない）。
+
+- **失効した署名者証明書（#13）。** これまでは `revoked` なら常に `verdict: invalid` だった。
+  - タイムスタンプが失効日時より前を証明している →
+    `revocation.status: revoked_after_validation_time`、`verdict` は変わらない
+  - それ以外（タイムスタンプが無い、失効日時より後、失効日時が読めない）→
+    `revocation.status: revoked`、`verdict: indeterminate`
+    （ETSI EN 319 102-1 の REVOKED_NO_POE と同じ扱い。タイムスタンプは署名時刻の
+    上限しか示さないので、「失効後に署名した」とは言えない。`invalid` は主張しない）
+  - `revocation.revocationTime` を追加した
+
+- **署名を検証できない失効情報は `unknown`（#13）。** CRL は発行者証明書で署名を検証する。
+  発行者証明書が無いときも、これまでのように状態を返さず `unknown` にする。
+  OCSP 応答は応答者の署名を検証する（応答者が発行 CA 自身、または発行 CA が署名し
+  `id-kp-OCSPSigning` を持つ委任応答者であること。RFC 6960 §4.2.2.2）。
+  検証できなかったデータが「失効」と言っていて、別の検証済みデータが `good` を返したときは、
+  `detail` にその旨を残す。
+
+- **期限切れの失効情報は `good` の根拠にしない（#13）。** CRL / OCSP の `nextUpdate` が
+  検証時刻より前なら `unknown`。`thisUpdate` と検証時刻の前後関係はまだ見ていない（#16）。
+
+- **中間 CA の失効確認を pkijs のチェーン検証から外した。** pkijs は失効日時を見ずに
+  「失効」と判定し、どれかの証明書に失効情報が無いとチェーン全体を不合格にしていた。
+  チェーンの構築と有効期間の確認は pkijs に任せ、中間 CA の失効は署名者と同じ規則で
+  このサーバが確認する（埋め込みデータのみ）。失効情報が無いことを理由に `untrusted`
+  にはしなくなった。
+
+- **`check_revocation: "none"` で `revocation.status: not_checked` を返す（#14）。**
+  これまでは `revocation: null` で、ツール説明に書いてある `not_checked` は一度も出ていなかった。
+
+- **`evaluate_policy`：`POL-CAUTION-REVOKED-AFTER-SIGNING` を追加。**
+  `revoked_after_validation_time` の署名は `use_with_caution`。`revoked` は従来どおり
+  `POL-REJECT-REVOKED`（`verdict` が `indeterminate` になるので `POL-REVIEW-INDETERMINATE` も出る）。
+
+### Added
+
+- **CMS 署名属性 `adbe-revocationInfoArchival` の CRL / OCSP 応答を読む（#15）。**
+  DSS が無く、この属性に失効情報を持つ署名は、`embedded` のまま判定できる。
+- **`revocation.origin`**：埋め込み失効情報の置き場所
+  （`dss` / `cms_signed_data` / `cms_revocation_info_archival`）。`source` の値は変えていない。
+  `detail` の「(DSS/CMS)」も実際の置き場所に直した（OCSP は DSS からしか読んでいなかった）。
+
+### Fixed
+
+- **`detect_pades_level` の「DSS の失効情報が署名者を覆うか」が、CMS の CRL も数えていた（#15）。**
+  DSS に署名者の失効情報が無くても B-LT と判定されることがあった。DSS の中身だけで判定する。
+
+### 実測
+
+公開検体 61 件（`.golden/specimens`・`tests/fixtures/generated`・pdf-agent-stack の
+`docs/specimens`・`docs/training/specimens-signed`）で 0.26.1 と A/B。
+判定（`kept`）が動いたのは `dss-pades-5sigs-doctimestamp.pdf` の 1 件だけで、残り 35 件は
+項目の追加と `detail` の文言だった。
+
+- Signature1：`invalid / revoked` → `valid / good`。`revoked` の根拠だった DSS の OCSP 応答は、
+  署名者の発行 CA（SNCA2）ではなく別の CA（SNCA3）が発行した応答者の署名で、
+  RFC 6960 の委任の条件を満たさない。しかも失効日時（2011-12-31）は署名タイムスタンプ
+  （2011-05-05）より後。`evaluate_policy` は `reject` → `use_with_caution`
+- Signature3・4：`good` → `unknown`。検証時刻は文書タイムスタンプ（2019-12-05）で、
+  DSS の CRL の `nextUpdate`（2019-09-01）はそれより前
+
+単体 222 件（Node 20 / 22）・`check`・`typecheck`・`build`・`check:public-types` は緑。
+
+### まだできないこと
+
+- `thisUpdate` と検証時刻の前後関係（署名直前に取得した OCSP 応答をどこまで許すか）— #16
+- 中間 CA の失効を `online` で問い合わせること、`revocation` に中間 CA の結果を出すこと
+- 失効情報の署名者（CRL 発行者・OCSP 応答者）の証明書自体の失効確認
+
 ## [0.26.1] - 2026-09-16
 
 **暗号化文書の PDF/A + veraPDF が `INTERNAL_ERROR` を出さなくなった。**

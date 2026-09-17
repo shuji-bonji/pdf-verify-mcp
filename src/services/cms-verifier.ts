@@ -18,6 +18,7 @@ import { DIGEST_OID_TO_HASH, NODE_HASH_NAMES, OID, WEBCRYPTO_HASHES } from '../c
 import type { CertificateInfo, CmsVerificationResult, TimestampTokenResult } from '../types.js';
 import { logger } from '../utils/logger.js';
 import { formatRdn } from '../utils/rdn.js';
+import { parseCrls, parseOcspResponses } from './revocation.js';
 
 const CONTEXT = 'cms-verifier';
 
@@ -395,6 +396,11 @@ export interface CmsArtifacts {
   certificates: pkijs.Certificate[];
   /** CRLs embedded in the CMS RevocationInfoChoices */
   crls: pkijs.CertificateRevocationList[];
+  /**
+   * CRLs and OCSP responses from the adbe-revocationInfoArchival signed
+   * attribute (ISO 32000-2 §12.8.3.3.1) — v0.27.0
+   */
+  archival: { crls: pkijs.CertificateRevocationList[]; ocsps: pkijs.BasicOCSPResponse[] };
   /** Signing time from the signed attribute, when present */
   signingTime: Date | null;
   /** Raw DER of the signature timestamp token in unsignedAttrs, when present */
@@ -437,8 +443,42 @@ export function extractCmsArtifacts(contents: Uint8Array): CmsArtifacts | null {
     signerCert: findSignerCertificate(parsed),
     certificates,
     crls,
+    archival: extractRevocationInfoArchival(signerInfo),
     signingTime: signingTimeIso ? new Date(signingTimeIso) : null,
     signatureTimestampToken: tokenDer,
     signatureValue: new Uint8Array(signerInfo.signature.valueBlock.valueHexView),
   };
+}
+
+/**
+ * Read the adbe-revocationInfoArchival signed attribute:
+ *
+ *   RevocationInfoArchival ::= SEQUENCE {
+ *     crl          [0] EXPLICIT SEQUENCE OF CRLs OPTIONAL,
+ *     ocsp         [1] EXPLICIT SEQUENCE OF OCSPResponse OPTIONAL,
+ *     otherRevInfo [2] EXPLICIT SEQUENCE OF OtherRevInfo OPTIONAL }
+ *
+ * Malformed parts are skipped: an unreadable archive yields no data rather
+ * than an error (the signature itself is verified elsewhere).
+ */
+function extractRevocationInfoArchival(signerInfo: pkijs.SignerInfo): CmsArtifacts['archival'] {
+  const out: CmsArtifacts['archival'] = { crls: [], ocsps: [] };
+  const attr = findAttribute(signerInfo.signedAttrs, OID.ADBE_REVOCATION_INFO_ARCHIVAL);
+  const archive = attr?.values[0];
+  if (!(archive instanceof asn1js.Sequence)) return out;
+  for (const part of archive.valueBlock.value) {
+    if (part.idBlock.tagClass !== 3) continue;
+    const inner = (part as asn1js.Constructed).valueBlock.value?.[0];
+    if (!(inner instanceof asn1js.Sequence)) continue;
+    for (const item of inner.valueBlock.value) {
+      try {
+        const der = new Uint8Array(item.toBER(false));
+        if (part.idBlock.tagNumber === 0) out.crls.push(...parseCrls([der]));
+        else if (part.idBlock.tagNumber === 1) out.ocsps.push(...parseOcspResponses([der]));
+      } catch {
+        // skip unreadable entries
+      }
+    }
+  }
+  return out;
 }

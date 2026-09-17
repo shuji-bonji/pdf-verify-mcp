@@ -79,7 +79,7 @@ describe('trust chain evaluation', () => {
 describe('revocation checking (embedded)', () => {
   it('good when an embedded CRL does not list the signer', async () => {
     const crl = await createCrl(ca, []);
-    const pdf = await createSignedPdf(leaf, { dss: { crls: [crl] } });
+    const pdf = await createSignedPdf(leaf, { dss: { crls: [crl] }, cms: { certificates: [ca] } });
     const parsed = await parsePdfBytes(pdf);
     const [report] = await verifySignatures(parsed);
 
@@ -87,14 +87,15 @@ describe('revocation checking (embedded)', () => {
     expect(report.revocation?.source).toBe('crl_embedded');
   });
 
-  it('revoked (and verdict invalid) when the embedded CRL lists the signer', async () => {
+  it('revoked without a timestamp: verdict indeterminate (v0.27.0, was invalid)', async () => {
     const crl = await createCrl(ca, [leaf.certificate.serialNumber]);
-    const pdf = await createSignedPdf(leaf, { dss: { crls: [crl] } });
+    const pdf = await createSignedPdf(leaf, { dss: { crls: [crl] }, cms: { certificates: [ca] } });
     const parsed = await parsePdfBytes(pdf);
     const [report] = await verifySignatures(parsed);
 
     expect(report.revocation?.status).toBe(RevocationStatus.REVOKED);
-    expect(report.verdict).toBe(Verdict.INVALID);
+    expect(report.revocation?.revocationTime).toBeTruthy();
+    expect(report.verdict).toBe(Verdict.INDETERMINATE);
   });
 
   it('unknown when no revocation data exists and mode is embedded', async () => {
