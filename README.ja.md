@@ -68,6 +68,16 @@ PDF の**真正性・準拠性検証**に特化した MCP サーバ — 電子�
 
 `check_revocation` で失効確認を制御します: `embedded`（デフォルト — PDF の DSS や CMS 内の OCSP/CRL）、`online`（さらに OCSP レスポンダ・CRL 配布点へ HTTP 照会）、`none`。署名者証明書が失効している場合、verdict は `invalid` になります。online モードでは、発行者証明書が未同梱の場合に AIA caIssuers から取得してチェーンを補完します（v0.4）。アンカー指定時は RFC 3161 タイムスタンプの TSA 証明書チェーンも評価します（`tsaTrust`）。
 
+| 段 | 確かめること | 通信 |
+| --- | --- | --- |
+| 完全性 | `/ByteRange` のハッシュと CMS の `messageDigest` の一致 | なし |
+| 署名値 | 署名者証明書の公開鍵による署名値の検証 | なし |
+| 証明書チェーン | トラストアンカーまでたどれるか | `online` のときだけ AIA caIssuers から発行者証明書を取得 |
+| 失効 | 署名者証明書の OCSP / CRL | `embedded` はなし。`online` は埋め込みで答えが出ないときに HTTP で照会 |
+| タイムスタンプ | RFC 3161 トークンと TSA 署名の検証 | なし |
+
+`verdict: valid` は完全性と署名値が通ったことを表します（失効が `revoked` なら `invalid`）。`online` の結果は問い合わせた時点の CA の状態で、日をおくと変わることがあります。各段の詳細とモードの選び方は[サイトの解説](https://shuji-bonji.github.io/pdf-agent-stack/ja/mcp/pdf-verify#署名の検証で確かめること)にあります。
+
 > トラストアンカー未指定時は `trust: not_evaluated` のままです。その場合の `valid` は「暗号学的な完全性」であり、署名者の身元保証ではありません。
 
 暗号化PDFは、権限制御型（user password 空）なら自動復号します。閲覧パスワード型は `password` を渡してください。対応: RC4（R2–R4）、AES-128、AES-256（R6）。復号により文字列メタデータ（フィールド名・/M・/Reason・/Location）と XMP を復元します。署名の `/Contents` は暗号化対象外なので、検証は復号の成否に依存しません。

@@ -73,6 +73,16 @@ Pass `trust_anchors` (PEM/DER file paths) or set the `PDF_VERIFY_TRUST_ANCHORS` 
 
 `check_revocation` controls revocation checking: `embedded` (default — OCSP/CRL data inside the PDF's DSS or the CMS payload), `online` (additionally query OCSP responders and CRL distribution points over HTTP), or `none`. A revoked signer certificate forces verdict `invalid`. In online mode, missing issuer certificates are fetched via AIA caIssuers to complete the chain (v0.4). When anchors are provided, TSA certificate chains of RFC 3161 timestamps are evaluated too (`tsaTrust`).
 
+| Step | What is checked | Network |
+| --- | --- | --- |
+| Integrity | `/ByteRange` hash matches the CMS `messageDigest` | none |
+| Signature value | Signature value verifies with the signer certificate's public key | none |
+| Certificate chain | Chains up to a trust anchor | `online` only: issuer certificates fetched via AIA caIssuers |
+| Revocation | OCSP / CRL for the signer certificate | none under `embedded`; under `online`, HTTP queries when embedded data gives no answer |
+| Timestamp | RFC 3161 token and TSA signature | none |
+
+`verdict: valid` means integrity and signature value passed (`revoked` turns it into `invalid`). `online` results reflect the CA's state at query time and can change later. See the [site guide](https://shuji-bonji.github.io/pdf-agent-stack/mcp/pdf-verify#what-signature-verification-checks) for each step and how to choose a mode.
+
 > Without trust anchors, `trust` stays `not_evaluated` and a `valid` verdict asserts cryptographic integrity, not signer identity.
 
 Encrypted PDFs are decrypted automatically when permission-encrypted (empty user password); pass `password` for reader-password PDFs. Supported: RC4 (R2–R4), AES-128, AES-256 (R6). Decryption recovers string metadata (field name, /M, /Reason, /Location) and XMP — a signature's `/Contents` is exempt from encryption, so verification never depends on it.
