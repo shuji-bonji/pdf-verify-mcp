@@ -7,6 +7,7 @@ import { toReadingScope } from '@normativepdf/recover';
 import type * as pkijs from 'pkijs';
 import {
   DOCMDP_PERMISSIONS,
+  MAX_REVISIONS,
   PadesLevel,
   RevocationMode,
   RevocationStatus,
@@ -30,9 +31,11 @@ import type {
   RevisionSummary,
   SignatureField,
   SignatureVerificationReport,
+  Truncation,
   TrustResult,
   ValidationTime,
 } from '../types.js';
+import { capArray } from '../utils/truncation.js';
 import {
   extractCmsArtifacts,
   verifyCms,
@@ -62,6 +65,12 @@ function bytesAfterRange(fileSize: number, byteRange: number[] | null): number |
 }
 
 export interface VerifyOptions {
+  /**
+   * Verify only the first N signature fields (v0.29.0, #18). Fields beyond
+   * are not verified at all — the caller reports them as truncated.
+   * Omit to verify every field (evaluate_policy does).
+   */
+  maxSignatures?: number;
   /** PEM/DER file paths for trust anchors (merged with PDF_VERIFY_TRUST_ANCHORS) */
   trustAnchorPaths?: string[];
   /** Revocation checking mode (default: embedded) */
@@ -197,8 +206,12 @@ export async function verifySignatures(
   const dssOcsps = tagOcsps(parseOcspResponses(parsed.dss?.ocsps ?? []), 'dss');
   const dssCrls = tagCrls(parseCrls(parsed.dss?.crls ?? []), 'dss');
   const docProofs = await collectDocTimestampProofs(parsed, trustStore.certificates, dssCerts);
+  const fields =
+    options.maxSignatures === undefined
+      ? parsed.signatures
+      : parsed.signatures.slice(0, options.maxSignatures);
 
-  for (const sig of parsed.signatures) {
+  for (const sig of fields) {
     const notes: string[] = [];
     const report: SignatureVerificationReport = {
       fieldName: sig.fieldName,
@@ -805,6 +818,16 @@ async function analyze(parsed: ParsedPdf): Promise<Omit<IntegrityReport, 'scope'
     );
   }
 
+  // v0.29.0 (#18): list the newest MAX_REVISIONS; the walk itself is not shortened
+  const cappedRevisions: { items: RevisionSummary[] | null; truncated: Truncation | null } = diff
+    ? capArray(diff.revisions, MAX_REVISIONS)
+    : { items: null, truncated: null };
+  if (cappedRevisions.truncated) {
+    notes.push(
+      `The chain has ${cappedRevisions.truncated.total} revisions; only the newest ${cappedRevisions.truncated.returned} are listed (revisionsTruncated). revisionCount and revisionChain cover all of them.`,
+    );
+  }
+
   return {
     fileSize: parsed.fileSize,
     revisionCount: parsed.revisionCount,
@@ -814,7 +837,8 @@ async function analyze(parsed: ParsedPdf): Promise<Omit<IntegrityReport, 'scope'
     certification,
     lastSignatureCoversFile: lastCovers,
     hasDss: parsed.hasDss,
-    revisions: diff?.revisions ?? null,
+    revisions: cappedRevisions.items,
+    revisionsTruncated: cappedRevisions.truncated,
     revisionChain: chainCoverage(diff),
     revisionCountAgreement: reconcileRevisionCount(diff, parsed.revisionCount),
     objectChangesAfterLastSignature,

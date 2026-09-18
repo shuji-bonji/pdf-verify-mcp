@@ -67,6 +67,10 @@ A bare stream with no `/Type` is treated as *not determined* rather than as `con
 bytes could be a form field's appearance stream (which P=2 permits) or a page's content stream
 (which no P permits).
 
+## Response size (v0.29.0)
+
+A JSON response is never cut by length. Lists are capped instead, and every cut is reported next to the list as `{ returned, total }`: `signatures` / `levels` at 32 (`verify_signatures` does not verify the fields beyond the cap; `evaluate_policy` verifies all and caps only `facts.signatures`), `revisions` at 32, `violations` / `results` at 200 (counts such as `compliant`, `failedRules`, `violations`, `notDecided` cover all entries). A markdown response is cut at 50,000 characters with a visible marker.
+
 ## Trust & revocation (v0.2)
 
 Pass `trust_anchors` (PEM/DER file paths) or set the `PDF_VERIFY_TRUST_ANCHORS` env var (a directory of certificates) to evaluate the signer's chain: results are `trusted` / `untrusted` / `not_evaluated` with the certificate path. The validation time is a verified signature timestamp, else the earliest document timestamp covering the signature, else the current time (v0.27.0); the CMS `signingTime` attribute is written by the signer and is not used. The chosen time is reported as `validationTime`.

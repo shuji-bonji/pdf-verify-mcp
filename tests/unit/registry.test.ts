@@ -65,16 +65,13 @@ const EXPECTED_PROPERTIES: Record<string, string[]> = {
   ],
 };
 
-/** ネットワークに出る可能性があるのは verify_signatures だけ（check_revocation: 'online'）。 */
-const OPEN_WORLD: Record<string, boolean> = {
-  verify_signatures: true,
-  verify_integrity: false,
-  detect_pades_level: false,
-  identify_conformance: false,
-  validate_conformance: false,
-  validate_clauses: false,
-  evaluate_policy: false,
-};
+/**
+ * ネットワークに出る可能性があるのは `check_revocation` を受け取るツール
+ * （'online' で OCSP / CRL / AIA に問い合わせる）。手書きの表ではなく引数の有無から
+ * 導く —— #19 で evaluate_policy の表が実装と食い違っていた。
+ */
+const openWorldExpected = (tool: ListedTool): boolean =>
+  Object.hasOwn(tool.inputSchema.properties ?? {}, 'check_revocation');
 
 interface ListedTool {
   name: string;
@@ -157,7 +154,7 @@ describe('tool registry (external spec)', () => {
     for (const tool of listed) {
       expect(tool.annotations, tool.name).toBeDefined();
       expect(tool.annotations?.readOnlyHint, tool.name).toBe(true);
-      expect(tool.annotations?.openWorldHint, tool.name).toBe(OPEN_WORLD[tool.name]);
+      expect(tool.annotations?.openWorldHint, tool.name).toBe(openWorldExpected(tool));
     }
   });
 });

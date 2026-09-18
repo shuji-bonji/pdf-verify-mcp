@@ -2,6 +2,62 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.29.0]　- 2026-09-18
+
+**JSON の応答を文字数で切らなくなった（#18）。** ほかに golden.mjs の落ち（#17）と
+`evaluate_policy` の `openWorldHint`（#19）を直した。出力の項目が増えるので 0.29.0。
+
+### Changed
+
+- **`response_format: "json"` は文字数で切らない（#18）。** 0.28.0 までは全ツールが本文を
+  25,000 文字で切っていて、JSON が構造の途中で切れ、`isError: false` のまま `JSON.parse`
+  できない本文が届いていた（esig/dss の `51sigs.pdf` で 3 ツール、`lt-short.pdf` で 2 ツール）。
+  JSON の大きさは、配列ごとの件数上限で抑える。切ったときは配列の隣に
+  `{ returned, total }` を出す（先頭から残す）。
+
+  | ツール                 | 配列               | 上限           | 切ったときの印              | 上限の先                                 |
+  | ---------------------- | ------------------ | -------------- | --------------------------- | ---------------------------------------- |
+  | `verify_signatures`    | `signatures`       | 32             | `signaturesTruncated`       | **検証しない**（重いため）               |
+  | `evaluate_policy`      | `facts.signatures` | 32             | `facts.signaturesTruncated` | **全件検証して判定**。一覧だけ切る       |
+  | `detect_pades_level`   | `levels`           | 32             | `levelsTruncated`           | 一覧だけ切る                             |
+  | `verify_integrity`     | `revisions`        | 32（新しい順） | `revisionsTruncated`        | `revisionCount` / `revisionChain` は全件 |
+  | `validate_conformance` | `violations`       | 200            | `violationsTruncated`       | `compliant` / `failedRules` は全件       |
+  | `validate_clauses`     | `results`          | 200            | `resultsTruncated`          | `violations` / `notDecided` は全件       |
+
+  上限の根拠: 検体 209 件で署名は最大 6 件（51 件は検証器のテスト用）、署名 1 件の報告は
+  約 2,000 字なので、32 件で 100 KB を超えない。
+
+- **markdown の上限を 25,000 → 50,000 文字にした。** 切ったときの印に
+  「use response_format: "json" for the complete report」を添える。
+- **`evaluate_policy` の `openWorldHint` を `true` にした（#19）。** `check_revocation: "online"`
+  で OCSP / CRL / AIA に問い合わせるので、`verify_signatures` と同じ。`registry.test.ts` は
+  手書きの表ではなく「`check_revocation` を受け取るか」から期待値を導くようにした。
+
+### Fixed
+
+- **`scripts/golden.mjs` が `validate_conformance` の `skippedRules`（数値）を配列として読み、
+  `take` が落ちていた（#17）。** 数値のまま凍結する。既存のゴールデンとの diff では
+  `validate_conformance.kept.skipped` が `[]` → `0` で全件差になる（判定の差ではない）。
+
+### 実測
+
+検体 209 件で 0.28.0 と A/B。判定（verdict・trust・revocation・compliant・byStatus）が
+動いた検体は 0。差は次の 3 種類だけ。
+
+- `validate_conformance` 207 件: `skipped` の形（#17）
+- 0.28.0 で JSON が切れて読めなかった 24 応答が読めるようになった
+  （`51sigs.pdf` / `lt-short.pdf` / `DSS-2601.pdf` / `pades-signed-filled-form.pdf` など）
+- 上限に達した一覧: `verify_signatures` 1 件、`verify_integrity` 2 件、`validate_clauses` 10 件
+  （`pades-signed-filled-form.pdf` は `results` 16,981 件）
+
+単体 238 件（Node 20 / 22）・`check`・`typecheck`・`build`・`check:public-types` は緑。
+
+### まだできないこと
+
+- 件数上限は定数で、引数からは変えられない
+- `verify_signatures` で 33 件目以降の署名を個別に見る手段は無い（`evaluate_policy` の判定に
+  含まれるだけ）
+
 ## [0.28.0]　- 2026-09-17
 
 **失効情報の鮮度と、失効情報に署名した証明書を確かめるようにした（#16）。**

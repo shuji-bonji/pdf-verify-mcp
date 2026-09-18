@@ -2,8 +2,29 @@
  * pdf-verify-mcp shared constants
  */
 
-/** Maximum response size in characters */
-export const CHARACTER_LIMIT = 25_000;
+/**
+ * Maximum size of a **markdown** response, in characters (v0.29.0, #18).
+ *
+ * JSON responses are never cut by length: a JSON body cut mid-structure is
+ * unreadable, and `isError` stays false, so the caller finds out only when
+ * `JSON.parse` fails. What bounds a JSON response is the per-array caps below
+ * (`MAX_SIGNATURES`, `MAX_REVISIONS`, `MAX_FINDINGS`), which keep the body
+ * valid and say what was left out. Markdown is read by people, so losing the
+ * tail is tolerable; this limit is the safety net for it.
+ */
+export const CHARACTER_LIMIT = 50_000;
+
+/**
+ * Per-array caps for JSON responses (v0.29.0, #18). Measured on 209 signed
+ * specimens: 1 signature in 100, 2 in 45, at most 6 in real documents; the one
+ * 51-signature file is a validator test case. One signature report is about
+ * 2,000 characters, so 32 keeps `verify_signatures` under 100 KB.
+ */
+export const MAX_SIGNATURES = 32;
+/** Revisions listed by verify_integrity (changes per revision are capped separately) */
+export const MAX_REVISIONS = 32;
+/** Violations / clause results listed by validate_conformance and validate_clauses */
+export const MAX_FINDINGS = 200;
 
 /** Maximum PDF file size in bytes (100MB) */
 export const MAX_FILE_SIZE = 100 * 1024 * 1024;

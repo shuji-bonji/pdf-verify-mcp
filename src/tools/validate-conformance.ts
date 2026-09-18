@@ -10,7 +10,7 @@ import { parsePdf } from '../services/pdf-parser.js';
 import { PDFA_NATIVE_RULE_COUNT } from '../services/pdfa-validator.js';
 import { PDFUA_NATIVE_RULE_COUNT } from '../services/pdfua-validator.js';
 import { handleStructuredError } from '../utils/error-handler.js';
-import { formatConformanceValidation, truncateIfNeeded } from '../utils/formatter.js';
+import { formatConformanceValidation, renderBody } from '../utils/formatter.js';
 
 const ValidateConformanceSchema = z
   .object({
@@ -67,6 +67,8 @@ When veraPDF does not run, the report says so before the numbers: authoritativeV
 Returns:
   Every report begins with a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
 
+  Size (v0.29.0): violations lists at most 200 entries; failedRules and compliant are computed over all of them and violationsTruncated = { returned, total } says when the list was cut. JSON is never cut by length.
+
   Per-rule results with ISO clause references. compliant is true/false for veraPDF; for the native engine, false means definitive violations were found and null means "no violations in the checked subset" (NOT certification). PDF/UA native violations carry a severity: only 'error' rules can prove non-conformance, 'warning' rules need human review. For an encrypted PDF that cannot be decrypted, structure-dependent PDF/UA rules are reported in skippedRules (not checked) rather than as violations. The PDF/A font-embedding rule looks at fonts that are actually rendered (text rendering mode 3 is invisible and needs no embedded program, ISO 32000-2 9.3.6); when the content streams cannot be read far enough to tell, that rule is reported in skippedRules instead of guessing.
 
 Note: PDF/UA cannot be fully decided by machine — whether alt text is *present* is checkable, whether it is *meaningful* is not. Use pdf-reader-mcp's inspect_tags to examine the structure tree itself.
@@ -91,11 +93,9 @@ Examples:
           engine: params.engine,
           password: params.password,
         });
-        const raw =
-          params.response_format === ResponseFormat.JSON
-            ? JSON.stringify(report, null, 2)
-            : formatConformanceValidation(report);
-        const { text } = truncateIfNeeded(raw);
+        const text = renderBody(params.response_format === ResponseFormat.JSON, report, () =>
+          formatConformanceValidation(report),
+        );
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
         const err = handleStructuredError(error);

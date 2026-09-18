@@ -7,7 +7,7 @@ import { type PdfToolInput, PdfToolInputSchema } from '../schemas/common.js';
 import { parsePdf } from '../services/pdf-parser.js';
 import { analyzeIntegrity } from '../services/verification-service.js';
 import { handleStructuredError } from '../utils/error-handler.js';
-import { formatIntegrityReport, truncateIfNeeded } from '../utils/formatter.js';
+import { formatIntegrityReport, renderBody } from '../utils/formatter.js';
 
 export function registerVerifyIntegrity(server: McpServer): void {
   server.registerTool(
@@ -40,6 +40,8 @@ Args:
 Returns:
   Every report begins with a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
 
+  Size (v0.29.0): revisions lists at most 32 revisions (newest first) and 25 changes per revision; revisionsTruncated / changesTruncated say when a list was cut. revisionCount and revisionChain cover the whole walk. JSON is never cut by length.
+
   Integrity report, including revisionChain: { status, missing } — read it before treating the revision list as the file's whole history — and revisionCountAgreement: { status, causes } — read it before quoting revisionCount as the number of times the file was saved. Note that incremental updates after signing are legal in PDF (adding signatures, DSS/LTV data) — findings indicate what to review, not automatically tampering.
 
 Examples:
@@ -58,11 +60,9 @@ Examples:
       try {
         const parsed = await parsePdf(params.file_path);
         const report = await analyzeIntegrity(parsed);
-        const raw =
-          params.response_format === ResponseFormat.JSON
-            ? JSON.stringify(report, null, 2)
-            : formatIntegrityReport(report);
-        const { text } = truncateIfNeeded(raw);
+        const text = renderBody(params.response_format === ResponseFormat.JSON, report, () =>
+          formatIntegrityReport(report),
+        );
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
         const err = handleStructuredError(error);

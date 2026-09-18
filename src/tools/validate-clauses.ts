@@ -7,7 +7,7 @@ import { ResponseFormat } from '../constants.js';
 import { PdfToolInputShape } from '../schemas/common.js';
 import { listClauseDomains, validateClauses } from '../services/clause-validation.js';
 import { handleStructuredError } from '../utils/error-handler.js';
-import { formatClauseValidation, truncateIfNeeded } from '../utils/formatter.js';
+import { formatClauseValidation, renderBody } from '../utils/formatter.js';
 
 const ValidateClausesSchema = z
   .object({
@@ -56,6 +56,8 @@ Args:
 Returns:
   Every report begins with a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
 
+  Size (v0.29.0): results lists at most 200 entries (file order); violations and notDecided are counted over all of them and resultsTruncated = { returned, total } says when the list was cut. JSON is never cut by length.
+
   Per-constraint results with the clause IDs they come from. Four states:
   - pass — nothing in this constraint could be disproved
   - fail — disproved, with the fact and its measured value as evidence
@@ -88,11 +90,9 @@ Examples:
           domains: params.domains,
           given: params.given,
         });
-        const raw =
-          params.response_format === ResponseFormat.JSON
-            ? JSON.stringify(report, null, 2)
-            : formatClauseValidation(report);
-        const { text } = truncateIfNeeded(raw);
+        const text = renderBody(params.response_format === ResponseFormat.JSON, report, () =>
+          formatClauseValidation(report),
+        );
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
         const err = handleStructuredError(error);

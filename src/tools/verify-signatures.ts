@@ -4,13 +4,13 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { toReadingScope } from '@normativepdf/recover';
 import { z } from 'zod';
-import { ResponseFormat, RevocationMode } from '../constants.js';
+import { MAX_SIGNATURES, ResponseFormat, RevocationMode } from '../constants.js';
 import { PdfToolInputShape, RevocationOptionShape } from '../schemas/common.js';
 import { parsePdf } from '../services/pdf-parser.js';
 import { verifySignatures } from '../services/verification-service.js';
 import type { SignatureVerificationResult } from '../types.js';
 import { handleStructuredError } from '../utils/error-handler.js';
-import { formatSignatureReports, truncateIfNeeded } from '../utils/formatter.js';
+import { formatSignatureReports, renderBody } from '../utils/formatter.js';
 
 const VerifySignaturesSchema = z
   .object({
@@ -68,6 +68,8 @@ Args:
 Returns:
   An object of the form { scope, signatures: [...] }. The top level changed from an array to an object in v0.21.0 - read .signatures for the list.
 
+  Size (v0.29.0): a JSON response is never cut by length. At most 32 signature fields are verified (file order); when the file has more, signaturesTruncated = { returned, total } is set and the remaining fields are NOT verified — evaluate_policy verifies every field. A markdown response is cut at 50,000 characters with a visible marker.
+
   Every report begins with a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table. For this tool it matters most: when scope.reconstructed is true, a signature the rebuild did not reach is absent from the list, so a short or empty list is not proof that the file carries no other signatures.
 
   Per-signature verdict ('valid' / 'invalid' / 'indeterminate'), trust status ('trusted' / 'untrusted' / 'not_evaluated' with certificate path), revocation status ('good' / 'revoked' / 'revoked_after_validation_time' / 'unknown' / 'not_checked'; 'not_checked' when check_revocation is 'none') with source, origin ('dss' / 'cms_signed_data' / 'cms_revocation_info_archival'), revocationTime, thisUpdate and nextUpdate, per-intermediate-CA results in trust.chainRevocation, validationTime ({ time, source: 'signature_timestamp' | 'document_timestamp' | 'current_time' }), and signature timestamp verification.
@@ -96,20 +98,25 @@ Examples:
         const parsed = await parsePdf(params.file_path, { password: params.password });
         // 🔴 0.21.0 で最上位を配列から辞書にした。署名の一覧と、その一覧が
         // どこまでを見たものかを、同じ場所で読めるようにするため。
+        // v0.29.0 (#18): fields beyond MAX_SIGNATURES are not verified; the
+        // cut is reported next to the list so the JSON stays whole and honest.
+        const fieldCount = parsed.signatures.length;
+        const signatures = await verifySignatures(parsed, {
+          trustAnchorPaths: params.trust_anchors,
+          revocationMode: params.check_revocation,
+          revocationFreshnessSeconds: params.revocation_freshness,
+          trustedOcspResponderPaths: params.trusted_ocsp_responders,
+          maxSignatures: MAX_SIGNATURES,
+        });
         const result: SignatureVerificationResult = {
           scope: toReadingScope(parsed.scope),
-          signatures: await verifySignatures(parsed, {
-            trustAnchorPaths: params.trust_anchors,
-            revocationMode: params.check_revocation,
-            revocationFreshnessSeconds: params.revocation_freshness,
-            trustedOcspResponderPaths: params.trusted_ocsp_responders,
-          }),
+          signatures,
+          signaturesTruncated:
+            fieldCount > MAX_SIGNATURES ? { returned: signatures.length, total: fieldCount } : null,
         };
-        const raw =
-          params.response_format === ResponseFormat.JSON
-            ? JSON.stringify(result, null, 2)
-            : formatSignatureReports(result);
-        const { text } = truncateIfNeeded(raw);
+        const text = renderBody(params.response_format === ResponseFormat.JSON, result, () =>
+          formatSignatureReports(result),
+        );
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
         const err = handleStructuredError(error);

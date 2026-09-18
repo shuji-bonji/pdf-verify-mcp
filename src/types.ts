@@ -25,6 +25,12 @@ export interface SignatureVerificationResult {
   /** どこまで読んだか。**判定ではない。** */
   scope: ReadingScope;
   signatures: SignatureVerificationReport[];
+  /**
+   * Set when the file holds more signature fields than `MAX_SIGNATURES`
+   * (v0.29.0). The fields beyond the cap were **not verified**: nothing is
+   * said about them. `evaluate_policy` verifies every field regardless.
+   */
+  signaturesTruncated: Truncation | null;
 }
 
 /**
@@ -35,6 +41,19 @@ export interface PadesLevelResult {
   /** どこまで読んだか。**判定ではない。** */
   scope: ReadingScope;
   levels: PadesLevelReport[];
+  /** Set when more signatures exist than `MAX_SIGNATURES` (v0.29.0); the rest were not examined */
+  levelsTruncated: Truncation | null;
+}
+
+/**
+ * A list that was cut to a fixed cap (v0.29.0, #18). `null` when nothing was
+ * cut. `total` is the count before cutting; `returned` the count in the list.
+ * The cut is always from the front of the list (file order), so what is
+ * returned is the first `returned` items.
+ */
+export interface Truncation {
+  returned: number;
+  total: number;
 }
 
 /** Result of trust chain evaluation against trust anchors */
@@ -257,6 +276,13 @@ export interface IntegrityReport {
    * (ISO 32000-2 §7.5.6); the list says what to look at, not what is wrong.
    */
   revisions: RevisionSummary[] | null;
+  /**
+   * Set when the walked chain has more revisions than `MAX_REVISIONS`
+   * (v0.29.0). `revisions` then holds the newest `returned` ones; the older
+   * ones were walked (they count in `revisionCount` and `revisionChain`) but
+   * are not listed.
+   */
+  revisionsTruncated: Truncation | null;
   /**
    * Whether `revisions` above is the whole history (v0.16+, V-F6).
    *

@@ -9,7 +9,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { toReadingScope } from '@normativepdf/recover';
 import { z } from 'zod';
-import { ResponseFormat, RevocationMode, ValidationEngine } from '../constants.js';
+import { MAX_SIGNATURES, ResponseFormat, RevocationMode, ValidationEngine } from '../constants.js';
 import { PdfToolInputShape, RevocationOptionShape } from '../schemas/common.js';
 import { extractPdfaId } from '../services/conformance.js';
 import type { ConformanceValidationReport } from '../services/conformance-validation.js';
@@ -26,8 +26,9 @@ import {
   verifySignatures,
 } from '../services/verification-service.js';
 import { handleStructuredError } from '../utils/error-handler.js';
-import { formatPolicyReport, truncateIfNeeded } from '../utils/formatter.js';
+import { formatPolicyReport, renderBody } from '../utils/formatter.js';
 import { logger } from '../utils/logger.js';
+import { capArray } from '../utils/truncation.js';
 
 const CONTEXT = 'evaluate-policy';
 
@@ -97,6 +98,8 @@ Args:
 Returns:
   Every report begins with a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
 
+  Size (v0.29.0): the verdict is computed over EVERY signature; facts.signatures lists at most 32 of them and facts.signaturesTruncated = { returned, total } says when it was cut. JSON is never cut by length.
+
   verdict, firedRules (rule IDs with per-rule verdict and reason), advisories (recommendations that do not affect the verdict), and the underlying facts summary.
 
 Examples:
@@ -108,7 +111,8 @@ Examples:
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
-        openWorldHint: false,
+        // check_revocation='online' may reach OCSP/CRL endpoints (v0.29.0, #19)
+        openWorldHint: true,
       },
     },
     async (params: EvaluatePolicyInput) => {
@@ -154,19 +158,26 @@ Examples:
           );
         }
 
+        const factSignatures = capArray(
+          signatures.map((s) => ({
+            fieldName: s.fieldName,
+            verdict: s.verdict,
+            trust: s.trust.status,
+            revocation: s.revocation?.status ?? null,
+            isDocumentTimestamp: s.isDocumentTimestamp,
+          })),
+          MAX_SIGNATURES,
+        );
         const report = {
           // どこまで読んだかを先に置く。判定はそのあと。
           scope: toReadingScope(parsed.scope),
           ...evaluation,
           facts: {
             signatureCount: signatures.filter((s) => !s.isDocumentTimestamp).length,
-            signatures: signatures.map((s) => ({
-              fieldName: s.fieldName,
-              verdict: s.verdict,
-              trust: s.trust.status,
-              revocation: s.revocation?.status ?? null,
-              isDocumentTimestamp: s.isDocumentTimestamp,
-            })),
+            // v0.29.0 (#18): the verdict above was computed over every
+            // signature; only this listing is capped.
+            signatures: factSignatures.items,
+            signaturesTruncated: factSignatures.truncated,
             revisionCount: integrity.revisionCount,
             incrementalUpdateCount: integrity.incrementalUpdateCount,
             lastSignatureCoversFile: integrity.lastSignatureCoversFile,
@@ -190,11 +201,9 @@ Examples:
           },
         };
 
-        const raw =
-          params.response_format === ResponseFormat.JSON
-            ? JSON.stringify(report, null, 2)
-            : formatPolicyReport(report);
-        const { text } = truncateIfNeeded(raw);
+        const text = renderBody(params.response_format === ResponseFormat.JSON, report, () =>
+          formatPolicyReport(report),
+        );
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
         const err = handleStructuredError(error);

@@ -19,9 +19,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { toReadingScope } from '@normativepdf/recover';
 import type { CosDict } from 'normativepdf';
-import { ValidationEngine, VERAPDF_ENV } from '../constants.js';
-import type { ParsedPdf, ReadingScope } from '../types.js';
+import { MAX_FINDINGS, ValidationEngine, VERAPDF_ENV } from '../constants.js';
+import type { ParsedPdf, ReadingScope, Truncation } from '../types.js';
 import { PdfVerifyError } from '../utils/error-handler.js';
+import { capArray } from '../utils/truncation.js';
 import { extractPdfaId, extractPdfuaPart } from './conformance.js';
 import { loadPdfDocument } from './pdf-parser.js';
 import { type PdfaFlavour, resolveFlavour, validatePdfaNative } from './pdfa-validator.js';
@@ -89,6 +90,12 @@ export interface ConformanceValidationReport {
    */
   skippedRules?: number;
   violations: ConformanceViolation[];
+  /**
+   * Set when more violations were found than `MAX_FINDINGS` (v0.29.0). The
+   * counts (`failedRules`, `compliant`) are computed over all of them; only
+   * the list is cut.
+   */
+  violationsTruncated: Truncation | null;
   notes: string[];
 }
 
@@ -231,9 +238,14 @@ export async function validateConformance(
   filePath: string,
   options: ValidateConformanceOptions = {},
 ): Promise<ConformanceValidationReport> {
+  const inner = await validate(parsed, filePath, options);
+  // v0.29.0 (#18): the counts above are over every violation; only the list is capped
+  const capped = capArray(inner.violations, MAX_FINDINGS);
   return {
     scope: toReadingScope(parsed.scope),
-    ...(await validate(parsed, filePath, options)),
+    ...inner,
+    violations: capped.items,
+    violationsTruncated: capped.truncated,
   };
 }
 
@@ -241,7 +253,7 @@ async function validate(
   parsed: ParsedPdf,
   filePath: string,
   options: ValidateConformanceOptions = {},
-): Promise<Omit<ConformanceValidationReport, 'scope'>> {
+): Promise<Omit<ConformanceValidationReport, 'scope' | 'violationsTruncated'>> {
   const notes: string[] = [];
 
   const engineChoice = options.engine ?? ValidationEngine.AUTO;
@@ -352,7 +364,7 @@ async function validatePdfua(
   veraPath: string | null,
   notes: string[],
   status: AuthoritativeValidation,
-): Promise<Omit<ConformanceValidationReport, 'scope'>> {
+): Promise<Omit<ConformanceValidationReport, 'scope' | 'violationsTruncated'>> {
   // Issue #7: an encrypted document's structures (object streams, strings)
   // are ciphertext — validating them as-is produces false findings. Rebuild a
   // plaintext document first (the empty user password covers

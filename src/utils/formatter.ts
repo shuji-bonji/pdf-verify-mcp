@@ -14,14 +14,29 @@ import type {
   RevisionChainCoverage,
   RevisionObjectChange,
   SignatureVerificationResult,
+  Truncation,
 } from '../types.js';
+import { truncationLine } from './truncation.js';
 
+/**
+ * Cut a **markdown** body to CHARACTER_LIMIT. Never call this on JSON: a JSON
+ * body is bounded by the per-array caps (utils/truncation.ts) and must stay
+ * parseable (v0.29.0, #18).
+ */
 export function truncateIfNeeded(text: string): { text: string; truncated: boolean } {
   if (text.length <= CHARACTER_LIMIT) return { text, truncated: false };
   return {
-    text: `${text.slice(0, CHARACTER_LIMIT)}\n\n…(truncated)`,
+    text: `${text.slice(0, CHARACTER_LIMIT)}\n\n…(truncated — use response_format: "json" for the complete report)`,
     truncated: true,
   };
+}
+
+/**
+ * The body a tool returns: markdown goes through the character limit, JSON
+ * goes out as is (v0.29.0, #18).
+ */
+export function renderBody(json: boolean, value: unknown, markdown: () => string): string {
+  return json ? JSON.stringify(value, null, 2) : truncateIfNeeded(markdown()).text;
 }
 
 function yesNo(value: boolean | null | undefined): string {
@@ -122,7 +137,14 @@ export function formatSignatureReports(result: SignatureVerificationResult): str
   }
   const lines: string[] = ['# Signature Verification', ''];
   lines.push(...scope, '');
-  lines.push(`Signatures found: ${reports.length}`, '');
+  lines.push(`Signatures found: ${reports.length}`);
+  lines.push(
+    ...truncationLine(
+      'Signature fields verified (the rest were NOT verified; evaluate_policy verifies all)',
+      result.signaturesTruncated,
+    ),
+  );
+  lines.push('');
   reports.forEach((r, i) => {
     lines.push(
       `## ${i + 1}. ${r.fieldName ?? '(unnamed field)'}${r.isDocumentTimestamp ? ' [DocTimeStamp]' : ''}`,
@@ -261,6 +283,7 @@ export function formatIntegrityReport(report: IntegrityReport): string {
   }
   if (report.revisions && report.revisions.length > 1) {
     lines.push('', '## Revisions (object-level)');
+    lines.push(...truncationLine('Revisions listed (newest first)', report.revisionsTruncated));
     lines.push(
       'Incremental updates are legal in PDF (ISO 32000-2 §7.5.6). The objects below say **what to review**, not that anything is wrong.',
     );
@@ -328,6 +351,7 @@ interface PolicyReportForFormat {
       revocation: string | null;
       isDocumentTimestamp: boolean;
     }[];
+    signaturesTruncated: Truncation | null;
     revisionCount: number;
     incrementalUpdateCount: number;
     lastSignatureCoversFile: boolean | null;
@@ -363,6 +387,12 @@ export function formatPolicyReport(report: PolicyReportForFormat): string {
   }
   if (report.facts.signatures.length > 0) {
     lines.push('', '## Signature facts');
+    lines.push(
+      ...truncationLine(
+        'Signatures listed (the verdict covers all)',
+        report.facts.signaturesTruncated,
+      ),
+    );
     for (const s of report.facts.signatures) {
       const kind = s.isDocumentTimestamp ? ' (document timestamp)' : '';
       lines.push(
@@ -425,6 +455,7 @@ export function formatPadesReports(result: PadesLevelResult): string {
     '> **Observation, not a conformance verdict.** ETSI EN 319 142 is not in this corpus and there is',
     '> no third-party validator for it, so what follows is which baseline the *structure* matches —',
     '> read as evidence, and do not restate it as "conforms to PAdES".',
+    ...truncationLine('Signatures examined', result.levelsTruncated),
     '',
   ];
   lines.push(...scope, '');
@@ -491,6 +522,9 @@ export function formatConformanceValidation(
   );
   if (report.violations.length > 0) {
     lines.push('', '## Violations');
+    lines.push(
+      ...truncationLine('Violations listed (counts above cover all)', report.violationsTruncated),
+    );
     for (const v of report.violations) {
       const sev = v.severity ? `[${v.severity}] ` : '';
       lines.push(`- ${sev}**${v.ruleId}** (${v.clause}): ${v.description}`);
@@ -556,6 +590,9 @@ export function formatClauseValidation(
   const failed = report.results.filter((r) => r.status === 'fail');
   if (failed.length > 0) {
     lines.push('', '## Failures');
+    lines.push(
+      ...truncationLine('Results listed (counts above cover all)', report.resultsTruncated),
+    );
     for (const result of failed) {
       for (const failure of result.failures ?? []) {
         // 主語が processor の条文は「違反」と断定しない（specs/18 §1）

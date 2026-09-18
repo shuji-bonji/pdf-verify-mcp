@@ -7,7 +7,7 @@ import { type PdfToolInput, PdfToolInputSchema } from '../schemas/common.js';
 import { identifyConformance } from '../services/conformance.js';
 import { parsePdf } from '../services/pdf-parser.js';
 import { handleStructuredError } from '../utils/error-handler.js';
-import { formatConformanceReport, truncateIfNeeded } from '../utils/formatter.js';
+import { formatConformanceReport, renderBody } from '../utils/formatter.js';
 
 export function registerIdentifyConformance(server: McpServer): void {
   server.registerTool(
@@ -42,11 +42,9 @@ Examples:
       try {
         const parsed = await parsePdf(params.file_path);
         const report = identifyConformance(parsed);
-        const raw =
-          params.response_format === ResponseFormat.JSON
-            ? JSON.stringify(report, null, 2)
-            : formatConformanceReport(report);
-        const { text } = truncateIfNeeded(raw);
+        const text = renderBody(params.response_format === ResponseFormat.JSON, report, () =>
+          formatConformanceReport(report),
+        );
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
         const err = handleStructuredError(error);

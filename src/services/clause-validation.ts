@@ -17,9 +17,11 @@
 import { readFile } from 'node:fs/promises';
 import { openDocument, toReadingScope } from '@normativepdf/recover';
 import { checkFile, listTables } from '@shuji-bonji/pdf-constraints';
-import type { ReadingScope } from '../types.js';
+import { MAX_FINDINGS } from '../constants.js';
+import type { ReadingScope, Truncation } from '../types.js';
 import { toStructuralRefusal } from '../utils/error-handler.js';
 import { logger } from '../utils/logger.js';
+import { capArray } from '../utils/truncation.js';
 
 /** 収録済み制約 1 件の結果（pdf-constraints の 4 状態をそのまま運ぶ） */
 export interface ClauseResult {
@@ -82,6 +84,12 @@ export interface ClauseValidationReport {
   observation: ClauseObservation;
   subjects: number;
   results: ClauseResult[];
+  /**
+   * Set when more results exist than `MAX_FINDINGS` (v0.29.0). `violations`
+   * and `notDecided` are counted over all results; only the list is cut
+   * (file order kept).
+   */
+  resultsTruncated: Truncation | null;
   /** fail した表明の総数（制約数ではない） */
   violations: number;
   /** 外部事実が無くて判定に到達しなかった制約の数 */
@@ -182,13 +190,16 @@ export async function validateClauses(
     );
   }
 
+  // v0.29.0 (#18): list capped (file order kept), counts over all results
+  const capped = capArray(results, MAX_FINDINGS);
   return {
     scope,
     constraintsVersion: report.packageVersion,
     tables: report.tables,
     observation: report.observation,
+    resultsTruncated: capped.truncated,
     subjects: report.subjects,
-    results,
+    results: capped.items,
     violations: report.violations,
     notDecided,
     notes,

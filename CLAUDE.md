@@ -41,7 +41,8 @@ PDF の**真正性・準拠性**を判定する MCP サーバ。PDF family に�
 
 ```
 index.ts（stdout-guard を最初に import）→ tools/index.ts で全ツール登録
-  各 tools/*.ts : zod スキーマ + ハンドラ（parse → service → format → truncate）
+  各 tools/*.ts : zod スキーマ + ハンドラ（parse → service → renderBody）
+    renderBody: json はそのまま・markdown だけ CHARACTER_LIMIT で切る（v0.29.0 / #18）
   services/     : 判定ロジック本体
   utils/        : formatter（markdown 化）・error-handler・logger
 ```
@@ -93,7 +94,17 @@ PDF/A-2a + PDF/UA-1 の両方を宣言する文書は実運用で頻出する。
 flavour 未指定時は **PDF/A を優先**し（後方互換）、PDF/UA を宣言していれば notes で `pdfua-1` を案内する。
 PDF/UA を自動選択するのは「PDF/UA を宣言し、かつ PDF/A を宣言していない」場合のみ。
 
-### 6. reader に依存しない
+### 6. JSON は文字数で切らない（v0.29.0 / #18）
+
+`CHARACTER_LIMIT`（50,000）が掛かるのは **markdown だけ**。JSON を途中で切ると
+`isError: false` のまま読めない本文が届く。JSON の大きさを抑えるのは**配列ごとの件数上限**
+（`MAX_SIGNATURES` 32 / `MAX_REVISIONS` 32 / `MAX_FINDINGS` 200）で、切ったときは
+必ず隣に `xxxTruncated: { returned, total }` を置く。判定（verdict・compliant・byStatus）は
+**全件で計算し、一覧だけを切る**。例外は `verify_signatures` で、上限を超えた署名は
+検証もしない（重いため）—— `evaluate_policy` は全件検証する。新しい配列を返す項目を
+足すときは、この規律に従うこと。
+
+### 7. reader に依存しない
 
 実装版 verify は pdf-reader-mcp 非依存（specs/00 の Pattern A は不採用）。
 この独立性が A2A 時代の生存戦略であり、北極星（PDF 専門 LLM）における

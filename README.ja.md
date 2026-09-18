@@ -62,6 +62,10 @@ PDF の**真正性・準拠性検証**に特化した MCP サーバ — 電子�
 同じバイトが、フォームフィールドの外観ストリーム（P=2 で許される）にも
 ページの内容ストリーム（どの P でも許されない）にもなりうるためです。
 
+## 応答の大きさ（v0.29.0）
+
+`response_format: "json"` の応答は、文字数では切りません。配列に件数の上限を掛け、切ったときは配列の隣に `{ returned, total }` を出します。`signatures` / `levels` は 32 件（`verify_signatures` は上限を超えた署名を検証しません。`evaluate_policy` は全署名を検証し、`facts.signatures` の一覧だけを切ります）、`revisions` は 32 件、`violations` / `results` は 200 件（`compliant`・`failedRules`・`violations`・`notDecided` の数は全件で数えます）。markdown の応答は 50,000 文字で切り、切ったことを本文に示します。
+
 ## 信頼評価と失効確認（v0.2）
 
 `trust_anchors`（PEM/DER ファイルパス配列）を渡すか、環境変数 `PDF_VERIFY_TRUST_ANCHORS`（証明書ディレクトリ）を設定すると、署名者のチェーンを評価します。結果は `trusted` / `untrusted` / `not_evaluated` と証明書パスで報告されます。検証時刻は、検証できた署名タイムスタンプ、この署名を覆う文書タイムスタンプ、現在時刻の順に選びます（v0.27.0）。CMS の `signingTime` 属性は署名者が書く値なので使いません。選んだ時刻は `validationTime` に出ます。

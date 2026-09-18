@@ -246,7 +246,8 @@ function keptOf(tool, raw) {
         passedRules: raw.passedRules ?? null,
         failedRules: raw.failedRules ?? null,
         violations: (raw.violations ?? []).map((v) => v.ruleId).sort(),
-        skipped: (raw.skippedRules ?? []).map((v) => v.ruleId ?? v).sort(),
+        // #17: skippedRules is a count (conformance-validation.ts), not a list
+        skipped: raw.skippedRules ?? 0,
         authPerformed: raw.authoritativeValidation?.performed ?? null,
         authReason: raw.authoritativeValidation?.reason ?? null,
       };
