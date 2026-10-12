@@ -66,6 +66,27 @@ PDF の**真正性・準拠性検証**に特化した MCP サーバ — 電子�
 
 `response_format: "json"` の応答は、文字数では切りません。配列に件数の上限を掛け、切ったときは配列の隣に `{ returned, total }` を出します。`signatures` / `levels` は 32 件（`verify_signatures` は上限を超えた署名を検証しません。`evaluate_policy` は全署名を検証し、`facts.signatures` の一覧だけを切ります）、`revisions` は 32 件、`violations` / `results` は 200 件（`compliant`・`failedRules`・`violations`・`notDecided` の数は全件で数えます）。markdown の応答は 50,000 文字で切り、切ったことを本文に示します。
 
+## `evaluate_policy` の内容目録（v0.30.0）
+
+`evaluate_policy` は、文書が持っている「動くもの」と「途中のもの」も数え、`facts.content` に
+出します。数えるのは ISO 32000-2 §12.8.7 Table 264（legal content attestations）の項目 —
+`JavaScriptActions`・`LaunchActions`・`URIActions`・`GoToRemoteActions`・`HideAnnotationActions`・
+`MovieActions`・`SoundActions` — と、表にはない `SubmitFormActions`、URI のホスト、`/OpenAction` と
+文書の `/AA` の有無、注釈の数、ファイルに残っている `/Subtype /Redact` 注釈の数です。入れ子の
+（直接オブジェクトの）アクション辞書も歩くので、リンクに直書きされた `/A` も数に入ります。
+これを読むルールが 2 つあります。
+
+- `POL-CAUTION-REDACT-PENDING` — Redact 注釈が残っている（ISO 32000-2 §12.5.6.23）。適用済みの
+  黒塗りは注釈を残さないので、注釈が示す内容はファイルから取り除かれていません。`use_with_caution`。
+- `POL-CAUTION-ACTIVE-CONTENT` — ECMAScript・Launch・リモート Go-To・SubmitForm/ImportData の
+  アクションがある。理由文に、`/OpenAction` / `/AA` によって開いたときに走るかを書きます。
+  `use_with_caution`。URI アクションは判定を変えず、ホストを advisory に出します。
+
+目録は観測であって判定ではありません。`null`（取れなかった）は「数えていない」と報告し、0 とは
+書きません。読めなかったオブジェクトがあれば、数は下限になります。Table 264 のうち数えていない
+項目: AlternateImages・ExternalStreams・TrueTypeFonts・ExternalRefXobjects・ExternalOPIdicts・
+NonEmbeddedFonts・DevDepGS_*。
+
 ## 信頼評価と失効確認（v0.2）
 
 `trust_anchors`（PEM/DER ファイルパス配列）を渡すか、環境変数 `PDF_VERIFY_TRUST_ANCHORS`（証明書ディレクトリ）を設定すると、署名者のチェーンを評価します。結果は `trusted` / `untrusted` / `not_evaluated` と証明書パスで報告されます。検証時刻は、検証できた署名タイムスタンプ、この署名を覆う文書タイムスタンプ、現在時刻の順に選びます（v0.27.0）。CMS の `signingTime` 属性は署名者が書く値なので使いません。選んだ時刻は `validationTime` に出ます。

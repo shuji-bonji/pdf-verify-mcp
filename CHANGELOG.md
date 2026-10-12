@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.30.0]　- 2026-10-12
+
+**`evaluate_policy` が、文書が持っている「動くもの」と「途中のもの」を数えて判定に使うようになった（#20, #21）。**
+出力の項目（`facts.content`）とルールが増えるので 0.30.0。
+
+### Added
+
+- **`facts.content` — content inventory.** ISO 32000-2 §12.8.7 Table 264（legal content
+  attestations）の数え方で、`JavaScriptActions`・`LaunchActions`・`URIActions`・
+  `GoToRemoteActions`（GoToR / GoToE）・`HideAnnotationActions`・`MovieActions`・`SoundActions` と、
+  表には無い `SubmitFormActions`（SubmitForm / ImportData）を数える。あわせて `/JS` の総バイト数、
+  URI のホスト（32 件まで）、カタログの `/OpenAction` / `/AA` の有無、注釈の数、`/Subtype /Redact`
+  注釈の残存数（`/OverlayText` / `/RO` 付きの数も）、埋め込みファイルの数、歩いたオブジェクト数と
+  読めなかった数を出す。入れ子の直接辞書・配列も歩くので、リンクに直書きされた `/A` も数に入る。
+  PDF/A の `no-javascript` / `no-prohibited-actions` 規則は PDF/A を検査するときしか走らず、普通の
+  PDF については何も言っていなかった。
+- **`POL-CAUTION-REDACT-PENDING`（#20）** — Redact 注釈が 1 本以上残っていれば `use_with_caution`。
+  §12.5.6.23 により、適用済みの黒塗りは注釈を残さない。残っているなら、注釈が示す内容はファイルから
+  取り除かれておらず、取り出せる。理由文に本数と、overlay が用意されていた本数を書く。
+  medical プロファイルでは他の caution と同じく `human_review_required` に上がる。
+- **`POL-CAUTION-ACTIVE-CONTENT`（#21）** — ECMAScript・Launch・リモート Go-To・SubmitForm/ImportData
+  のどれかがあれば `use_with_caution`。理由文に種類ごとの件数と条文番号、`/OpenAction` / `/AA` が
+  あれば「開いたときに走る」と書く。URI アクションは判定を変えず、件数とホストを advisory に出す。
+- advisory: 目録が取れなかったときは「数えていない（0 ではない）」、読めなかったオブジェクトが
+  あれば「数は下限」と書く。
+
+### 依然できないこと
+
+- Table 264 の AlternateImages・ExternalStreams・TrueTypeFonts・ExternalRefXobjects・
+  ExternalOPIdicts・NonEmbeddedFonts・DevDepGS_* は数えていない。
+- スクリプトの中身は読まない。「何をするか」は言えず、「ある」「何バイトある」までを言う。
+- Redact 注釈が覆っている内容は取り出さない（露出の経路を増やさない）。
+
 ## [0.29.0]　- 2026-09-18
 
 **JSON の応答を文字数で切らなくなった（#18）。** ほかに golden.mjs の落ち（#17）と

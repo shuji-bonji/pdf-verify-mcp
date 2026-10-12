@@ -7,6 +7,7 @@ import { veraPdfNote } from '../services/conformance-validation.js';
 import type {
   CmsVerificationResult,
   ConformanceReport,
+  ContentInventory,
   DocMdpAssessment,
   IntegrityReport,
   PadesLevelResult,
@@ -365,6 +366,8 @@ interface PolicyReportForFormat {
     hasDss: boolean;
     padesLevels: { fieldName: string | null; level: string | null; normativeBasis?: string }[];
     conformance: { flavour: string; engine: string; compliant: boolean | null } | null;
+    /** #20 / #21. Absent on older callers; null when the inventory could not be taken. */
+    content?: ContentInventory | null;
   };
 }
 
@@ -423,6 +426,33 @@ export function formatPolicyReport(report: PolicyReportForFormat): string {
     lines.push(
       `- ${c.flavour} (engine: ${c.engine}): ${c.compliant === true ? 'COMPLIANT' : c.compliant === false ? 'NOT COMPLIANT' : 'no violations in checked subset (not a certification)'}`,
     );
+  }
+  if (report.facts.content !== undefined) {
+    lines.push(
+      '',
+      '## Content inventory (ISO 32000-2 §12.8.7 counts — observations, not a verdict)',
+    );
+    const c = report.facts.content;
+    if (c === null) {
+      lines.push('- NOT COUNTED — the inventory could not be taken (see advisories)');
+    } else {
+      const a = c.actions;
+      lines.push(
+        `- Actions: JavaScript ${a.JavaScriptActions} (${c.javaScriptBytes} B), Launch ${a.LaunchActions}, GoToR/GoToE ${a.GoToRemoteActions}, SubmitForm/ImportData ${a.SubmitFormActions}, URI ${a.URIActions}, Hide ${a.HideAnnotationActions}, Movie ${a.MovieActions}, Sound ${a.SoundActions}`,
+      );
+      lines.push(
+        `- Runs on open: /OpenAction ${yesNo(c.openAction)}, document /AA ${yesNo(c.documentAdditionalActions)}`,
+      );
+      lines.push(
+        `- Annotations: ${c.annotations}; redaction annotations still present: ${c.redactAnnotations}${c.redactWithOverlay > 0 ? ` (${c.redactWithOverlay} with overlay)` : ''}`,
+      );
+      lines.push(
+        `- Embedded files: ${c.embeddedFiles}; optional content: ${yesNo(c.optionalContent)}`,
+      );
+      lines.push(
+        `- Objects walked: ${c.objectsRead}${c.unreadableObjects > 0 ? ` (${c.unreadableObjects} unreadable — counts are lower bounds)` : ''}`,
+      );
+    }
   }
   if (report.advisories.length > 0) {
     lines.push('', '## Advisories (do not affect the verdict)');

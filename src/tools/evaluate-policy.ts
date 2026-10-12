@@ -14,7 +14,8 @@ import { PdfToolInputShape, RevocationOptionShape } from '../schemas/common.js';
 import { extractPdfaId } from '../services/conformance.js';
 import type { ConformanceValidationReport } from '../services/conformance-validation.js';
 import { validateConformance } from '../services/conformance-validation.js';
-import { parsePdf } from '../services/pdf-parser.js';
+import { inventoryContent } from '../services/content-inventory.js';
+import { loadPdfDocument, parsePdf } from '../services/pdf-parser.js';
 import {
   evaluatePolicy,
   POLICY_PROFILES,
@@ -25,6 +26,7 @@ import {
   detectPadesLevels,
   verifySignatures,
 } from '../services/verification-service.js';
+import type { ContentInventory } from '../types.js';
 import { handleStructuredError } from '../utils/error-handler.js';
 import { formatPolicyReport, renderBody } from '../utils/formatter.js';
 import { logger } from '../utils/logger.js';
@@ -148,8 +150,19 @@ Examples:
           }
         }
 
+        // #20 / #21: what the file carries that acts or is unfinished. Taken from the same
+        // bytes; `null` when the walk fails, and the engine then says "not counted".
+        let content: ContentInventory | null = null;
+        try {
+          const doc = await loadPdfDocument(parsed.bytes, { password: params.password });
+          content = await inventoryContent(doc);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.debug(CONTEXT, `content inventory failed: ${message}`);
+        }
+
         const evaluation = evaluatePolicy(
-          { signatures, integrity, pades, conformance },
+          { signatures, integrity, pades, conformance, content },
           params.profile,
         );
         if (profile.longTermChecks && conformance === null) {
@@ -198,6 +211,7 @@ Examples:
                   compliant: conformance.compliant,
                 }
               : null,
+            content,
           },
         };
 

@@ -590,3 +590,61 @@ export interface ParsedPdf {
    */
   scope: import('@normativepdf/recover').DocumentScope;
 }
+
+// ─── Content inventory (#20, #21) ───
+
+/**
+ * What the document carries that acts, or that is unfinished — counted from the file for
+ * every document, PDF/A or not. The action keys are those of ISO 32000-2 §12.8.7 Table 264
+ * (legal content attestations), plus `SubmitFormActions`, which is not in the table but sends
+ * data out of the document. Keys of Table 264 that are not counted here: AlternateImages,
+ * ExternalStreams, TrueTypeFonts, ExternalRefXobjects, ExternalOPIdicts, NonEmbeddedFonts,
+ * DevDepGS_*.
+ *
+ * An observation, not a verdict: the policy engine decides what a count means.
+ */
+export interface ContentInventory {
+  actions: {
+    /** §12.6.4.17 — `/S /JavaScript`. */
+    JavaScriptActions: number;
+    /** §12.6.4.6 — `/S /Launch`: starts an application or opens a file outside the PDF. */
+    LaunchActions: number;
+    /** §12.6.4.8 — `/S /URI`. */
+    URIActions: number;
+    /** §12.6.4.10 (deprecated in PDF 2.0). */
+    MovieActions: number;
+    /** §12.6.4.9 (deprecated in PDF 2.0). */
+    SoundActions: number;
+    /** §12.6.4.11 — `/S /Hide`. */
+    HideAnnotationActions: number;
+    /** §12.6.4.3 / §12.6.4.4 — `/S /GoToR` and `/S /GoToE`: targets outside this file. */
+    GoToRemoteActions: number;
+    /** §12.7.6.2 / §12.7.6.3 — `/S /SubmitForm` and `/S /ImportData`. */
+    SubmitFormActions: number;
+  };
+  /** Total length of the `/JS` strings and streams found (bytes). */
+  javaScriptBytes: number;
+  /** Hosts (or schemes) of the `/URI` actions, sorted and capped at 32. */
+  uriHosts: string[];
+  /** The catalog has `/OpenAction` (runs when the document is opened, §7.7.2). null = catalog unreadable. */
+  openAction: boolean | null;
+  /** The catalog has `/AA` (document-level trigger events, §12.6.3 Table 200). */
+  documentAdditionalActions: boolean | null;
+  /** Dictionaries with a standard annotation `/Subtype` and a `/Rect` (§12.5.2). */
+  annotations: number;
+  /**
+   * `/Subtype /Redact` annotations still in the file (§12.5.6.23). Applying a redaction removes
+   * both the annotation and the content it marks, so one still present means the redaction was
+   * not applied and the marked content is still there.
+   */
+  redactAnnotations: number;
+  /** Of those, how many carry `/OverlayText` or `/RO` (an appearance was prepared but never applied). */
+  redactWithOverlay: number;
+  /** The catalog has `/OCProperties` (§8.11.4). */
+  optionalContent: boolean | null;
+  /** File specification dictionaries with `/EF` (embedded files, Table 43). */
+  embeddedFiles: number;
+  /** How many indirect objects were walked, and how many the cross-reference table names but could not be read. */
+  objectsRead: number;
+  unreadableObjects: number;
+}

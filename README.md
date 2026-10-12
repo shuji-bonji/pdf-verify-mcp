@@ -71,6 +71,28 @@ bytes could be a form field's appearance stream (which P=2 permits) or a page's 
 
 A JSON response is never cut by length. Lists are capped instead, and every cut is reported next to the list as `{ returned, total }`: `signatures` / `levels` at 32 (`verify_signatures` does not verify the fields beyond the cap; `evaluate_policy` verifies all and caps only `facts.signatures`), `revisions` at 32, `violations` / `results` at 200 (counts such as `compliant`, `failedRules`, `violations`, `notDecided` cover all entries). A markdown response is cut at 50,000 characters with a visible marker.
 
+## Content inventory in `evaluate_policy` (v0.30.0)
+
+`evaluate_policy` also counts what the document carries that acts, or that is unfinished, and
+reports it under `facts.content` — the counts of ISO 32000-2 §12.8.7 Table 264 (legal content
+attestations): `JavaScriptActions`, `LaunchActions`, `URIActions`, `GoToRemoteActions`,
+`HideAnnotationActions`, `MovieActions`, `SoundActions`, plus `SubmitFormActions`, the URI hosts,
+whether `/OpenAction` or a document `/AA` is present, the annotation count, and the number of
+`/Subtype /Redact` annotations still in the file. Nested (direct) action dictionaries are walked,
+so an inline `/A` on a link counts. Two rules read it:
+
+- `POL-CAUTION-REDACT-PENDING` — a redaction annotation is still present (ISO 32000-2
+  §12.5.6.23). An applied redaction leaves no annotation behind, so the content it marks has
+  not been removed from the file. `use_with_caution`.
+- `POL-CAUTION-ACTIVE-CONTENT` — ECMAScript, Launch, remote go-to, or SubmitForm/ImportData
+  actions are present; the reason says whether `/OpenAction` / `/AA` makes some of it run on
+  open. `use_with_caution`. URI actions never change the verdict; their hosts go to an advisory.
+
+The inventory is an observation, not a verdict: `null` (could not be taken) is reported as
+"not counted", never as 0, and unreadable objects make the counts lower bounds. Keys of
+Table 264 that are not counted: AlternateImages, ExternalStreams, TrueTypeFonts,
+ExternalRefXobjects, ExternalOPIdicts, NonEmbeddedFonts, DevDepGS_*.
+
 ## Trust & revocation (v0.2)
 
 Pass `trust_anchors` (PEM/DER file paths) or set the `PDF_VERIFY_TRUST_ANCHORS` env var (a directory of certificates) to evaluate the signer's chain: results are `trusted` / `untrusted` / `not_evaluated` with the certificate path. The validation time is a verified signature timestamp, else the earliest document timestamp covering the signature, else the current time (v0.27.0); the CMS `signingTime` attribute is written by the signer and is not used. The chosen time is reported as `validationTime`.

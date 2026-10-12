@@ -14,7 +14,12 @@
  */
 
 import { PadesLevel, RevocationStatus, TrustStatus, Verdict, WEAK_DIGESTS } from '../constants.js';
-import type { IntegrityReport, PadesLevelReport, SignatureVerificationReport } from '../types.js';
+import type {
+  ContentInventory,
+  IntegrityReport,
+  PadesLevelReport,
+  SignatureVerificationReport,
+} from '../types.js';
 import type { ConformanceValidationReport } from './conformance-validation.js';
 
 export type PolicyVerdict =
@@ -108,6 +113,12 @@ export interface PolicyFacts {
   pades: PadesLevelReport[];
   /** null when the profile does not run long-term checks or the check errored */
   conformance: ConformanceValidationReport | null;
+  /**
+   * What the document carries that acts or is unfinished (#20, #21). `null` when the
+   * inventory could not be taken — then the rules that read it stay silent and an advisory
+   * says so, because "not counted" is not "0".
+   */
+  content?: ContentInventory | null;
 }
 
 export interface FiredRule {
@@ -283,6 +294,71 @@ const RULES: RuleDef[] = [
         : null;
     },
   },
+  {
+    // #20: a redaction annotation marks content that is *intended* to be removed
+    // (ISO 32000-2 §12.5.6.23). Applying the redaction removes both the annotation and the
+    // content it covers, so one still in the file means the redaction was never applied and
+    // the covered content is still there. For a document handed over as "redacted", that is
+    // the difference between redacted and not. The verdict stays at caution because the
+    // engine judges authenticity, not whether the author finished their work — but a reader
+    // acting on the file must know before trusting what it does not show.
+    ruleId: 'POL-CAUTION-REDACT-PENDING',
+    verdict: 'use_with_caution',
+    applies: (f) => {
+      const c = f.content;
+      if (!c || c.redactAnnotations === 0) return null;
+      const overlay =
+        c.redactWithOverlay > 0
+          ? ` (${c.redactWithOverlay} with a prepared overlay appearance)`
+          : '';
+      return (
+        `${c.redactAnnotations} redaction annotation(s) (/Subtype /Redact) still present${overlay}: ` +
+        'ISO 32000-2 §12.5.6.23 — an applied redaction leaves no annotation behind, so the ' +
+        'content these annotations mark has NOT been removed from the file and can be extracted'
+      );
+    },
+  },
+  {
+    // #21: the document does something when opened or used — runs code, starts another
+    // program, opens another file, or sends form data out. None of this is forbidden in PDF,
+    // and none of it bears on authenticity, which is why it is caution and not review. It is
+    // reported because the PDF Association's "FAQ: AI and PDF" names it as what an ingestion
+    // system must know about a file before processing it, and because the PDF/A rule that
+    // used to be the only place these were counted never ran for an ordinary PDF.
+    ruleId: 'POL-CAUTION-ACTIVE-CONTENT',
+    verdict: 'use_with_caution',
+    applies: (f) => {
+      const c = f.content;
+      if (!c) return null;
+      const parts: string[] = [];
+      if (c.actions.JavaScriptActions > 0) {
+        parts.push(
+          `${c.actions.JavaScriptActions} ECMAScript action(s), ${c.javaScriptBytes} bytes of script (§12.6.4.17)`,
+        );
+      }
+      if (c.actions.LaunchActions > 0) {
+        parts.push(
+          `${c.actions.LaunchActions} Launch action(s) — starts an application or opens a file (§12.6.4.6)`,
+        );
+      }
+      if (c.actions.GoToRemoteActions > 0) {
+        parts.push(
+          `${c.actions.GoToRemoteActions} remote go-to action(s) — targets another file (§12.6.4.3/.4)`,
+        );
+      }
+      if (c.actions.SubmitFormActions > 0) {
+        parts.push(
+          `${c.actions.SubmitFormActions} SubmitForm/ImportData action(s) — sends or loads form data (§12.7.6)`,
+        );
+      }
+      if (parts.length === 0) return null;
+      const trigger =
+        c.openAction || c.documentAdditionalActions
+          ? ' The catalog has /OpenAction or /AA, so some of this runs when the document is opened, before anyone reads it.'
+          : '';
+      return `The document carries active content (ISO 32000-2 §12.8.7 counts): ${parts.join('; ')}.${trigger}`;
+    },
+  },
 ];
 
 export function evaluatePolicy(facts: PolicyFacts, profileId: PolicyProfileId): PolicyEvaluation {
@@ -378,6 +454,24 @@ export function evaluatePolicy(facts: PolicyFacts, profileId: PolicyProfileId): 
           .map((c) => `${c.fieldName ?? '(unnamed)'}=+${c.bytesAfterSignedRange}B`)
           .join(', ')} — ` +
         'incremental updates are permitted in PDF, but the added content is not covered by that signature; review what was added',
+    );
+  }
+  // #21: URI actions are ordinary in documents (links), so they never change the verdict;
+  // the hosts are listed so a reader can see where the document points.
+  if (facts.content && facts.content.actions.URIActions > 0) {
+    const hosts = facts.content.uriHosts;
+    advisories.push(
+      `${facts.content.actions.URIActions} URI action(s) (§12.6.4.8) pointing at: ${hosts.length > 0 ? hosts.join(', ') : '(no host could be read)'}` +
+        (hosts.length >= 32 ? ' … (host list capped at 32)' : ''),
+    );
+  }
+  if (facts.content === null) {
+    advisories.push(
+      'Content inventory (ISO 32000-2 §12.8.7 counts: scripts, launch/remote actions, redaction annotations) could not be taken — record it as "not counted", not as 0',
+    );
+  } else if (facts.content && facts.content.unreadableObjects > 0) {
+    advisories.push(
+      `Content inventory walked ${facts.content.objectsRead} objects; ${facts.content.unreadableObjects} named by the cross-reference table could not be read, so its counts are lower bounds`,
     );
   }
   const expired = signed.filter((s) => s.cms?.signerCertificate?.isExpiredNow);
