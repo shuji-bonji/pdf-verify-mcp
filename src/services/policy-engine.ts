@@ -21,6 +21,7 @@ import type {
   SignatureVerificationReport,
 } from '../types.js';
 import type { ConformanceValidationReport } from './conformance-validation.js';
+import { isXmpSchemaClause } from './xmp-schemas.js';
 
 export type PolicyVerdict =
   | 'trust_and_use'
@@ -424,6 +425,16 @@ export function evaluatePolicy(facts: PolicyFacts, profileId: PolicyProfileId): 
     advisories.push(
       `${facts.conformance.flavour} validation found violations (engine: ${facts.conformance.engine}) — not ideal as a long-term preservation format`,
     );
+    // #23: when one of those violations is the XMP extension-schema rule and the detail
+    // names the namespace, say so here too — a reader of the verdict should not have to open
+    // the violation list to learn that the archival failure is "TDMRep without an extension
+    // schema", which is fixable by the producer and does not touch the document's content.
+    const schemaViolations = facts.conformance.violations.filter(
+      (v) => isXmpSchemaClause(v.clause) && v.detail?.includes('neither predefined nor described'),
+    );
+    for (const v of schemaViolations) {
+      advisories.push(`${v.clause}: ${v.detail}`);
+    }
   }
   // The archival check ran, but not with the validator that can settle it. This
   // never moves the verdict (the subset found nothing to disprove, which is all

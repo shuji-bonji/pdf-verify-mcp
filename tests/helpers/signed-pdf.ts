@@ -374,7 +374,13 @@ export interface BuildPdfOptions {
   /** Add a DocMDP certification with this permission (1-3) */
   docMdpPermission?: number;
   /** Embed an XMP metadata stream with these declarations */
-  xmp?: { pdfaPart?: string; pdfaConformance?: string; pdfuaPart?: string };
+  xmp?: {
+    pdfaPart?: string;
+    pdfaConformance?: string;
+    pdfuaPart?: string;
+    /** Raw RDF/XML inserted inside <rdf:RDF> as-is (e.g. a TDMRep description, an extension schema). */
+    extraRdf?: string;
+  };
   /** Embed a DSS with these DER payloads */
   dss?: { certs?: Uint8Array[]; ocsps?: Uint8Array[]; crls?: Uint8Array[] };
   /** TSA identity: adds an RFC 3161 signature timestamp to the CMS */
@@ -425,6 +431,7 @@ function buildXmpPacket(xmp: NonNullable<BuildPdfOptions['xmp']>): string {
 <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
 ${pdfa}
 ${pdfua}
+${xmp.extraRdf ?? ''}
 </rdf:RDF>
 </x:xmpmeta>
 <?xpacket end="w"?>`;

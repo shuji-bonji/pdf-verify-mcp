@@ -561,6 +561,14 @@ export interface ConformanceReport {
   pdfA: { part: string; conformance: string | null } | null;
   pdfUa: { part: string } | null;
   pdfVersion: string | null;
+  /**
+   * Every namespace the XMP packet declares, classified (#23): `predefined` by the XMP
+   * Specification / ISO 19005, `describedByExtensionSchema` by a `pdfaSchema:namespaceURI`
+   * in the packet, and `known` when this family can say what it is (TDMRep, pdfuaid). A
+   * namespace that is neither predefined nor described is what makes a PDF/A validator fail
+   * ISO 19005-2 6.6.2.3 — reported here as an observation, not as a verdict.
+   */
+  xmpNamespaces: import('./services/xmp-schemas.js').XmpNamespaceInfo[];
   notes: string[];
 }
 

@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.31.0]　- 2026-10-12
+
+**PDF/A の XMP 拡張スキーマ違反の原因を、名前空間で名指しするようになった（#23）。**
+`identify_conformance` の出力に `xmpNamespaces` が増えるので 0.31.0。
+
+### Added
+
+- **`validate_conformance`（veraPDF 経路）: 拡張スキーマ違反の `detail` に名前空間を書く。** veraPDF は
+  ISO 19005-2/-3/-4 6.6.2.3.x（19005-1 は 6.7.8）の違反を「not predefined, or not defined in any
+  XMP extension schema」としか言わず、どのプロパティかは check の context
+  （`Properties[n](<namespace> - <prefix:name>)`）にしか無い。これを読んで `detail` に
+  「Properties whose schema is neither predefined nor described in the packet: <namespace>
+  (<properties>) — <known name>: <note>」と書く。W3C TDMRep（`http://www.w3.org/ns/tdmrep/`、
+  Report の EPUB 節の綴り `…tdmrep#` も）と pdfuaid は名前と対処を添える。
+- **`identify_conformance`: `xmpNamespaces`。** パケットが宣言する全名前空間を、`predefined`
+  （XMP 仕様 / ISO 19005 が定義）・`describedByExtensionSchema`（`pdfaSchema:namespaceURI` が
+  名指ししている）・`known`（この family が何か言える）の印付きで返す。PDF/A を宣言していて
+  未定義・未記述の名前空間があれば、note にその URI を書く（宣言の観測であって判定ではない、と明記）。
+- **`evaluate_policy`: advisory に原因名。** 長期保存プロファイルで PDF/A 違反の advisory が出るとき、
+  拡張スキーマ違反の `detail` を advisory にも繰り返す。判定は変わらない。
+- `evaluate_policy` / `identify_conformance` のツール説明文に、0.30.0 の `facts.content`・2 ルールと
+  今回の項目を書いた（0.30.0 では説明文を更新していなかったので、サイトの自動生成リファレンスに
+  出ていなかった）。
+- 実測（veraPDF 1.28.2・2026-10-12）: TDMRep 付き・拡張スキーマ無しの PDF/A-3B は 6.6.2.3.1 test1・
+  test2 が `tdm:reservation` / `tdm:policy` で落ちる。`pdfaExtension:schemas` に tdmrep の記述
+  （reservation: Integer / policy: URL、category external）を足すと XMP の違反は出ない。
+  この 2 つの報告を `tests/fixtures/verapdf/` に保存し、CI（veraPDF 無し）はそれで解析を試験する。
+- `parseVeraPdfReport` を `runVeraPdf` から分離（保存した報告で試験するため）。
+
+### 依然できないこと
+
+- native 経路は XMP 拡張スキーマを検査しない（パケット全体の走査は veraPDF に委ねる）。
+- 拡張スキーマを補う側は pdf-writer-mcp（shuji-bonji/pdf-writer-mcp#4）。verify は書かない。
+
 ## [0.30.0]　- 2026-10-12
 
 **`evaluate_policy` が、文書が持っている「動くもの」と「途中のもの」を数えて判定に使うようになった（#20, #21）。**

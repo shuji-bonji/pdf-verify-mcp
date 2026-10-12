@@ -117,6 +117,10 @@ NonEmbeddedFonts・DevDepGS_*。
 
 PDF/A-4（`pdfa-4` / `pdfa-4e` / `pdfa-4f`）も指定できます。**PDF/A-4 は conformance レベルを持たない**ため `pdfa-4b` は存在せず、`e` / `f` はレベルではなく variant です。ネイティブ規則は ISO 19005-1/-2 から起こしたもので ISO 19005-4 で検証していないため、PDF/A-4 のレポートには「native の判定は veraPDF に劣後する」と明記されます。part 4 は veraPDF で検証してください。
 
+### XMP 拡張スキーマと TDMRep（v0.31.0）
+
+ISO 19005 は、XMP のプロパティを「スキーマが定義済み（XMP 仕様・pdfaid）」か「パケット内の `pdfaExtension:schemas` で記述されている」ときだけ受けます（19005-1 6.7.8、19005-2/-3/-4 6.6.2.3）。veraPDF は違反を「XMP property is either not predefined, or is not defined in any XMP extension schema」と報告し、名前空間は check の context にしか書きません。v0.31.0 から `validate_conformance` はその名前空間を違反の `detail` に運びます（例: `http://www.w3.org/ns/tdmrep/ (tdm:reservation, tdm:policy) — W3C TDM Reservation Protocol (TDMRep): …`）。あわせて、PDF/A と TDMRep はパケットが TDMRep のスキーマを記述していれば両立する（reservation は Integer、policy は URL）と書きます。`identify_conformance` はパケットが宣言する全名前空間を「定義済み / 記述あり / 既知」の印付きで一覧し、PDF/A を宣言していれば未記述のものを note に書きます。`evaluate_policy` は advisory に原因名を繰り返します。veraPDF 1.28.2 での実測: TDMRep 付き・拡張スキーマ無しの PDF/A-3B は 6.6.2.3.1 test1・test2 が両プロパティで落ち、記述を足した同じパケットでは XMP の違反が出ません。
+
 ## ISO 32000 条文制約の検査（v0.9）
 
 `validate_clauses` が見るのは別の領域 — PDF/A や PDF/UA のプロファイルではなく、**PDF 仕様そのものの本体**です。veraPDF が COMPLIANT と判定したファイルが ISO 32000 に違反していることは実際にあります（CFF フォントプログラムを `/FontFile2` で埋め込む Table 124 違反が、ビューアの警告としてしか表に出ていなかった実例があります）。

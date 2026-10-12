@@ -13,6 +13,7 @@ import { promisify } from 'node:util';
 import { VERAPDF_ENV, VERAPDF_TIMEOUT } from '../constants.js';
 import { PdfVerifyError } from '../utils/error-handler.js';
 import { logger } from '../utils/logger.js';
+import { isXmpSchemaClause, parseVeraPdfXmpPropertyContext } from './xmp-schemas.js';
 
 const CONTEXT = 'verapdf';
 const execFileAsync = promisify(execFile);
@@ -34,6 +35,13 @@ export interface VeraPdfViolation {
   clause: string;
   description: string;
   failedChecks: number;
+  /**
+   * For the XMP extension-schema rules (ISO 19005-1 6.7.8 / -2,-3,-4 6.6.2.3.x): the
+   * properties veraPDF named in its check contexts, as `namespace` + `prefix:name` (#23).
+   * veraPDF's own message says only "not predefined, or not defined in any extension
+   * schema"; which namespace that was is in the context, and this carries it forward.
+   */
+  xmpProperties?: { namespace: string; property: string }[];
 }
 
 export interface VeraPdfReport {
@@ -207,6 +215,7 @@ interface VeraPdfJsonRuleSummary {
   testNumber?: number;
   description?: string;
   failedChecks?: number;
+  checks?: { status?: string; context?: string; errorMessage?: string }[];
 }
 
 interface VeraPdfJson {
@@ -258,6 +267,14 @@ export async function runVeraPdf(
     }
   }
 
+  return parseVeraPdfReport(stdout, flavour);
+}
+
+/**
+ * Turn veraPDF's JSON report into a `VeraPdfReport`. Separate from running the binary so
+ * the parsing can be tested against saved reports in CI, where veraPDF is not installed.
+ */
+export function parseVeraPdfReport(stdout: string, flavour?: string): VeraPdfReport {
   let json: VeraPdfJson;
   try {
     json = JSON.parse(stdout) as VeraPdfJson;
@@ -279,12 +296,22 @@ export async function runVeraPdf(
   const summaries = validation.details?.ruleSummaries ?? [];
   const violations: VeraPdfViolation[] = summaries
     .filter((s) => s.ruleStatus !== 'PASSED')
-    .map((s) => ({
-      ruleId: `${s.specification ?? ''} ${s.clause ?? ''}-${s.testNumber ?? ''}`.trim(),
-      clause: s.clause ?? 'unknown',
-      description: s.description ?? '',
-      failedChecks: s.failedChecks ?? 0,
-    }));
+    .map((s) => {
+      const v: VeraPdfViolation = {
+        ruleId: `${s.specification ?? ''} ${s.clause ?? ''}-${s.testNumber ?? ''}`.trim(),
+        clause: s.clause ?? 'unknown',
+        description: s.description ?? '',
+        failedChecks: s.failedChecks ?? 0,
+      };
+      if (isXmpSchemaClause(v.clause)) {
+        const props = (s.checks ?? [])
+          .filter((c) => c.status !== 'PASSED')
+          .map((c) => parseVeraPdfXmpPropertyContext(c.context ?? ''))
+          .filter((p): p is { namespace: string; property: string } => p !== null);
+        if (props.length > 0) v.xmpProperties = props;
+      }
+      return v;
+    });
 
   logger.debug(
     CONTEXT,

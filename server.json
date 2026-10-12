@@ -8,12 +8,12 @@
     "url": "https://github.com/shuji-bonji/pdf-verify-mcp",
     "source": "github"
   },
-  "version": "0.30.0",
+  "version": "0.31.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@shuji-bonji/pdf-verify-mcp",
-      "version": "0.30.0",
+      "version": "0.31.0",
       "transport": { "type": "stdio" }
     }
   ]

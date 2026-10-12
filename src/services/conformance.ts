@@ -8,6 +8,7 @@
 
 import { toReadingScope } from '@normativepdf/recover';
 import type { ConformanceReport, ParsedPdf } from '../types.js';
+import { analyzeXmpNamespaces } from './xmp-schemas.js';
 
 function matchXmp(xmp: string, patterns: RegExp[]): string | null {
   for (const pattern of patterns) {
@@ -85,6 +86,7 @@ function identify(parsed: ParsedPdf): Omit<ConformanceReport, 'scope'> {
       pdfA: null,
       pdfUa: null,
       pdfVersion: parsed.pdfVersion,
+      xmpNamespaces: [],
       notes: [...notes, 'No XMP metadata stream found in the document catalog.'],
     };
   }
@@ -108,11 +110,24 @@ function identify(parsed: ParsedPdf): Omit<ConformanceReport, 'scope'> {
     notes.push('No PDF/A or PDF/UA declaration found in XMP.');
   }
 
+  // #23: which schemas the packet uses, and whether PDF/A would need them described.
+  // An observation — the note below says what follows from it, not whether the file conforms.
+  const xmpNamespaces = analyzeXmpNamespaces(xmp);
+  const undescribed = xmpNamespaces.filter((n) => !n.predefined && !n.describedByExtensionSchema);
+  if (pdfaPart && undescribed.length > 0) {
+    notes.push(
+      `The packet uses ${undescribed.length} namespace(s) that ISO 19005 does not predefine and that no pdfaExtension:schemas entry describes: ` +
+        `${undescribed.map((n) => `${n.uri}${n.known ? ` (${n.known})` : ''}`).join(', ')}. ` +
+        'A PDF/A validator reports this under ISO 19005-2 6.6.2.3 (19005-1: 6.7.8). This is what the packet declares, not a validation result — run validate_conformance.',
+    );
+  }
+
   return {
     hasXmp: true,
     pdfA: pdfaPart ? { part: pdfaPart, conformance: pdfaConformance?.toUpperCase() ?? null } : null,
     pdfUa: pdfuaPart ? { part: pdfuaPart } : null,
     pdfVersion: parsed.pdfVersion,
+    xmpNamespaces,
     notes,
   };
 }

@@ -104,6 +104,10 @@ Returns:
 
   verdict, firedRules (rule IDs with per-rule verdict and reason), advisories (recommendations that do not affect the verdict), and the underlying facts summary.
 
+  Content inventory (v0.30.0): facts.content counts what the document carries that acts or is unfinished, the way ISO 32000-2 §12.8.7 Table 264 does — JavaScriptActions, LaunchActions, URIActions, GoToRemoteActions, HideAnnotationActions, MovieActions, SoundActions, plus SubmitFormActions — with the JavaScript byte total, URI hosts, whether /OpenAction or a document /AA is present, the annotation count, and the number of /Subtype /Redact annotations still in the file. Two rules read it: POL-CAUTION-REDACT-PENDING (a redaction annotation is still present, so per ISO 32000-2 §12.5.6.23 the content it marks was never removed) and POL-CAUTION-ACTIVE-CONTENT (ECMAScript, Launch, remote go-to or SubmitForm/ImportData actions present). Both are use_with_caution. URI actions never change the verdict; their hosts go to an advisory. facts.content is null when the inventory could not be taken, and the advisories then say "not counted" — never 0.
+
+  PDF/A and XMP extension schemas (v0.31.0): when the long-term check finds the ISO 19005 extension-schema rule failing (19005-2/-3/-4 6.6.2.3, 19005-1 6.7.8), the violation detail and an advisory name the namespace behind it — e.g. the W3C TDMRep namespace, which PDF/A accepts only when pdfaExtension:schemas describes it.
+
 Examples:
   - Gate incoming invoices before filing them (profile: financial)
   - Decide whether a countersigned contract can be relied on (profile: contract, with the counterparty CA as trust anchor)

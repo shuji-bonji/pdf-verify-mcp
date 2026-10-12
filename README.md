@@ -123,6 +123,10 @@ Native results are honest about their limits: violations mean definitively non-c
 
 PDF/A-4 (`pdfa-4`, `pdfa-4e`, `pdfa-4f`) is accepted. Note that **PDF/A-4 has no conformance level** — there is no `pdfa-4b`; `e` and `f` are variants. The native rules were written from ISO 19005-1/-2 and have not been checked against ISO 19005-4, so a PDF/A-4 report says outright that the native verdict ranks below veraPDF. Validate part 4 with veraPDF.
 
+### XMP extension schemas and TDMRep (v0.31.0)
+
+ISO 19005 accepts an XMP property only when its schema is predefined (XMP Specification, pdfaid) or described in the packet by `pdfaExtension:schemas` (19005-1 6.7.8, 19005-2/-3/-4 6.6.2.3). veraPDF reports a breach as "XMP property is either not predefined, or is not defined in any XMP extension schema" and names the namespace only in the check context. From v0.31.0 `validate_conformance` carries that name into the violation `detail` — e.g. `http://www.w3.org/ns/tdmrep/ (tdm:reservation, tdm:policy) — W3C TDM Reservation Protocol (TDMRep): …` — and says how the two coexist: PDF/A and TDMRep are compatible when the packet describes the TDMRep schema (reservation as Integer, policy as URL). `identify_conformance` lists every namespace the packet declares, marked predefined / described / known, and notes the undescribed ones when PDF/A is declared. `evaluate_policy` repeats the named cause in an advisory. Measured with veraPDF 1.28.2: a PDF/A-3B packet with TDMRep and no extension schema fails 6.6.2.3.1 test1 and test2 on both properties; the same packet with the description raises no XMP failure.
+
 ## ISO 32000 clause constraints (v0.9)
 
 `validate_clauses` covers different ground: the **body of the PDF specification**, not the PDF/A or PDF/UA profiles. A file can be judged COMPLIANT by veraPDF and still violate ISO 32000 — embedding a CFF font program under `/FontFile2` (Table 124) is a real example that surfaced only as a viewer warning.

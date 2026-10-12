@@ -25,6 +25,8 @@ Returns:
 
   Declared PDF/A part/conformance level and PDF/UA part, plus the PDF version.
 
+  xmpNamespaces (v0.31.0): every namespace the packet declares, each marked predefined (XMP Specification / ISO 19005), describedByExtensionSchema (a pdfaSchema:namespaceURI in the packet names it), and known (what this family can say it is — e.g. the W3C TDMRep namespace, or pdfuaid). A PDF/A declaration together with a namespace that is neither predefined nor described is what a PDF/A validator reports under ISO 19005-2 6.6.2.3 (19005-1 6.7.8); the note says so, as a declaration-level observation, not a validation result.
+
 IMPORTANT: This tool only IDENTIFIES the declared conformance — a declaration does not guarantee actual conformance. For real PDF/A rule checking use the validate_conformance tool (native rule subset, or veraPDF when installed).
 
 Examples:

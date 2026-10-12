@@ -1,7 +1,7 @@
 {
   "name": "@shuji-bonji/pdf-verify-mcp",
   "mcpName": "io.github.shuji-bonji/pdf-verify-mcp",
-  "version": "0.30.0",
+  "version": "0.31.0",
   "description": "MCP server for PDF authenticity verification - cryptographic signature verification, tamper detection, PAdES level detection",
   "type": "module",
   "main": "dist/index.js",

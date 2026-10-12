@@ -28,7 +28,8 @@ import { loadPdfDocument } from './pdf-parser.js';
 import { type PdfaFlavour, resolveFlavour, validatePdfaNative } from './pdfa-validator.js';
 import { type PdfuaFlavour, resolvePdfuaFlavour, validatePdfuaNative } from './pdfua-validator.js';
 import { decryptedCopy } from './plaintext-copy.js';
-import { resolveVeraPdf, runVeraPdf, veraPdfVersion } from './verapdf.js';
+import { resolveVeraPdf, runVeraPdf, type VeraPdfViolation, veraPdfVersion } from './verapdf.js';
+import { explainXmpSchemaViolation } from './xmp-schemas.js';
 
 export interface ConformanceViolation {
   ruleId: string;
@@ -97,6 +98,19 @@ export interface ConformanceValidationReport {
    */
   violationsTruncated: Truncation | null;
   notes: string[];
+}
+
+/**
+ * `detail` for a veraPDF violation. Usually the failed-check count; for the XMP
+ * extension-schema rules it names the namespaces behind the failure (#23), because
+ * "a property is not defined in any extension schema" is not actionable until the
+ * reader knows which property, and veraPDF puts that only in the check context.
+ */
+function veraViolationDetail(v: VeraPdfViolation): string | null {
+  const count = v.failedChecks > 0 ? `${v.failedChecks} failed check(s)` : null;
+  const named = v.xmpProperties ? explainXmpSchemaViolation(v.xmpProperties) : null;
+  if (count && named) return `${count}. ${named}`;
+  return named ?? count;
 }
 
 function flavourLabel(flavour: PdfaFlavour): string {
@@ -315,7 +329,7 @@ async function validate(
         ruleId: v.ruleId,
         clause: v.clause,
         description: v.description,
-        detail: v.failedChecks > 0 ? `${v.failedChecks} failed check(s)` : null,
+        detail: veraViolationDetail(v),
       })),
       notes: [...notes, veraPdfNote(status)],
     };
@@ -461,7 +475,7 @@ async function validatePdfua(
         ruleId: v.ruleId,
         clause: v.clause,
         description: v.description,
-        detail: v.failedChecks > 0 ? `${v.failedChecks} failed check(s)` : null,
+        detail: veraViolationDetail(v),
       })),
       notes: [
         ...notes,

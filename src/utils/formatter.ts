@@ -663,6 +663,18 @@ export function formatConformanceReport(report: ConformanceReport): string {
     `- PDF/A declaration: ${report.pdfA ? `PDF/A-${report.pdfA.part}${report.pdfA.conformance ? report.pdfA.conformance.toLowerCase() : ''}` : 'none'}`,
   );
   lines.push(`- PDF/UA declaration: ${report.pdfUa ? `PDF/UA-${report.pdfUa.part}` : 'none'}`);
+  if (report.xmpNamespaces.length > 0) {
+    lines.push('', '## XMP namespaces (declared — not a validation result)', '');
+    lines.push(
+      '| Prefix | Namespace | Predefined (ISO 19005) | Described in pdfaExtension | Known as |',
+    );
+    lines.push('|---|---|---|---|---|');
+    for (const n of report.xmpNamespaces) {
+      lines.push(
+        `| ${n.prefix} | ${n.uri} | ${n.predefined ? 'yes' : 'no'} | ${n.describedByExtensionSchema ? 'yes' : 'no'} | ${n.known ?? '—'} |`,
+      );
+    }
+  }
   lines.push('', '## Notes');
   for (const note of report.notes) lines.push(`- ${note}`);
   return lines.join('\n');
