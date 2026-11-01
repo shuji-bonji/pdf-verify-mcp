@@ -2,7 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.32.0]　- 2026-11-02
+
+### Fixed
+
+- **Installing veraPDF into a running server is now seen on the next call** (#24). The
+  lookup result was remembered for the life of the process — `not_installed` and
+  `configured_path_unusable` included — so after putting `verapdf` on PATH (or fixing
+  `PDF_VERIFY_VERAPDF`) `validate_conformance` kept running the native subset and kept
+  reporting `reason: "not_installed"` with `detail: "… no executable is on PATH"`, a
+  statement about the PATH at the first call presented as one about now. MCP hosts keep one
+  server process for the whole conversation, so this lasted until a restart.
+  - Only a lookup that **found** veraPDF is remembered now, together with the env value it
+    answered and the executable's size and modification time (one `stat` per call). A miss,
+    a changed file or a removed file is looked up again (one `which` and a few `access`
+    calls).
+  - The version read from `verapdf --version` is keyed on the same fingerprint. Upgrading
+    veraPDF keeps the path (`/opt/homebrew/bin/verapdf`) but changes the file it resolves
+    to; the report no longer carries the old build as the provenance of a verdict the new
+    build made.
+  - Measured on 0.31.0 (npm): veraPDF missing → put on PATH while running → call again
+    still said `not_installed`; with this change the second call finds it, as a restart did.
 
 ### Changed
 

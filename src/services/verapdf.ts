@@ -8,7 +8,7 @@
  */
 
 import { execFile } from 'node:child_process';
-import { access, constants } from 'node:fs';
+import { access, constants, stat } from 'node:fs';
 import { promisify } from 'node:util';
 import { VERAPDF_ENV, VERAPDF_TIMEOUT } from '../constants.js';
 import { PdfVerifyError } from '../utils/error-handler.js';
@@ -18,6 +18,7 @@ import { isXmpSchemaClause, parseVeraPdfXmpPropertyContext } from './xmp-schemas
 const CONTEXT = 'verapdf';
 const execFileAsync = promisify(execFile);
 const accessAsync = promisify(access);
+const statAsync = promisify(stat);
 
 /**
  * Well-known install locations, checked after PATH. GUI-launched MCP hosts
@@ -79,7 +80,46 @@ export type VeraPdfAvailability =
       detail: string;
     };
 
-let cachedAvailability: VeraPdfAvailability | undefined;
+/**
+ * The size and modification time of a found executable. A remembered lookup or
+ * version is only reused while the file still has the same fingerprint.
+ */
+interface ExecutableFingerprint {
+  size: number;
+  mtimeMs: number;
+}
+
+async function fingerprintOf(path: string): Promise<ExecutableFingerprint | null> {
+  try {
+    const s = await statAsync(path);
+    return { size: s.size, mtimeMs: s.mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+function sameFingerprint(a: ExecutableFingerprint, b: ExecutableFingerprint | null): boolean {
+  return b !== null && a.size === b.size && a.mtimeMs === b.mtimeMs;
+}
+
+/**
+ * The last successful lookup, with the env value it answered and the executable's
+ * fingerprint (#24). Only a lookup that **found** veraPDF is remembered.
+ *
+ * MCP hosts keep one server process for the whole conversation. Remembering
+ * `not_installed` for the life of the process meant that installing veraPDF (or
+ * putting it on PATH) after the first call changed nothing until a restart, and
+ * the report kept saying "no executable is on PATH" — a statement about the
+ * PATH at the first call, presented as one about now. A miss costs one `which`
+ * and a few `access` calls, so it is simply looked up again.
+ */
+let cachedAvailability:
+  | {
+      availability: VeraPdfAvailability & { available: true };
+      env: string | undefined;
+      fingerprint: ExecutableFingerprint;
+    }
+  | undefined;
 
 /**
  * Locate the veraPDF executable (env var first, then PATH, then well-known
@@ -90,38 +130,54 @@ let cachedAvailability: VeraPdfAvailability | undefined;
  * later inside execFile — surfacing as "veraPDF execution failed" instead of
  * "the validator you configured is not there". That is the failure mode this
  * function exists to prevent.
+ *
+ * A found executable is reused while the env value is the same and the file
+ * keeps its size and modification time (one `stat` per call). Anything else —
+ * a miss, a changed file, a removed file — is looked up again.
  */
 export async function resolveVeraPdf(): Promise<VeraPdfAvailability> {
-  if (cachedAvailability !== undefined) return cachedAvailability;
-
   const envPath = process.env[VERAPDF_ENV];
+  if (cachedAvailability !== undefined && cachedAvailability.env === envPath) {
+    const current = await fingerprintOf(cachedAvailability.availability.path);
+    if (sameFingerprint(cachedAvailability.fingerprint, current)) {
+      return cachedAvailability.availability;
+    }
+  }
+  cachedAvailability = undefined;
+
+  const result = await lookUpVeraPdf(envPath);
+  if (result.available) {
+    const fingerprint = await fingerprintOf(result.path);
+    if (fingerprint !== null)
+      cachedAvailability = { availability: result, env: envPath, fingerprint };
+  }
+  return result;
+}
+
+async function lookUpVeraPdf(envPath: string | undefined): Promise<VeraPdfAvailability> {
   if (envPath) {
     try {
       await accessAsync(envPath, constants.X_OK);
-      cachedAvailability = { available: true, path: envPath, source: 'env' };
+      return { available: true, path: envPath, source: 'env' };
     } catch (error) {
       // Deliberately NOT falling through to PATH: an explicit setting that is
       // wrong must surface, not be papered over by a different executable.
-      cachedAvailability = {
+      logger.debug(CONTEXT, `${VERAPDF_ENV}=${envPath} is not executable`);
+      return {
         available: false,
         reason: 'configured_path_unusable',
         configuredPath: envPath,
         detail:
           (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'no such file' : 'not executable',
       };
-      logger.debug(CONTEXT, `${VERAPDF_ENV}=${envPath} is not executable`);
     }
-    return cachedAvailability;
   }
 
   try {
     const which = process.platform === 'win32' ? 'where' : 'which';
     const { stdout } = await execFileAsync(which, ['verapdf'], { timeout: 5000 });
     const found = stdout.split('\n')[0]?.trim();
-    if (found) {
-      cachedAvailability = { available: true, path: found, source: 'path' };
-      return cachedAvailability;
-    }
+    if (found) return { available: true, path: found, source: 'path' };
   } catch {
     // fall through to well-known locations
   }
@@ -130,14 +186,13 @@ export async function resolveVeraPdf(): Promise<VeraPdfAvailability> {
     try {
       await accessAsync(candidate, constants.X_OK);
       logger.debug(CONTEXT, `veraPDF found at well-known path: ${candidate}`);
-      cachedAvailability = { available: true, path: candidate, source: 'well-known' };
-      return cachedAvailability;
+      return { available: true, path: candidate, source: 'well-known' };
     } catch {
       // try next
     }
   }
-  cachedAvailability = { available: false, reason: 'not_installed' };
-  return cachedAvailability;
+
+  return { available: false, reason: 'not_installed' };
 }
 
 /** Locate the veraPDF executable, or null when it cannot be used. */
@@ -171,7 +226,10 @@ export function parseVeraPdfVersion(output: string): string | null {
   return null;
 }
 
-const cachedVersions = new Map<string, string | null>();
+const cachedVersions = new Map<
+  string,
+  { version: string | null; fingerprint: ExecutableFingerprint }
+>();
 
 /**
  * The version of a resolved veraPDF executable, or null when it cannot be read.
@@ -182,11 +240,19 @@ const cachedVersions = new Map<string, string | null>();
  * veraPDF answers `1.30.0`. A rule count is only comparable across runs of the
  * *same* build, so the number that decided a verdict has to travel with it.
  *
- * Cached per executable: one extra process per server lifetime, not per file.
+ * Cached per executable **and its fingerprint** (#24): one extra process per
+ * build, not per file. Upgrading veraPDF keeps the path (Homebrew's
+ * `/opt/homebrew/bin/verapdf`) but changes the file it resolves to, and the
+ * version is read again — otherwise the report would carry the old build as the
+ * provenance of a verdict the new build made. An unreadable version (`null`) is
+ * kept for the same file too: the same build answers the same way.
  */
 export async function veraPdfVersion(executable: string): Promise<string | null> {
+  const fingerprint = await fingerprintOf(executable);
   const cached = cachedVersions.get(executable);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined && sameFingerprint(cached.fingerprint, fingerprint)) {
+    return cached.version;
+  }
 
   let version: string | null = null;
   try {
@@ -198,7 +264,8 @@ export async function veraPdfVersion(executable: string): Promise<string | null>
     // rather than refusing the verdict.
     logger.debug(CONTEXT, `could not read the veraPDF version: ${String(error)}`);
   }
-  cachedVersions.set(executable, version);
+  if (fingerprint !== null) cachedVersions.set(executable, { version, fingerprint });
+  else cachedVersions.delete(executable);
   return version;
 }
 
