@@ -24,7 +24,7 @@ const ruleIds = (report: Awaited<ReturnType<typeof validate>>): string[] =>
   report.violations.map((v) => v.ruleId);
 
 describe('PDF/UA native validation', () => {
-  it('reports no violations for a conformant document', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-004 reports no violations for a conformant document', async () => {
     const report = await validate();
     expect(report.flavour).toBe('PDF/UA-1');
     expect(report.engine).toBe('native');
@@ -34,34 +34,34 @@ describe('PDF/UA native validation', () => {
     expect(report.notes.join(' ')).toMatch(/SUBSET of ISO 14289/);
   });
 
-  it('catches a missing Marked flag', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-005 catches a missing Marked flag', async () => {
     const report = await validate({ marked: false });
     expect(ruleIds(report)).toContain('ua-marked');
     expect(report.compliant).toBe(false);
   });
 
-  it('catches a missing structure tree', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-005 catches a missing structure tree', async () => {
     const report = await validate({ structTree: false });
     expect(ruleIds(report)).toContain('ua-struct-tree');
     expect(report.compliant).toBe(false);
   });
 
-  it('catches a missing /Lang', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-005 catches a missing /Lang', async () => {
     const report = await validate({ lang: null });
     expect(ruleIds(report)).toContain('ua-lang');
   });
 
-  it('catches DisplayDocTitle not being true', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-005 catches DisplayDocTitle not being true', async () => {
     const report = await validate({ displayDocTitle: false });
     expect(ruleIds(report)).toContain('ua-display-doc-title');
   });
 
-  it('catches a missing document title', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-005 catches a missing document title', async () => {
     const report = await validate({ title: null });
     expect(ruleIds(report)).toContain('ua-title');
   });
 
-  it('fails ua-title when only Info /Title is set (7.1 requires XMP dc:title)', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-005 fails ua-title when only Info /Title is set (7.1 requires XMP dc:title)', async () => {
     // Info /Title present, XMP dc:title absent — conforming readers ignore Info
     const report = await validate({ omitXmpTitle: true });
     const v = report.violations.find((x) => x.ruleId === 'ua-title');
@@ -69,12 +69,12 @@ describe('PDF/UA native validation', () => {
     expect(v?.detail).toMatch(/Info \/Title is set but XMP has no dc:title/);
   });
 
-  it('catches a missing pdfuaid declaration', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-005 catches a missing pdfuaid declaration', async () => {
     const report = await validate({ pdfuaPart: null });
     expect(ruleIds(report)).toContain('ua-xmp-declaration');
   });
 
-  it('catches a Figure without alt text — which reader could not do', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-015 catches a Figure without alt text — which reader could not do', async () => {
     const withAlt = await validate({ elements: [{ tag: 'Figure', alt: '棒グラフ: 売上推移' }] });
     expect(ruleIds(withAlt)).not.toContain('ua-figure-alt');
 
@@ -85,7 +85,7 @@ describe('PDF/UA native validation', () => {
     );
   });
 
-  it('catches skipped heading levels', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-015 catches skipped heading levels', async () => {
     const ok = await validate({ elements: [{ tag: 'H1' }, { tag: 'H2' }, { tag: 'H3' }] });
     expect(ruleIds(ok)).not.toContain('ua-heading-hierarchy');
 
@@ -99,7 +99,7 @@ describe('PDF/UA native validation', () => {
     expect(ruleIds(notStartingAtH1)).toContain('ua-heading-hierarchy');
   });
 
-  it('catches tables without TH/TR', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-015 catches tables without TH/TR', async () => {
     const ok = await validate({
       elements: [{ tag: 'H1' }, { tag: 'Table' }, { tag: 'TR' }, { tag: 'TH' }],
     });
@@ -109,7 +109,7 @@ describe('PDF/UA native validation', () => {
     expect(ruleIds(bad)).toContain('ua-table-headers');
   });
 
-  it('catches Link annotations without /Contents', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-015 catches Link annotations without /Contents', async () => {
     const ok = await validate({ link: { contents: 'GitHub のリポジトリへ' } });
     expect(ruleIds(ok)).not.toContain('ua-link-contents');
 
@@ -117,7 +117,7 @@ describe('PDF/UA native validation', () => {
     expect(ruleIds(bad)).toContain('ua-link-contents');
   });
 
-  it('resolves tags through /RoleMap', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-015 resolves tags through /RoleMap', async () => {
     // A custom tag mapped to H1 must be treated as a heading
     const doc = await PDFDocument.load(await buildUaPdf({ elements: [{ tag: 'MyHeading' }] }));
     const root = doc.catalog.lookup(PDFName.of('StructTreeRoot')) as PDFDict;
@@ -130,7 +130,7 @@ describe('PDF/UA native validation', () => {
     expect(ruleIds(report)).not.toContain('ua-heading-hierarchy');
   });
 
-  it('separates definitive errors from warnings', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-006 separates definitive errors from warnings', async () => {
     const report = await validate();
     const severities = new Set(
       report.violations.map((v) => v.severity).filter((s): s is string => s !== undefined),
@@ -142,14 +142,14 @@ describe('PDF/UA native validation', () => {
     expect(withDefect.violations.find((v) => v.ruleId === 'ua-marked')?.severity).toBe('error');
   });
 
-  it('rejects an invalid PDF/UA flavour string', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-001 rejects an invalid PDF/UA flavour string', async () => {
     const parsed = await parsePdfBytes(await buildUaPdf());
     await expect(
       validateConformance(parsed, '', { engine: ValidationEngine.NATIVE, flavour: 'pdfua-9' }),
     ).rejects.toThrow(/Invalid flavour/);
   });
 
-  it('checks /Encrypt /P bit 10 on encrypted documents (ISO 14289-1, 7.16)', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-009 checks /Encrypt /P bit 10 on encrypted documents (ISO 14289-1, 7.16)', async () => {
     const bytes = await buildUaPdf();
     const parsed = await parsePdfBytes(bytes);
 
@@ -189,7 +189,7 @@ describe('PDF/UA native validation', () => {
     expect(noP?.detail).toMatch(/no numeric \/P key/);
   });
 
-  it('flags a mismatch between the declared and requested part', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-005 flags a mismatch between the declared and requested part', async () => {
     const report = await validate({ pdfuaPart: '2' }, 'pdfua-1');
     const v = report.violations.find((x) => x.ruleId === 'ua-xmp-declaration');
     expect(v?.detail).toMatch(/declares PDF\/UA-2 but validation requested PDF\/UA-1/);

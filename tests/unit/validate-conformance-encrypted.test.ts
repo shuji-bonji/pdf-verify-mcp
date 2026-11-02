@@ -69,7 +69,7 @@ describeQpdf('PDF/UA validation of encrypted documents (Issue #7)', () => {
     run(['--encrypt', 'secret', 'owner', '256', '--', 'plain.pdf', 'pw.pdf']);
   });
 
-  it('auto-decrypts permission-encrypted documents and checks every rule', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-007 auto-decrypts permission-encrypted documents and checks every rule', async () => {
     const report = await validate('perm.pdf');
     expect(report.skippedRules).toBeUndefined();
     expect(report.checkedRules).toBe(12);
@@ -78,7 +78,7 @@ describeQpdf('PDF/UA validation of encrypted documents (Issue #7)', () => {
     expect(report.notes.join(' ')).toMatch(/decrypted before validation/);
   });
 
-  it('judges the original /Encrypt /P even after decryption (7.16)', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-009 judges the original /Encrypt /P even after decryption (7.16)', async () => {
     const report = await validate('noaccess.pdf');
     const ids = report.violations.map((v) => v.ruleId);
     expect(ids).toEqual(['ua-no-encryption-barrier']); // and nothing else
@@ -86,7 +86,7 @@ describeQpdf('PDF/UA validation of encrypted documents (Issue #7)', () => {
     expect(report.compliant).toBe(false);
   });
 
-  it('reports structure rules as skipped when the password is unknown', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-008 reports structure rules as skipped when the password is unknown', async () => {
     const report = await validate('pw.pdf');
     expect(report.skippedRules).toBe(11);
     expect(report.checkedRules).toBe(1); // ua-no-encryption-barrier only
@@ -95,20 +95,20 @@ describeQpdf('PDF/UA validation of encrypted documents (Issue #7)', () => {
     expect(report.notes.join(' ')).toMatch(/could not be decrypted/);
   });
 
-  it('validates fully when the correct password is supplied', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-007 validates fully when the correct password is supplied', async () => {
     const report = await validate('pw.pdf', 'secret');
     expect(report.skippedRules).toBeUndefined();
     expect(report.checkedRules).toBe(12);
     expect(report.violations).toEqual([]);
   });
 
-  it('rejects a wrong password with a structured error', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-007 rejects a wrong password with a structured error', async () => {
     await expect(validate('pw.pdf', 'wrong')).rejects.toMatchObject({
       code: 'WRONG_PASSWORD',
     });
   });
 
-  it('produces a structurally valid plaintext rebuild (strict validators)', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-007 produces a structurally valid plaintext rebuild (strict validators)', async () => {
     // 平文の写しは **veraPDF に渡すためだけ**に作る（L4）。verify 自身の読み取りには
     // 要らない。pdf-lib は xref の穴に寛容だが veraPDF / qpdf はそうではないので、
     // 復号したオブジェクトストリームは平のオブジェクトに展開されていなければならない

@@ -23,7 +23,7 @@ describe('PDF/A validate_conformance on an encrypted document (stack #38)', () =
     resetVeraPdfCache();
   });
 
-  it('returns ENCRYPTED_PDF when veraPDF would be consulted, not INTERNAL_ERROR', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-010 returns ENCRYPTED_PDF when veraPDF would be consulted, not INTERNAL_ERROR', async () => {
     // /bin/sh is executable, so resolveVeraPdf treats it as present. The point
     // is that we refuse before execFile — an encrypted file must not reach veraPDF.
     process.env[VERAPDF_ENV] = '/bin/sh';
@@ -40,7 +40,7 @@ describe('PDF/A validate_conformance on an encrypted document (stack #38)', () =
     ).rejects.toMatchObject({ code: 'ENCRYPTED_PDF' });
   });
 
-  it('native engine still reports no-encryption instead of throwing', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-010 native engine still reports no-encryption instead of throwing', async () => {
     const parsed = await parsePdfBytes(await createSignedPdf(identity));
     parsed.isEncrypted = true;
 

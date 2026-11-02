@@ -17,7 +17,7 @@ beforeAll(async () => {
 });
 
 describe('resolveFlavour', () => {
-  it('parses explicit flavour strings', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-001 parses explicit flavour strings', async () => {
     const pdf = await createSignedPdf(identity);
     const parsed = await parsePdfBytes(pdf);
     expect(resolveFlavour(parsed, 'pdfa-1b')).toEqual({ part: 1, conformance: 'B' });
@@ -25,14 +25,14 @@ describe('resolveFlavour', () => {
     expect(resolveFlavour(parsed, 'bogus')).toBeNull();
   });
 
-  it('reads the XMP declaration', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-002 reads the XMP declaration', async () => {
     const pdf = await createSignedPdf(identity, { xmp: { pdfaPart: '2', pdfaConformance: 'B' } });
     const parsed = await parsePdfBytes(pdf);
     expect(resolveFlavour(parsed)).toEqual({ part: 2, conformance: 'B' });
   });
 
   // M-9: PDF/A-4 takes no A/B/U level; E and F are variants, not levels.
-  it('parses the PDF/A-4 flavours', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-001 parses the PDF/A-4 flavours', async () => {
     const pdf = await createSignedPdf(identity);
     const parsed = await parsePdfBytes(pdf);
     expect(resolveFlavour(parsed, 'pdfa-4')).toEqual({ part: 4, conformance: null });
@@ -40,7 +40,7 @@ describe('resolveFlavour', () => {
     expect(resolveFlavour(parsed, 'PDFA-4F')).toEqual({ part: 4, conformance: 'F' });
   });
 
-  it('rejects level/variant combinations that name no real flavour', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-001 rejects level/variant combinations that name no real flavour', async () => {
     const pdf = await createSignedPdf(identity);
     const parsed = await parsePdfBytes(pdf);
     expect(resolveFlavour(parsed, 'pdfa-4b')).toBeNull();
@@ -50,7 +50,7 @@ describe('resolveFlavour', () => {
     expect(resolveFlavour(parsed, 'pdfa-5')).toBeNull();
   });
 
-  it('reads a PDF/A-4f declaration, and drops a variant that does not fit the part', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-002 reads a PDF/A-4f declaration, and drops a variant that does not fit the part', async () => {
     const f = await createSignedPdf(identity, { xmp: { pdfaPart: '4', pdfaConformance: 'F' } });
     expect(resolveFlavour(await parsePdfBytes(f))).toEqual({ part: 4, conformance: 'F' });
 
@@ -72,13 +72,13 @@ describe('resolveFlavour', () => {
 });
 
 describe('veraFlavourId', () => {
-  it('maps parts 1-3 to level ids and defaults an absent level to b', () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-011 maps parts 1-3 to level ids and defaults an absent level to b', () => {
     expect(veraFlavourId({ part: 1, conformance: 'B' })).toBe('1b');
     expect(veraFlavourId({ part: 2, conformance: 'U' })).toBe('2u');
     expect(veraFlavourId({ part: 3, conformance: null })).toBe('3b');
   });
 
-  it('never produces "4b" — PDF/A-4 profile ids are 4, 4e and 4f', () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-011 never produces "4b" — PDF/A-4 profile ids are 4, 4e and 4f', () => {
     expect(veraFlavourId({ part: 4, conformance: null })).toBe('4');
     expect(veraFlavourId({ part: 4, conformance: 'E' })).toBe('4e');
     expect(veraFlavourId({ part: 4, conformance: 'F' })).toBe('4f');
@@ -86,7 +86,7 @@ describe('veraFlavourId', () => {
 });
 
 describe('validateConformance (native engine)', () => {
-  it('detects violations in a declared PDF/A document', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-003 detects violations in a declared PDF/A document', async () => {
     const pdf = await createSignedPdf(identity, { xmp: { pdfaPart: '2', pdfaConformance: 'B' } });
     const parsed = await parsePdfBytes(pdf);
     const report = await validateConformance(parsed, '', { engine: ValidationEngine.NATIVE });
@@ -104,7 +104,7 @@ describe('validateConformance (native engine)', () => {
     expect(failedIds).not.toContain('no-lzw');
   });
 
-  it('flags PDF version against PDF/A-1 (1.7 > 1.4)', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-003 flags PDF version against PDF/A-1 (1.7 > 1.4)', async () => {
     const pdf = await createSignedPdf(identity);
     const parsed = await parsePdfBytes(pdf);
     const report = await validateConformance(parsed, '', {
@@ -116,7 +116,7 @@ describe('validateConformance (native engine)', () => {
     expect(failedIds).toContain('pdf-version');
   });
 
-  it('flags PDF version against PDF/A-4 (1.7 is not 2.0)', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-003 flags PDF version against PDF/A-4 (1.7 is not 2.0)', async () => {
     const pdf = await createSignedPdf(identity);
     const parsed = await parsePdfBytes(pdf);
     const report = await validateConformance(parsed, '', {
@@ -133,7 +133,7 @@ describe('validateConformance (native engine)', () => {
     expect(report.notes.join(' ')).toContain('ISO 19005-4');
   });
 
-  it('falls back to PDF/A-2b with a note when nothing is declared', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-002 falls back to PDF/A-2b with a note when nothing is declared', async () => {
     const pdf = await createSignedPdf(identity);
     const parsed = await parsePdfBytes(pdf);
     const report = await validateConformance(parsed, '', { engine: ValidationEngine.NATIVE });
@@ -142,7 +142,7 @@ describe('validateConformance (native engine)', () => {
     expect(report.notes.join(' ')).toContain('no PDF/A identification');
   });
 
-  it('rejects an invalid flavour string', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-001 rejects an invalid flavour string', async () => {
     const pdf = await createSignedPdf(identity);
     const parsed = await parsePdfBytes(pdf);
     await expect(
@@ -150,7 +150,7 @@ describe('validateConformance (native engine)', () => {
     ).rejects.toThrow(/Invalid flavour/);
   });
 
-  it('auto-selects PDF/UA when the document declares only PDF/UA', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-002 auto-selects PDF/UA when the document declares only PDF/UA', async () => {
     // v0.6: PDF/UA is validated here rather than deferred to pdf-reader-mcp
     const pdf = await createSignedPdf(identity, { xmp: { pdfuaPart: '1' } });
     const parsed = await parsePdfBytes(pdf);
@@ -160,7 +160,7 @@ describe('validateConformance (native engine)', () => {
     expect(report.notes.join(' ')).not.toContain('validate_tagged');
   });
 
-  it('prefers PDF/A and mentions PDF/UA when both are declared', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-002 prefers PDF/A and mentions PDF/UA when both are declared', async () => {
     const pdf = await createSignedPdf(identity, {
       xmp: { pdfaPart: '2', pdfaConformance: 'B', pdfuaPart: '1' },
     });
@@ -173,7 +173,7 @@ describe('validateConformance (native engine)', () => {
 });
 
 describe('veraPDF engine selection', () => {
-  it('errors clearly when engine=verapdf but veraPDF is absent', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-013 errors clearly when engine=verapdf but veraPDF is absent', async () => {
     resetVeraPdfCache();
     const available = await findVeraPdf();
     if (available) return; // environment has veraPDF — skip the negative test
@@ -216,7 +216,7 @@ describe('veraPDF configured but unusable', () => {
     resetVeraPdfCache();
   });
 
-  it('reports the path as unusable instead of treating it as found', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-012 reports the path as unusable instead of treating it as found', async () => {
     const availability = await resolveVeraPdf();
     expect(availability.available).toBe(false);
     expect(availability).toMatchObject({
@@ -225,13 +225,13 @@ describe('veraPDF configured but unusable', () => {
     });
   });
 
-  it('does not substitute another executable for the configured one', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-012 does not substitute another executable for the configured one', async () => {
     // Even on a machine with veraPDF on PATH, an explicit setting that is wrong
     // must surface — a verdict from a validator nobody chose is worse than none.
     expect(await findVeraPdf()).toBeNull();
   });
 
-  it('falls back to native and says the authoritative validation was not performed', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-014 falls back to native and says the authoritative validation was not performed', async () => {
     const pdf = await createSignedPdf(identity, { xmp: { pdfaPart: '2', pdfaConformance: 'B' } });
     const parsed = await parsePdfBytes(pdf);
     const report = await validateConformance(parsed, '', { engine: ValidationEngine.AUTO });
@@ -249,7 +249,7 @@ describe('veraPDF configured but unusable', () => {
     expect(notes).toMatch(/cannot certify/i);
   });
 
-  it('errors with VERAPDF_NOT_AVAILABLE when engine=verapdf was demanded', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-013 errors with VERAPDF_NOT_AVAILABLE when engine=verapdf was demanded', async () => {
     const pdf = await createSignedPdf(identity);
     const parsed = await parsePdfBytes(pdf);
     await expect(
@@ -257,7 +257,7 @@ describe('veraPDF configured but unusable', () => {
     ).rejects.toMatchObject({ code: 'VERAPDF_NOT_AVAILABLE' });
   });
 
-  it('carries the non-execution into the PDF/UA path as well', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-014 carries the non-execution into the PDF/UA path as well', async () => {
     const pdf = await createSignedPdf(identity, { xmp: { pdfuaPart: '1' } });
     const parsed = await parsePdfBytes(pdf);
     const report = await validateConformance(parsed, '', { flavour: 'pdfua-1' });
@@ -277,7 +277,7 @@ describe('authoritative validation provenance', () => {
     resetVeraPdfCache();
   });
 
-  it('accepts an executable env path and records where it came from', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-012 accepts an executable env path and records where it came from', async () => {
     // /bin/sh stands in for veraPDF: the point is that an *executable* env path
     // is accepted, which is what distinguishes this from the unusable case.
     process.env[VERAPDF_ENV] = '/bin/sh';
@@ -289,7 +289,7 @@ describe('authoritative validation provenance', () => {
     });
   });
 
-  it('names engine=native as the reason rather than implying veraPDF is missing', async () => {
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-014 names engine=native as the reason rather than implying veraPDF is missing', async () => {
     const pdf = await createSignedPdf(identity);
     const parsed = await parsePdfBytes(pdf);
     const report = await validateConformance(parsed, '', { engine: ValidationEngine.NATIVE });
