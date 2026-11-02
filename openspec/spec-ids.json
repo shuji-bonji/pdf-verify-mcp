@@ -1,0 +1,8 @@
+{
+  "domain": "VERIFY",
+  "dirPrefix": "",
+  "tests": [
+    "tests/**/*.test.ts"
+  ],
+  "layout": "openspec"
+}

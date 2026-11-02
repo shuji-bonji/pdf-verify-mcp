@@ -1,5 +1,7 @@
 # pdf-verify-mcp - 開発ガイド
 
+> 仕様の正本は `openspec/specs/`（OpenSpec）。仕様 ID・PR の種類・承認の記録の規則は [AGENTS.md](./AGENTS.md)。
+
 ## プロジェクト概要
 
 PDF の**真正性・準拠性**を判定する MCP サーバ。PDF family における「**判定**」担当。

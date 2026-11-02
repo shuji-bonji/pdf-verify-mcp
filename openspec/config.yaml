@@ -1,0 +1,47 @@
+schema: spec-driven
+
+# PDF family 共通の前提（pdf-agent-stack/docs/specs/31 付録 A）と、pdf-verify-mcp 固有の境界ルール。
+# すべての成果物（proposal / specs / design / tasks）のプロンプトに <context> として注入される。
+# 🔴 rules の項目は必ず引用符で囲む。文中の「approved: 」のような「コロン + 空白」を YAML が入れ子と読み、
+#    openspec が「could not parse config.yaml」と警告して context と rules を丸ごと捨てる（pdf-reader-mcp で実際に起きた）。
+context: |
+  このリポジトリは PDF family の 1 つ（pdf-verify-mcp。「判定」担当: PDF が本物で、規格に適っているかを判定する）。
+  ISO 規格などに照らした compliant / valid / pass-fail を返すのはこのサーバで、観測結果を返すだけなら pdf-reader-mcp、
+  仕様の文を返すのは pdf-spec-mcp の仕事。pdf-reader-mcp には依存しない。
+  判定できなかったことを合格として返さない。たとえば validate_conformance の native エンジンは規則の一部しか持たないので、
+  範囲内で違反が無いときの compliant は null で、true に丸めない。判定の値と、判定できなかった理由（indeterminate /
+  not_checked / needs_external_fact など）を分けて書く。
+  仕様は openspec/specs/<capability>/spec.md が正本で、日本語で書く。capability はツール名の _ を - にした
+  kebab-case（例: evaluate-policy）。横断の振る舞いは common-errors などの共通 capability に置く。
+  要求の見出しは「### Requirement: SPEC-VERIFY-<機能>-<3 桁> 題」で、ID は `npx spec-ids next <capability>` で採る
+  （一度使った番号は再利用しない）。文末に（SHALL）を付ける。
+  テストは tests/**/*.test.ts（vitest）で、CI で全件が回る。CI に veraPDF は無いので、veraPDF に頼るテストは書かず、
+  engine は native に固定する。検体は tests/helpers/ のビルダで組む。受入テストの it / describe の名前に仕様 ID を書く。
+  `npx spec-ids check` が仕様 ID とテスト名を突き合わせ、CI（spec-gate）で止める。
+
+rules:
+  proposal:
+    - "先頭に front matter を置く（approved: と pr: は空のキー、implementation: required か none、targets: [capability, ...]）。approved と pr は人がマージの前に書く"
+    - "Capabilities には openspec/specs/ にある既存の capability 名をそのまま使う。無いツールの capability を新しく作るときは、そのツールの既存のテストを読んで、起こす範囲（このツールのどの振る舞いか）を書く"
+    - "本文に「変わる振る舞い / 変わらない振る舞い / 対象外 / 人が判断すること」を書く"
+  specs:
+    - "各 Requirement の見出しは「### Requirement: SPEC-VERIFY-<機能>-<3 桁> 題」。ID は `npx spec-ids next <capability>` で採り、再利用しない"
+    - "各 Requirement に「#### Scenario:」を 1 つ以上書く。Scenario 名はそのままテスト名の後半になるので、WHEN / THEN が読める名前にする"
+    - "文末に（SHALL）を付ける。Purpose は 50 文字以上"
+    - "根拠は規格の節番号（例: ISO 19005-2 §6.2.11.4、ISO 32000-2 §12.8、ETSI EN 319 142-1）で書く。ライブラリ名や veraPDF の規則 ID だけを根拠にしない"
+    - "判定を返す要求では、合格・不合格に加えて「判定できない」ときに何を返すかも書く"
+  design:
+    - "ライブラリの制約と仕様の制約を分けて書く"
+    - "veraPDF のある環境と無い環境（native エンジン）で振る舞いが変わるなら、両方を書く"
+  tasks:
+    - "テストの describe / it の名前に仕様 ID と Scenario 名を書くタスクを含める"
+    - "期待値を仕様 ID のために変えない"
+    - "最後に「npx openspec validate --all && npx spec-ids check が通る」を確かめるタスクを置く"
+    - "新しい capability を作る変更は、archive の後に正本の先頭へ front matter（spec_id / kind / introduced_by）を書き足すタスクを置く（OpenSpec 1.14.1 は差分の front matter を写さない）"
+
+operations:
+  archive:
+    guidance:
+      - "archive の前に proposal.md の front matter の approved と pr が埋まっていることを確かめ、空なら止まって人に求める"
+      - "archive はマージの前に、同じ PR の中で行う（実装 PR は openspec/changes/<slug>/ の追加を pr-scope が通さない）"
+      - "archive の後に npx spec-ids check を実行し、OK を確かめる"
