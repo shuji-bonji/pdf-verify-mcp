@@ -31,6 +31,9 @@ const WELL_KNOWN_PATHS = [
   '/usr/bin/verapdf',
 ];
 
+/** The well-known locations actually searched. Only tests replace them. */
+let wellKnownPaths: readonly string[] = WELL_KNOWN_PATHS;
+
 export interface VeraPdfViolation {
   ruleId: string;
   clause: string;
@@ -182,7 +185,7 @@ async function lookUpVeraPdf(envPath: string | undefined): Promise<VeraPdfAvaila
     // fall through to well-known locations
   }
 
-  for (const candidate of WELL_KNOWN_PATHS) {
+  for (const candidate of wellKnownPaths) {
     try {
       await accessAsync(candidate, constants.X_OK);
       logger.debug(CONTEXT, `veraPDF found at well-known path: ${candidate}`);
@@ -273,6 +276,18 @@ export async function veraPdfVersion(executable: string): Promise<string | null>
 export function resetVeraPdfCache(): void {
   cachedAvailability = undefined;
   cachedVersions.clear();
+}
+
+/**
+ * Replace the well-known locations (for tests only; `null` restores the defaults).
+ *
+ * Without this a machine with veraPDF in /opt/homebrew/bin cannot reproduce
+ * "not installed anywhere", so a test of that path could only skip there
+ * (SPEC-VERIFY-VALIDATE-CONFORMANCE-013). Not exported from the package entry.
+ */
+export function setWellKnownPathsForTesting(paths: readonly string[] | null): void {
+  wellKnownPaths = paths ?? WELL_KNOWN_PATHS;
+  resetVeraPdfCache();
 }
 
 interface VeraPdfJsonRuleSummary {
