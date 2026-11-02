@@ -20,7 +20,7 @@
 ## 3. 出力が変わらないことの確認
 
 - [x] 3.1 変更前と変更後の `dist` を起動し、`tools/list` の差が `validate_conformance` の description だけであることを確かめる
-- [ ] 3.2 veraPDF のある手元の Mac で `npm test` を回し、1.1 が `return` せずに通ることを確かめる（作業環境には veraPDF が無いので、手元で確かめる）
+- [x] 3.2 veraPDF のある手元の Mac で `npm test` を回し、1.1 が `return` せずに通ることを確かめる（作業環境には veraPDF が無いので、手元で確かめる。2026-11-02 16:26 に本人が実行し、266 件すべて通った）
 
 ## 4. 版と記録
 
