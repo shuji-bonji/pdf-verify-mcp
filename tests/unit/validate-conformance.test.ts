@@ -2,12 +2,20 @@
  * v0.3: PDF/A conformance validation (native engine subset).
  */
 
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ValidationEngine, VERAPDF_ENV } from '../../src/constants.js';
 import { validateConformance, veraFlavourId } from '../../src/services/conformance-validation.js';
 import { parsePdfBytes } from '../../src/services/pdf-parser.js';
 import { resolveFlavour } from '../../src/services/pdfa-validator.js';
-import { findVeraPdf, resetVeraPdfCache, resolveVeraPdf } from '../../src/services/verapdf.js';
+import {
+  findVeraPdf,
+  resetVeraPdfCache,
+  resolveVeraPdf,
+  setWellKnownPathsForTesting,
+} from '../../src/services/verapdf.js';
 import { createSignedPdf, createTestIdentity, type TestIdentity } from '../helpers/signed-pdf.js';
 
 let identity: TestIdentity;
@@ -172,17 +180,48 @@ describe('validateConformance (native engine)', () => {
   });
 });
 
+/**
+ * veraPDF がどこにも入っていない（not_installed）とき。
+ *
+ * 探し方は 環境変数 → PATH → 決まった場所 の 3 段。3 段とも外さないと、veraPDF を
+ * Homebrew で入れた Mac では /opt/homebrew/bin/verapdf が見つかって「どこにも無い」を
+ * 作れない（以前のテストはここで先頭の return に入り、何も確かめていなかった）。
+ */
 describe('veraPDF engine selection', () => {
-  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-013 errors clearly when engine=verapdf but veraPDF is absent', async () => {
-    resetVeraPdfCache();
-    const available = await findVeraPdf();
-    if (available) return; // environment has veraPDF — skip the negative test
+  let savedEnv: string | undefined;
+  let savedPath: string | undefined;
+  let emptyDir: string;
 
+  beforeEach(() => {
+    savedEnv = process.env[VERAPDF_ENV];
+    savedPath = process.env.PATH;
+    emptyDir = mkdtempSync(join(tmpdir(), 'verapdf-none-'));
+    delete process.env[VERAPDF_ENV];
+    process.env.PATH = emptyDir; // which 自体が見つからず、2 段目は例外 → 3 段目へ
+    setWellKnownPathsForTesting([]);
+  });
+
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env[VERAPDF_ENV];
+    else process.env[VERAPDF_ENV] = savedEnv;
+    process.env.PATH = savedPath;
+    setWellKnownPathsForTesting(null);
+    rmSync(emptyDir, { recursive: true, force: true });
+  });
+
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-013 どこにも入っていない: engine=verapdf は VERAPDF_NOT_FOUND で失敗する', async () => {
     const pdf = await createSignedPdf(identity);
     const parsed = await parsePdfBytes(pdf);
     await expect(
       validateConformance(parsed, '', { engine: ValidationEngine.VERAPDF }),
-    ).rejects.toThrow(/veraPDF not found/);
+    ).rejects.toMatchObject({
+      code: 'VERAPDF_NOT_FOUND',
+      message: expect.stringMatching(/veraPDF not found/),
+    });
+  });
+
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-013 どこにも入っていない: 探した結果は not_installed', async () => {
+    expect(await resolveVeraPdf()).toEqual({ available: false, reason: 'not_installed' });
   });
 });
 
@@ -196,9 +235,9 @@ describe('veraPDF engine selection', () => {
  * and nothing authoritative was run".
  *
  * These tests set the env var themselves, so they exercise the path regardless
- * of whether the machine running them has veraPDF installed. That matters: the
- * neighbouring negative test above returns early on a machine that has it, and
- * a test that quietly skips is a test that cannot fail.
+ * of whether the machine running them has veraPDF installed. A test that
+ * quietly skips is a test that cannot fail (the not_installed tests above
+ * used to do exactly that, until the well-known paths could be emptied).
  */
 describe('veraPDF configured but unusable', () => {
   const UNUSABLE = '/nonexistent/verapdf';

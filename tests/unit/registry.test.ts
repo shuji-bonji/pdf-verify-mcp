@@ -117,6 +117,12 @@ describe('tool registry (external spec)', () => {
     }
   });
 
+  it('SPEC-VERIFY-VALIDATE-CONFORMANCE-013 説明に 2 つの code が出る', () => {
+    const description = listed.find((t) => t.name === 'validate_conformance')?.description ?? '';
+    expect(description).toContain('VERAPDF_NOT_AVAILABLE');
+    expect(description).toContain('VERAPDF_NOT_FOUND');
+  });
+
   // 3. 受け付ける引数
   it.each(Object.entries(EXPECTED_PROPERTIES))('%s は引数の一覧を保つ', (name, props) => {
     const tool = listed.find((t) => t.name === name);

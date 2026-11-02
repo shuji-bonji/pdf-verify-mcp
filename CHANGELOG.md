@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Documentation
+
+- **`validate_conformance` now names both error codes for `engine: "verapdf"`.** When
+  veraPDF cannot be used the call fails rather than falling back to native, with
+  `VERAPDF_NOT_AVAILABLE` when `PDF_VERIFY_VERAPDF` is set but unusable (already described)
+  and **`VERAPDF_NOT_FOUND`** when veraPDF is in none of `PDF_VERIFY_VERAPDF`, PATH or the
+  well-known install locations (returned since 0.13.0, but not in the tool description).
+  The codes, messages and hints are unchanged; only the `tools/list` description text
+  changed. Specified as `SPEC-VERIFY-VALIDATE-CONFORMANCE-013`.
+
+### Tests
+
+- The `VERAPDF_NOT_FOUND` test no longer returns early on a machine that has veraPDF. It
+  empties `PDF_VERIFY_VERAPDF`, PATH and the well-known locations (via the new internal
+  `setWellKnownPathsForTesting`, not exported from the package) and checks the error
+  `code`, not just the message.
+
 ## [0.32.0]　- 2026-11-02
 
 ### Fixed
