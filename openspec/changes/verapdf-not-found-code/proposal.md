@@ -1,6 +1,6 @@
 ---
-approved:
-pr:
+approved: 2026-11-02
+pr: 28
 implementation: required
 targets: [validate-conformance]
 ---
