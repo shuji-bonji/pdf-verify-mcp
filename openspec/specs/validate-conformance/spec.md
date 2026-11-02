@@ -1,8 +1,8 @@
 ---
 spec_id: VERIFY
 kind: tool
-approved:
-pr:
+approved: 2026-11-02
+pr: 26
 ---
 # validate-conformance
 
