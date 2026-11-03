@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.32.2] - 2026-11-03
+
+### Changed
+
+- **Dependencies: normativepdf 0.9.0 → 0.9.1, @normativepdf/recover 0.1.2 → 0.1.3,
+  @shuji-bonji/pdf-constraints 0.6.1 → 0.7.2.** No tool changes its inputs, its verdicts or
+  its JSON. The only visible change is the version that `validate_clauses` names in its
+  Markdown (`Decided by: @shuji-bonji/pdf-constraints 0.7.2 …`) and in `constraintsVersion`.
+  - normativepdf 0.9.1 decodes a UTF-16 surrogate that is not part of a pair as U+FFFD when it
+    reads a text string (§7.9.2.2). recover 0.1.3 carries the same normativepdf, so the three
+    packages now share one copy (`npm ls normativepdf` shows a single, deduped 0.9.1). With
+    only normativepdf raised, recover 0.1.2 would have kept 0.9.0 next to it.
+  - pdf-constraints 0.7.0–0.7.2 changed the CLI's exit code (2 when nothing was decided) and its
+    own dependencies. The library API and the report that `validate_clauses` reads are unchanged.
+
+  Acceptance (golden A/B, `scripts/golden.mjs`, 2,955 specimens × 7 tools = 20,685 calls, same
+  `dist/`, only the three dependencies swapped), both `--format json` and `--format markdown`:
+  after normalising two things — the pdf-constraints version in the Markdown and the validation
+  time (`validationTime.time`, `source: current_time`, which is the moment of the call) — **0
+  differences remain**. Of the 31,429 strings in the corpus none contains an unpaired surrogate,
+  so the corpus does not exercise the normativepdf change itself.
+
 ## [0.32.1] - 2026-11-02
 
 ### Documentation
