@@ -1,7 +1,14 @@
+---
+spec_id: VERIFY
+kind: common
+introduced_by: family-error-contract
+---
 # common-errors Specification
 
 ## Purpose
-TBD - created by archiving change family-error-contract. Update Purpose after archive.
+
+7 ツールに共通する、失敗の返し方を定めます。ツール結果 `isError: true` の本文の形（PDF family の規約 pdf-agent-stack `docs/specs/06` §2.3）、状況ごとの `code`（houki-hub family の共通語彙と verify 固有のコード）、`retryable` の値、パスの検査をどのツールも同じ順で通すこと、移行の版のあいだ旧い名前も返すことを扱います。
+受け側の Skill（pdf-trust など）は `code` で分岐し、`INVALID_PDF` を「文書についての所見」、`DOC_NOT_FOUND`・`INVALID_ARGUMENT`・`INTERNAL_ERROR` を「判定できなかった」として扱います。SDK がハンドラより前に拒む入力検証の失敗は、この capability の対象外です（§2.11）。
 
 ## Requirements
 
