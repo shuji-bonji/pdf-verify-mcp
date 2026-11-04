@@ -66,6 +66,11 @@
 - **WHEN** `validate_clauses` に存在しない絶対パスを渡す
 - **THEN** `code` は `DOC_NOT_FOUND` で、`INVALID_PDF` ではない
 
+#### Scenario: 7 ツールとも存在しないパスは DOC_NOT_FOUND
+
+- **WHEN** 7 ツールのそれぞれに存在しない絶対パスを渡す
+- **THEN** どのツールも `code` は `DOC_NOT_FOUND`
+
 #### Scenario: validate_clauses も相対パスは INVALID_ARGUMENT
 
 - **WHEN** `validate_clauses` に相対パスを渡す

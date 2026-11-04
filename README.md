@@ -159,6 +159,37 @@ The native subset stops where pdf-lib does. Rules needing content-stream analysi
 
 > Without an explicit flavour, PDF/UA is selected only when the document declares PDF/UA and not PDF/A. Use pdf-reader-mcp's `inspect_tags` to examine the structure tree itself; conformance judgment lives here.
 
+## Errors (v0.33.0)
+
+A failed call returns `isError: true` with a JSON body in the PDF family shape. Branch on `code`, not on the sentence.
+
+```json
+{
+  "error": "File not found: /path/to/no-such-file.pdf",
+  "code": "DOC_NOT_FOUND",
+  "retryable": false,
+  "hint": "Check that the file exists and the path is correct",
+  "detail": { "legacyCode": "FILE_NOT_FOUND" }
+}
+```
+
+| `code` | When | `retryable` |
+|---|---|---|
+| `INVALID_ARGUMENT` | Missing or relative path, a path that is not a regular file, an unknown `flavour`. The reason is in `detail.reason` | `true` |
+| `DOC_NOT_FOUND` | No file at the path | `false` |
+| `INVALID_PDF` | The file breaks an ISO 32000 structural clause named in `error` (a text file or an empty file breaks §7.5.2). **A finding about the file, not a server failure** | `false` |
+| `ENCRYPTED_PDF` | Encryption stops the check (supply `password`, or use `engine: "native"`) | `true` |
+| `WRONG_PASSWORD` | The supplied password is wrong | `true` |
+| `FILE_TOO_LARGE` | Over the size limit | `false` |
+| `INVALID_BYTE_RANGE` | A signature's `/ByteRange` is malformed | `false` |
+| `VERAPDF_NOT_FOUND` / `VERAPDF_NOT_AVAILABLE` | `engine: "verapdf"` was asked for and veraPDF cannot be used | `true` |
+| `VERAPDF_NO_RESULT` | veraPDF ran and returned no validation result | `false` |
+| `INTERNAL_ERROR` | A failure of this server only | `false` |
+
+**0.33.x is a transition release.** Up to 0.32.x the body was `{ error: true, code, message, suggestion }` with the codes `FILE_NOT_FOUND`, `PARSE_FAILED`, `MISSING_PATH`, `RELATIVE_PATH`, `NOT_A_FILE` and `INVALID_FLAVOUR`. 0.33.x also returns `detail.legacyCode` (the code 0.32.x returned), `message` (same as `error`) and `suggestion` (same as `hint`); the next minor removes them.
+
+Input that the MCP SDK rejects before the handler runs (for example a key the schema does not declare) keeps the SDK's own message.
+
 ## Installation
 
 As a plugin (via the [shuji-bonji/claude-plugins](https://github.com/shuji-bonji/claude-plugins) marketplace, recommended):

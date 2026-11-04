@@ -21,7 +21,7 @@ import { toReadingScope } from '@normativepdf/recover';
 import type { CosDict } from 'normativepdf';
 import { MAX_FINDINGS, ValidationEngine, VERAPDF_ENV } from '../constants.js';
 import type { ParsedPdf, ReadingScope, Truncation } from '../types.js';
-import { PdfVerifyError } from '../utils/error-handler.js';
+import { invalidArgument, PdfVerifyError } from '../utils/error-handler.js';
 import { capArray } from '../utils/truncation.js';
 import { extractPdfaId, extractPdfuaPart } from './conformance.js';
 import { loadPdfDocument } from './pdf-parser.js';
@@ -292,7 +292,7 @@ async function validate(
 
   let flavour = resolveFlavour(parsed, options.flavour);
   if (options.flavour && !flavour) {
-    throw new PdfVerifyError(
+    throw invalidArgument(
       `Invalid flavour "${options.flavour}" (expected e.g. "pdfa-1b", "pdfa-2b", "pdfa-3b", "pdfa-4", "pdfa-4e", "pdfa-4f", "pdfua-1"; PDF/A-4 has no A/B/U level, so "pdfa-4b" is not a flavour)`,
       'INVALID_FLAVOUR',
     );
@@ -444,7 +444,7 @@ async function validatePdfua(
 
   let flavour = resolvePdfuaFlavour(target, options.flavour);
   if (options.flavour && !flavour) {
-    throw new PdfVerifyError(
+    throw invalidArgument(
       `Invalid flavour "${options.flavour}" (expected "pdfua-1" or "pdfua-2")`,
       'INVALID_FLAVOUR',
     );

@@ -142,7 +142,7 @@ describe('条文を名指しする拒否は、サーバの故障ではない', (
     expect(report.results.length).toBeGreaterThan(0);
   });
 
-  it('🔴 どうやっても読めない文書は PARSE_FAILED であって INTERNAL_ERROR ではない', async () => {
+  it('SPEC-VERIFY-COMMON-ERRORS-003 組み直す材料の無い文書は INVALID_PDF（INTERNAL_ERROR ではない）', async () => {
     // 相互参照表も `N G obj` も無い = 組み直す材料が 1 つも無い
     const dir = await mkdtemp(join(tmpdir(), 'pdf-verify-scope-'));
     const file = join(dir, 'no-objects.pdf');
@@ -151,8 +151,9 @@ describe('条文を名指しする拒否は、サーバの故障ではない', (
     await expect(validateClauses(file)).rejects.toThrow(PdfVerifyError);
     const error = await validateClauses(file).catch((e: unknown) => e as PdfVerifyError);
     // INTERNAL_ERROR だと、受け側は「調べられませんでした」の枠に落とす
-    expect(error.code).toBe('PARSE_FAILED');
-    expect(error.suggestion).toMatch(/finding about the file, not a failure of this server/);
+    expect(error.code).toBe('INVALID_PDF');
+    expect(error.legacyCode).toBe('PARSE_FAILED');
+    expect(error.hint).toMatch(/finding about the file, not a failure of this server/);
   });
 
   it('条文どおりの文書では、そもそも拒否されない（空振り検査の対）', async () => {

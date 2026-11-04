@@ -153,6 +153,37 @@ PDF/UA のネイティブ違反には `severity` が付きます。`error` の�
 
 > flavour 未指定時は、PDF/A を宣言せず PDF/UA のみを宣言する文書に限り PDF/UA を自動選択します。構造ツリーそのものの調査は pdf-reader-mcp の `inspect_tags` を、準拠の判定は本サーバを使ってください。
 
+## エラー（v0.33.0）
+
+失敗した呼び出しは `isError: true` で、本文は PDF family の形の JSON です。分岐には文ではなく `code` を使ってください。
+
+```json
+{
+  "error": "File not found: /path/to/no-such-file.pdf",
+  "code": "DOC_NOT_FOUND",
+  "retryable": false,
+  "hint": "Check that the file exists and the path is correct",
+  "detail": { "legacyCode": "FILE_NOT_FOUND" }
+}
+```
+
+| `code` | 返す状況 | `retryable` |
+|---|---|---|
+| `INVALID_ARGUMENT` | パスが無い・相対パス・通常のファイルでない・知らない `flavour`。理由は `detail.reason` | `true` |
+| `DOC_NOT_FOUND` | パスにファイルが無い | `false` |
+| `INVALID_PDF` | ファイルが ISO 32000 の構造の条文に反している（条文は `error` にあります。テキストのファイルや 0 バイトのファイルは §7.5.2 に反します）。**サーバーの故障ではなく、文書についての所見です** | `false` |
+| `ENCRYPTED_PDF` | 暗号化のため判定を進めない（`password` を渡すか、`engine: "native"` を使います） | `true` |
+| `WRONG_PASSWORD` | 渡したパスワードが違う | `true` |
+| `FILE_TOO_LARGE` | サイズの上限を超えた | `false` |
+| `INVALID_BYTE_RANGE` | 署名の `/ByteRange` が壊れている | `false` |
+| `VERAPDF_NOT_FOUND` / `VERAPDF_NOT_AVAILABLE` | `engine: "verapdf"` を指定したが veraPDF を使えない | `true` |
+| `VERAPDF_NO_RESULT` | veraPDF は動いたが判定の結果を返さなかった | `false` |
+| `INTERNAL_ERROR` | このサーバーの故障だけ | `false` |
+
+**0.33.x は移行の版です。** 0.32.x までの本文は `{ error: true, code, message, suggestion }` で、コードは `FILE_NOT_FOUND`・`PARSE_FAILED`・`MISSING_PATH`・`RELATIVE_PATH`・`NOT_A_FILE`・`INVALID_FLAVOUR` でした。0.33.x はこれに加えて `detail.legacyCode`（0.32.x で返していたコード）・`message`（`error` と同じ値）・`suggestion`（`hint` と同じ値）も返します。次の minor でこの 3 つを外します。
+
+MCP SDK がハンドラより前に拒む入力（スキーマに無いキーなど）は、SDK の文言のまま返ります。
+
 ## インストール
 
 Plugin として（[shuji-bonji/claude-plugins](https://github.com/shuji-bonji/claude-plugins) marketplace 経由、推奨）:

@@ -19,7 +19,7 @@ import { openDocument, toReadingScope } from '@normativepdf/recover';
 import { checkFile, listTables } from '@shuji-bonji/pdf-constraints';
 import { MAX_FINDINGS } from '../constants.js';
 import type { ReadingScope, Truncation } from '../types.js';
-import { toStructuralRefusal } from '../utils/error-handler.js';
+import { assertReadablePdf, toStructuralRefusal } from '../utils/error-handler.js';
 import { logger } from '../utils/logger.js';
 import { capArray } from '../utils/truncation.js';
 
@@ -116,6 +116,11 @@ export async function validateClauses(
   // 開く段でも条文で拒まれることがある（`startxref` がどこも指していない等）。
   // ここを素通しにすると、その 1 件だけが INTERNAL_ERROR のまま残る —— 実測で
   // 残った（ua-broken-startxref.pdf）。拒否の作り方は 1 つに寄せる。
+  // ほかの 6 ツールと同じパスの検査を先に通す（SPEC-VERIFY-COMMON-ERRORS-004・#32）。
+  // これが無いと、存在しないパスの ENOENT が下の catch で「構造の条文に反する」に化け、
+  // ファイルが無いことを文書の違反として報告していた。
+  await assertReadablePdf(filePath);
+
   let scope: ReadingScope;
   try {
     scope = toReadingScope(

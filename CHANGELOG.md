@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Changed (breaking for callers that branch on error codes)
+
+- **Error responses now use the PDF family shape and vocabulary** (#35, pdf-agent-stack#48,
+  `docs/specs/06` §2.3; SPEC-VERIFY-COMMON-ERRORS-001–006). The body of an `isError: true`
+  result is `{ error, code, retryable, hint?, detail }`: `error` is the English sentence that
+  used to be `message`, `hint` is what used to be `suggestion`, and `retryable` is always
+  present, with one value per `code`.
+  - `FILE_NOT_FOUND` → `DOC_NOT_FOUND`
+  - `PARSE_FAILED` → `INVALID_PDF` (still a finding about the file, not a server failure; the
+    hint is unchanged)
+  - `MISSING_PATH`, `RELATIVE_PATH`, `NOT_A_FILE`, `INVALID_FLAVOUR` → `INVALID_ARGUMENT`, with
+    the old name in `detail.reason`
+  - `ENCRYPTED_PDF`, `FILE_TOO_LARGE`, `INTERNAL_ERROR` and the verify-specific codes
+    (`INVALID_BYTE_RANGE`, `WRONG_PASSWORD`, `VERAPDF_NOT_FOUND`, `VERAPDF_NOT_AVAILABLE`,
+    `VERAPDF_NO_RESULT`) keep their names.
+- **Transition.** For this minor only, every error also carries `detail.legacyCode` (the code
+  0.32.x returned for the same case), `message` (same as `error`) and `suggestion` (same as
+  `hint`). The next minor removes them. pdf-trust-skill 0.8.4 reads both the old and the new
+  names.
+
+### Fixed
+
+- **`validate_clauses` no longer reports a missing file as a structural violation** (#32). It
+  returned `PARSE_FAILED` with a hint telling the caller to record a structural violation. It now
+  checks the path the same way as the other six tools before opening the file, so a missing path
+  is `DOC_NOT_FOUND`, a relative path is `INVALID_ARGUMENT`, and an oversized file is
+  `FILE_TOO_LARGE`.
+
+### Unchanged
+
+- `tools/list` (the responses of 0.32.2 and this build, taken over stdio, are identical).
+- Successful output: only the error body and the path check at the start of `validate_clauses`
+  changed. The golden A/B over the corpus was not rerun for this change.
+- Which inputs fail (apart from `validate_clauses` above), and the wording of `error` and `hint`.
+- Input that the MCP SDK rejects before the handler runs (an undeclared key, for example) still
+  carries the SDK's own message (§2.11).
+
 ## [0.32.2] - 2026-11-03
 
 ### Changed
