@@ -31,6 +31,6 @@
 ## 5. 承認と取り込み（人が判断する）
 
 - [x] 5.1 人が `proposal.md` の front matter に `approved: YYYY-MM-DD` と `pr: N` を書く
-- [ ] 5.2 マージの前に、同じ PR の中で `npx openspec archive family-error-contract --yes` を実行する
+- [x] 5.2 マージの前に、同じ PR の中で `npx openspec archive family-error-contract --yes` を実行する
 - [ ] 5.3 archive の後、正本 `openspec/specs/common-errors/spec.md` の先頭に front matter（`spec_id: VERIFY`・`kind: common`・`introduced_by: family-error-contract`）と Purpose（50 文字以上）を書き足す（OpenSpec 1.14.1 は差分の front matter を写さない）
 - [ ] 5.4 `npx openspec validate --all && npx spec-ids check` が通る
