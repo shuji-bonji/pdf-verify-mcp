@@ -1,6 +1,6 @@
 ---
-approved:
-pr:
+approved: 2026-11-06
+pr: 38
 implementation: required
 targets: [verify-integrity]
 ---
