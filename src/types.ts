@@ -222,7 +222,14 @@ export interface IntegrityReport {
   /** Number of revisions detected (startxref count) */
   revisionCount: number;
   incrementalUpdateCount: number;
+  /**
+   * Signed signature dictionaries (/ByteRange and /Contents present), **not
+   * counting document timestamps** — the same meaning in every tool
+   * (SPEC-VERIFY-COMMON-OUTPUT-002; 0.34.0 counted them here).
+   */
   signatureCount: number;
+  /** Signed document timestamp dictionaries (/Type /DocTimeStamp, ISO 32000-2 §12.8.5) */
+  documentTimestampCount: number;
   /** Signatures whose signed range is followed by additional bytes */
   signaturesWithLaterChanges: {
     fieldName: string | null;

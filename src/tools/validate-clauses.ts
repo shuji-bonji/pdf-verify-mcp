@@ -54,7 +54,7 @@ Args:
   - given (object, optional): External facts, e.g. { "isSubset": true }
 
 Returns:
-  Every report begins with a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
+  Every report begins with file_path (the path as received, so answers to side-by-side calls can be matched to their inputs; markdown shows it as "File:" under the heading), then a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
 
   Size (v0.29.0): results lists at most 200 entries (file order); violations and notDecided are counted over all of them and resultsTruncated = { returned, total } says when the list was cut. JSON is never cut by length.
 
@@ -90,8 +90,11 @@ Examples:
           domains: params.domains,
           given: params.given,
         });
-        const text = renderBody(params.response_format === ResponseFormat.JSON, report, () =>
-          formatClauseValidation(report),
+        const text = renderBody(
+          params.response_format === ResponseFormat.JSON,
+          params.file_path,
+          report,
+          () => formatClauseValidation(report),
         );
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {

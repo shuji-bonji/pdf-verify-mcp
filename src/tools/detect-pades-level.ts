@@ -32,7 +32,7 @@ Returns:
 
   Size (v0.29.0): at most 32 signatures are listed; levelsTruncated = { returned, total } says when the list was cut. JSON is never cut by length.
 
-  Every report begins with a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
+  Every report begins with file_path (the path as received, so answers to side-by-side calls can be matched to their inputs; markdown shows it as "File:" under the heading), then a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
 
   Per-signature level with evidence (signature timestamp, DSS, VRI, document timestamp presence).
 
@@ -61,8 +61,11 @@ Examples:
           levels: capped.items,
           levelsTruncated: capped.truncated,
         };
-        const text = renderBody(params.response_format === ResponseFormat.JSON, result, () =>
-          formatPadesReports(result),
+        const text = renderBody(
+          params.response_format === ResponseFormat.JSON,
+          params.file_path,
+          result,
+          () => formatPadesReports(result),
         );
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {

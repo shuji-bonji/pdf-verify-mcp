@@ -21,7 +21,7 @@ Args:
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
 
 Returns:
-  Every report begins with a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
+  Every report begins with file_path (the path as received, so answers to side-by-side calls can be matched to their inputs; markdown shows it as "File:" under the heading), then a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
 
   Declared PDF/A part/conformance level and PDF/UA part, plus the PDF version.
 
@@ -44,8 +44,11 @@ Examples:
       try {
         const parsed = await parsePdf(params.file_path);
         const report = identifyConformance(parsed);
-        const text = renderBody(params.response_format === ResponseFormat.JSON, report, () =>
-          formatConformanceReport(report),
+        const text = renderBody(
+          params.response_format === ResponseFormat.JSON,
+          params.file_path,
+          report,
+          () => formatConformanceReport(report),
         );
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {

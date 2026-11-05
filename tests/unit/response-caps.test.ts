@@ -59,13 +59,14 @@ describe('renderBody', () => {
   const big = { items: 'x'.repeat(CHARACTER_LIMIT + 100) };
 
   it('never cuts JSON', () => {
-    const text = renderBody(true, big, () => 'unused');
+    const text = renderBody(true, '/tmp/big.pdf', big, () => 'unused');
     expect(text.length).toBeGreaterThan(CHARACTER_LIMIT);
-    expect(JSON.parse(text)).toEqual(big);
+    // file_path は SPEC-VERIFY-COMMON-OUTPUT-001（0.35.0）で最初の項目になった
+    expect(JSON.parse(text)).toEqual({ file_path: '/tmp/big.pdf', ...big });
   });
 
   it('cuts markdown at CHARACTER_LIMIT and says so', () => {
-    const text = renderBody(false, big, () => 'm'.repeat(CHARACTER_LIMIT + 100));
+    const text = renderBody(false, '/tmp/big.pdf', big, () => 'm'.repeat(CHARACTER_LIMIT + 100));
     expect(text.length).toBeLessThan(CHARACTER_LIMIT + 200);
     expect(text).toContain('(truncated');
     expect(truncateIfNeeded('short').truncated).toBe(false);

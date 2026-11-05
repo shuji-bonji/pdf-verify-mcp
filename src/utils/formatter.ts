@@ -36,8 +36,31 @@ export function truncateIfNeeded(text: string): { text: string; truncated: boole
  * The body a tool returns: markdown goes through the character limit, JSON
  * goes out as is (v0.29.0, #18).
  */
-export function renderBody(json: boolean, value: unknown, markdown: () => string): string {
-  return json ? JSON.stringify(value, null, 2) : truncateIfNeeded(markdown()).text;
+export function renderBody(
+  json: boolean,
+  filePath: string,
+  value: object,
+  markdown: () => string,
+): string {
+  // SPEC-VERIFY-COMMON-OUTPUT-001: which file this answer is about comes first —
+  // before the reading scope — so answers to calls made side by side can be
+  // matched to their inputs. The value is echoed as received, not normalised.
+  if (json) return JSON.stringify({ file_path: filePath, ...value }, null, 2);
+  return truncateIfNeeded(withFileLine(markdown(), filePath)).text;
+}
+
+/** Put `File: <path>` right under the report's first heading. */
+function withFileLine(text: string, filePath: string): string {
+  const fileLine = `File: ${filePath}`;
+  const end = text.indexOf('\n');
+  if (!text.startsWith('#') || end === -1) return `${fileLine}\n\n${text}`;
+  return `${text.slice(0, end)}\n\n${fileLine}\n${text.slice(end)}`;
+}
+
+/** `Signatures: 1` plus the document timestamps beside it (SPEC-VERIFY-COMMON-OUTPUT-002). */
+function signatureCountText(signatures: number | null, timestamps: number | null): string {
+  if (signatures === null) return 'not counted';
+  return timestamps ? `${signatures} (document timestamps: ${timestamps})` : `${signatures}`;
 }
 
 function yesNo(value: boolean | null | undefined): string {
@@ -249,7 +272,9 @@ export function formatIntegrityReport(report: IntegrityReport): string {
   lines.push(`- ${revisionChainLine(report.revisionChain)}`);
   const countLine = revisionCountLine(report);
   if (countLine) lines.push(`- ${countLine}`);
-  lines.push(`- Signatures: ${report.signatureCount}`);
+  lines.push(
+    `- Signatures: ${signatureCountText(report.signatureCount, report.documentTimestampCount)}`,
+  );
   lines.push(`- Last signature covers entire file: ${yesNo(report.lastSignatureCoversFile)}`);
   lines.push(`- DSS present: ${yesNo(report.hasDss)}`);
   if (report.signaturesWithLaterChanges.length > 0) {
@@ -344,7 +369,8 @@ interface PolicyReportForFormat {
   advisories: string[];
   notes: string[];
   facts: {
-    signatureCount: number;
+    signatureCount: number | null;
+    documentTimestampCount: number | null;
     signatures: {
       fieldName: string | null;
       verdict: string;
@@ -377,7 +403,7 @@ export function formatPolicyReport(report: PolicyReportForFormat): string {
   lines.push(`- Profile: ${report.profile}`);
   lines.push(`- Verdict: **${report.verdict}**`);
   lines.push(
-    `- Signatures: ${report.facts.signatureCount} (revisions: ${report.facts.revisionCount}, incremental updates: ${report.facts.incrementalUpdateCount}, DSS: ${yesNo(report.facts.hasDss)})`,
+    `- Signatures: ${signatureCountText(report.facts.signatureCount, report.facts.documentTimestampCount)} (revisions: ${report.facts.revisionCount}, incremental updates: ${report.facts.incrementalUpdateCount}, DSS: ${yesNo(report.facts.hasDss)})`,
   );
   if (report.firedRules.length > 0) {
     lines.push('', '## Fired rules');

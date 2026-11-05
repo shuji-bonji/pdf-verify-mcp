@@ -43,7 +43,8 @@ beforeAll(async () => {
     objects: [
       {
         objectNumber: 8,
-        body: `<< /Type /DocTimeStamp /Filter /Adobe.PPKLite /SubFilter /ETSI.RFC3161 /ByteRange [0 10 20 30] /Contents <${'00'.repeat(64)}> >>`,
+        // 末尾の 0 は詰め物として切られる（trimSignatureContents）ので、0 でない値で埋める
+        body: `<< /Type /DocTimeStamp /Filter /Adobe.PPKLite /SubFilter /ETSI.RFC3161 /ByteRange [0 10 20 30] /Contents <${'ab'.repeat(64)}> >>`,
       },
     ],
   });

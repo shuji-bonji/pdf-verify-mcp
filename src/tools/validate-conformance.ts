@@ -65,7 +65,7 @@ Args:
 When veraPDF does not run, the report says so before the numbers: authoritativeValidation.performed is false and names the reason ("not_installed", "configured_path_unusable" when PDF_VERIFY_VERAPDF points at something that is not executable, or "native_engine_requested"). A configured-but-unusable path is never silently replaced by another executable. With engine: "verapdf" the call fails instead of falling back to native: the error code is VERAPDF_NOT_AVAILABLE when PDF_VERIFY_VERAPDF is set but unusable, and VERAPDF_NOT_FOUND when veraPDF is in none of PDF_VERIFY_VERAPDF, PATH or the well-known install locations.
 
 Returns:
-  Every report begins with a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
+  Every report begins with file_path (the path as received, so answers to side-by-side calls can be matched to their inputs; markdown shows it as "File:" under the heading), then a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
 
   Size (v0.29.0): violations lists at most 200 entries; failedRules and compliant are computed over all of them and violationsTruncated = { returned, total } says when the list was cut. JSON is never cut by length.
 
@@ -93,8 +93,11 @@ Examples:
           engine: params.engine,
           password: params.password,
         });
-        const text = renderBody(params.response_format === ResponseFormat.JSON, report, () =>
-          formatConformanceValidation(report),
+        const text = renderBody(
+          params.response_format === ResponseFormat.JSON,
+          params.file_path,
+          report,
+          () => formatConformanceValidation(report),
         );
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {

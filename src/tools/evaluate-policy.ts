@@ -98,9 +98,11 @@ Args:
   - password (string, optional): Password for an encrypted PDF
 
 Returns:
-  Every report begins with a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
+  Every report begins with file_path (the path as received, so answers to side-by-side calls can be matched to their inputs; markdown shows it as "File:" under the heading), then a "scope" object - how far the reading got, not a verdict: whether the cross-reference chain could be walked to the end (chainStop), whether this tool had to rebuild the cross-reference table itself (reconstructed - when true, the table is this tool's reconstruction and not the one the file carries), how many objects and sections were read, and whether an encrypted document could be opened. Read it before the verdict: "no violations" over a rebuilt table is not the same statement as "no violations" over the file's own table.
 
   Size (v0.29.0): the verdict is computed over EVERY signature; facts.signatures lists at most 32 of them and facts.signaturesTruncated = { returned, total } says when it was cut. JSON is never cut by length.
+
+  facts.signatureCount counts signatures and leaves out document timestamps (facts.documentTimestampCount); facts.signatures lists both, so its length can be larger.
 
   verdict, firedRules (rule IDs with per-rule verdict and reason), advisories (recommendations that do not affect the verdict), and the underlying facts summary.
 
@@ -190,7 +192,9 @@ Examples:
           scope: toReadingScope(parsed.scope),
           ...evaluation,
           facts: {
+            // SPEC-VERIFY-COMMON-OUTPUT-002: the same meaning as verify_integrity's
             signatureCount: signatures.filter((s) => !s.isDocumentTimestamp).length,
+            documentTimestampCount: signatures.filter((s) => s.isDocumentTimestamp).length,
             // v0.29.0 (#18): the verdict above was computed over every
             // signature; only this listing is capped.
             signatures: factSignatures.items,
@@ -219,8 +223,11 @@ Examples:
           },
         };
 
-        const text = renderBody(params.response_format === ResponseFormat.JSON, report, () =>
-          formatPolicyReport(report),
+        const text = renderBody(
+          params.response_format === ResponseFormat.JSON,
+          params.file_path,
+          report,
+          () => formatPolicyReport(report),
         );
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
