@@ -52,15 +52,6 @@ export const RETRYABLE: Readonly<Record<VerifyErrorCode, boolean>> = {
   INTERNAL_ERROR: false,
 };
 
-/**
- * 0.32.x で同じ状況に返していた `code`（SPEC-VERIFY-COMMON-ERRORS-006）。
- * 🔴 移行の版（0.33.x）だけ。次の minor で、これと `message`・`suggestion` を外す。
- */
-const LEGACY_CODE: Partial<Record<VerifyErrorCode, string>> = {
-  DOC_NOT_FOUND: 'FILE_NOT_FOUND',
-  INVALID_PDF: 'PARSE_FAILED',
-};
-
 /** pdf-verify-mcp specific error with a stable code and a recovery hint */
 export class PdfVerifyError extends Error {
   constructor(
@@ -76,12 +67,6 @@ export class PdfVerifyError extends Error {
   get retryable(): boolean {
     return RETRYABLE[this.code];
   }
-
-  /** 0.32.x で同じ状況に返していた `code`。`INVALID_ARGUMENT` は理由がそのまま旧名。 */
-  get legacyCode(): string {
-    if (this.code === 'INVALID_ARGUMENT' && this.reason) return this.reason;
-    return LEGACY_CODE[this.code] ?? this.code;
-  }
 }
 
 /** `INVALID_ARGUMENT` を作る。理由は `detail.reason` に出る。 */
@@ -93,55 +78,45 @@ export function invalidArgument(
   return new PdfVerifyError(message, 'INVALID_ARGUMENT', hint, reason);
 }
 
-/** ツール結果 `isError: true` の本文（pdf-agent-stack `docs/specs/06` §2.3） */
+/**
+ * ツール結果 `isError: true` の本文（pdf-agent-stack `docs/specs/06` §2.3）。
+ *
+ * 0.33.x は移行の版として `message`・`suggestion`・`detail.legacyCode` も返していた。
+ * 0.34.0 で外した（SPEC-VERIFY-COMMON-ERRORS-001。006 は削除）。
+ */
 export interface StructuredError {
   /** 英語の 1 文 */
   error: string;
   code: VerifyErrorCode;
   retryable: boolean;
   hint?: string;
-  detail: {
+  /** 書くことがあるときだけ置く（`INVALID_ARGUMENT` の細かい理由） */
+  detail?: {
     reason?: InvalidArgumentReason;
-    /** @deprecated 移行の版（0.33.x）だけ。0.32.x で同じ状況に返していた `code` */
-    legacyCode: string;
   };
-  /** @deprecated 移行の版（0.33.x）だけ。`error` と同じ値 */
-  message: string;
-  /** @deprecated 移行の版（0.33.x）だけ。`hint` と同じ値 */
-  suggestion?: string;
 }
 
 function toBody(
   error: string,
   code: VerifyErrorCode,
-  options: { hint?: string; reason?: InvalidArgumentReason; legacyCode: string },
+  options: { hint?: string; reason?: InvalidArgumentReason } = {},
 ): StructuredError {
-  const body: StructuredError = {
+  return {
     error,
     code,
     retryable: RETRYABLE[code],
     ...(options.hint !== undefined ? { hint: options.hint } : {}),
-    detail: {
-      ...(options.reason !== undefined ? { reason: options.reason } : {}),
-      legacyCode: options.legacyCode,
-    },
-    message: error,
+    ...(options.reason !== undefined ? { detail: { reason: options.reason } } : {}),
   };
-  if (options.hint !== undefined) body.suggestion = options.hint;
-  return body;
 }
 
 /** Convert any thrown value into a structured error payload */
 export function handleStructuredError(error: unknown): StructuredError {
   if (error instanceof PdfVerifyError) {
-    return toBody(error.message, error.code, {
-      hint: error.hint,
-      reason: error.reason,
-      legacyCode: error.legacyCode,
-    });
+    return toBody(error.message, error.code, { hint: error.hint, reason: error.reason });
   }
   const message = error instanceof Error ? error.message : String(error);
-  return toBody(message, 'INTERNAL_ERROR', { legacyCode: 'INTERNAL_ERROR' });
+  return toBody(message, 'INTERNAL_ERROR');
 }
 
 /**

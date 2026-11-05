@@ -153,7 +153,7 @@ PDF/UA のネイティブ違反には `severity` が付きます。`error` の�
 
 > flavour 未指定時は、PDF/A を宣言せず PDF/UA のみを宣言する文書に限り PDF/UA を自動選択します。構造ツリーそのものの調査は pdf-reader-mcp の `inspect_tags` を、準拠の判定は本サーバを使ってください。
 
-## エラー（v0.33.0）
+## エラー（v0.33.0。旧い名前は v0.34.0 で外した）
 
 失敗した呼び出しは `isError: true` で、本文は PDF family の形の JSON です。分岐には文ではなく `code` を使ってください。
 
@@ -162,8 +162,7 @@ PDF/UA のネイティブ違反には `severity` が付きます。`error` の�
   "error": "File not found: /path/to/no-such-file.pdf",
   "code": "DOC_NOT_FOUND",
   "retryable": false,
-  "hint": "Check that the file exists and the path is correct",
-  "detail": { "legacyCode": "FILE_NOT_FOUND" }
+  "hint": "Check that the file exists and the path is correct"
 }
 ```
 
@@ -180,7 +179,7 @@ PDF/UA のネイティブ違反には `severity` が付きます。`error` の�
 | `VERAPDF_NO_RESULT` | veraPDF は動いたが判定の結果を返さなかった | `false` |
 | `INTERNAL_ERROR` | このサーバーの故障だけ | `false` |
 
-**0.33.x は移行の版です。** 0.32.x までの本文は `{ error: true, code, message, suggestion }` で、コードは `FILE_NOT_FOUND`・`PARSE_FAILED`・`MISSING_PATH`・`RELATIVE_PATH`・`NOT_A_FILE`・`INVALID_FLAVOUR` でした。0.33.x はこれに加えて `detail.legacyCode`（0.32.x で返していたコード）・`message`（`error` と同じ値）・`suggestion`（`hint` と同じ値）も返します。次の minor でこの 3 つを外します。
+**0.34.0 で旧い名前を外しました。** 0.32.x までの本文は `{ error: true, code, message, suggestion }` で、コードは `FILE_NOT_FOUND`・`PARSE_FAILED`・`MISSING_PATH`・`RELATIVE_PATH`・`NOT_A_FILE`・`INVALID_FLAVOUR` でした。移行の版の 0.33.x は `detail.legacyCode`・`message`・`suggestion` も返していましたが、0.34.0 で外しました。`message` の代わりに `error`、`suggestion` の代わりに `hint`、旧いコードの代わりに `code`（`INVALID_ARGUMENT` の細かい理由は `detail.reason`）を読んでください。対応は `FILE_NOT_FOUND` → `DOC_NOT_FOUND`、`PARSE_FAILED` → `INVALID_PDF`、`MISSING_PATH`・`RELATIVE_PATH`・`NOT_A_FILE`・`INVALID_FLAVOUR` → `INVALID_ARGUMENT` です。
 
 MCP SDK がハンドラより前に拒む入力（スキーマに無いキーなど）は、SDK の文言のまま返ります。
 

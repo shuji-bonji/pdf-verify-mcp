@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.34.0] - 2026-11-05
+
+Target version: 0.34.0. OpenSpec change `remove-legacy-error-names`
+(SPEC-VERIFY-COMMON-ERRORS-001 modified, -006 removed).
+
+### Removed (breaking for callers that still read the 0.32.x names)
+
+- **The transition fields of 0.33.x are gone** (pdf-agent-stack#48). Error bodies no longer
+  carry `message` (same as `error`), `suggestion` (same as `hint`) or `detail.legacyCode` (the
+  0.32.x code). `detail` is present only when there is something to say — the `detail.reason`
+  of `INVALID_ARGUMENT`. Read `error`, `hint` and `code`: `FILE_NOT_FOUND` → `DOC_NOT_FOUND`,
+  `PARSE_FAILED` → `INVALID_PDF`, `MISSING_PATH` / `RELATIVE_PATH` / `NOT_A_FILE` /
+  `INVALID_FLAVOUR` → `INVALID_ARGUMENT` with the old name in `detail.reason`. The receiving
+  Skills already read the new names (pdf-trust v0.8.4, pdf-publish v0.7.2). The
+  `StructuredError` type loses the three fields and its `detail` becomes optional;
+  `PdfVerifyError.legacyCode` is removed.
+
 ## [0.33.0] - 2026-11-05
 
 ### Changed (breaking for callers that branch on error codes)

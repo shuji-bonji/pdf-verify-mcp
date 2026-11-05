@@ -14,17 +14,22 @@ introduced_by: family-error-contract
 
 ### Requirement: SPEC-VERIFY-COMMON-ERRORS-001 エラー応答の本文は family の平らな形にする
 
-7 ツールのハンドラが返す失敗は、ツール結果の `isError: true` で返し、`content` の text を JSON のオブジェクトにする（SHALL）。最上位には `error`（英語の 1 文。空でない文字列）・`code`（文字列）・`retryable`（真偽値）を必ず書き、任意で `hint`（英語の文字列）と `detail`（オブジェクト）を書く（SHALL）。最上位にこれ以外の項目を置かない（SHALL）。ただし移行の版のあいだは SPEC-VERIFY-COMMON-ERRORS-006 の `message`・`suggestion` を置く。根拠は pdf-agent-stack `docs/specs/06` §2.3。
+7 ツールのハンドラが返す失敗は、ツール結果の `isError: true` で返し、`content` の text を JSON のオブジェクトにする（SHALL）。最上位には `error`（英語の 1 文。空でない文字列）・`code`（文字列）・`retryable`（真偽値）を必ず書き、任意で `hint`（英語の文字列）と `detail`（オブジェクト）を書く（SHALL）。最上位にこれ以外の項目を置かない（SHALL）。0.33.x が移行のために置いていた `message`・`suggestion` と `detail.legacyCode` は置かない（SHALL）。根拠は pdf-agent-stack `docs/specs/06` §2.3。
 
 #### Scenario: 存在しないパスのエラーが形どおり
 
 - **WHEN** `identify_conformance` に存在しない絶対パスを渡す
-- **THEN** `isError` が `true` で、本文の `error` は空でない文字列、`retryable` は真偽値、最上位の項目は `error`・`code`・`retryable`・`hint`・`detail`・`message`・`suggestion` のどれか
+- **THEN** `isError` が `true` で、本文の `error` は空でない文字列、`retryable` は真偽値、最上位の項目は `error`・`code`・`retryable`・`hint`・`detail` のどれか
 
 #### Scenario: 故障のエラーも形どおり
 
 - **WHEN** ハンドラの中で `PdfVerifyError` でない例外が投げられる
 - **THEN** `code` は `INTERNAL_ERROR`、`error` は例外の文、`retryable` は `false`
+
+#### Scenario: 移行の版の旧い名前を返さない
+
+- **WHEN** 存在しないパス・PDF でないファイル・相対パスをそれぞれ渡す
+- **THEN** どの本文にも `message`・`suggestion` が無く、`detail` があっても `legacyCode` が無い
 
 ### Requirement: SPEC-VERIFY-COMMON-ERRORS-002 同じ状況には family の共通語彙の code を返す
 
@@ -106,27 +111,3 @@ introduced_by: family-error-contract
 
 - **WHEN** サーバーが返しうる `code` を 1 つずつ確かめる
 - **THEN** どの `code` にも `retryable` の値が 1 つ決まっている
-
-### Requirement: SPEC-VERIFY-COMMON-ERRORS-006 移行の版のあいだは旧い名前も返す
-
-この要求を入れた minor のあいだは、旧い名前を読む受け側のために、すべてのエラーに `detail.legacyCode`（0.32.x で同じ状況に返していた `code`。名前が変わらないコードは `code` と同じ値）を書き、最上位に `message`（`error` と同じ値）を書き、`hint` があれば最上位に `suggestion`（`hint` と同じ値）を書く（SHALL）。旧い名前の対応は、`DOC_NOT_FOUND` が `FILE_NOT_FOUND`、`INVALID_PDF` が `PARSE_FAILED`、`INVALID_ARGUMENT` が `detail.reason` の値（SHALL）。次の minor で外す（別の変更で REMOVED にする）。
-
-#### Scenario: 存在しないパスの旧名
-
-- **WHEN** 存在しない絶対パスを渡す
-- **THEN** `detail.legacyCode` は `FILE_NOT_FOUND`、`message` は `error` と同じ、`suggestion` は `hint` と同じ
-
-#### Scenario: PDF でないファイルの旧名
-
-- **WHEN** PDF でないファイルを渡す
-- **THEN** `detail.legacyCode` は `PARSE_FAILED`
-
-#### Scenario: 相対パスの旧名
-
-- **WHEN** 相対パスを渡す
-- **THEN** `detail.legacyCode` は `RELATIVE_PATH`
-
-#### Scenario: 名前の変わらないコードの旧名
-
-- **WHEN** ハンドラの中で `PdfVerifyError` でない例外が投げられる
-- **THEN** `detail.legacyCode` は `INTERNAL_ERROR`、`message` は `error` と同じ

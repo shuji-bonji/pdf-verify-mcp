@@ -159,7 +159,7 @@ The native subset stops where pdf-lib does. Rules needing content-stream analysi
 
 > Without an explicit flavour, PDF/UA is selected only when the document declares PDF/UA and not PDF/A. Use pdf-reader-mcp's `inspect_tags` to examine the structure tree itself; conformance judgment lives here.
 
-## Errors (v0.33.0)
+## Errors (v0.33.0, legacy names removed in v0.34.0)
 
 A failed call returns `isError: true` with a JSON body in the PDF family shape. Branch on `code`, not on the sentence.
 
@@ -168,8 +168,7 @@ A failed call returns `isError: true` with a JSON body in the PDF family shape. 
   "error": "File not found: /path/to/no-such-file.pdf",
   "code": "DOC_NOT_FOUND",
   "retryable": false,
-  "hint": "Check that the file exists and the path is correct",
-  "detail": { "legacyCode": "FILE_NOT_FOUND" }
+  "hint": "Check that the file exists and the path is correct"
 }
 ```
 
@@ -186,7 +185,7 @@ A failed call returns `isError: true` with a JSON body in the PDF family shape. 
 | `VERAPDF_NO_RESULT` | veraPDF ran and returned no validation result | `false` |
 | `INTERNAL_ERROR` | A failure of this server only | `false` |
 
-**0.33.x is a transition release.** Up to 0.32.x the body was `{ error: true, code, message, suggestion }` with the codes `FILE_NOT_FOUND`, `PARSE_FAILED`, `MISSING_PATH`, `RELATIVE_PATH`, `NOT_A_FILE` and `INVALID_FLAVOUR`. 0.33.x also returns `detail.legacyCode` (the code 0.32.x returned), `message` (same as `error`) and `suggestion` (same as `hint`); the next minor removes them.
+**The legacy names are gone from 0.34.0.** Up to 0.32.x the body was `{ error: true, code, message, suggestion }` with the codes `FILE_NOT_FOUND`, `PARSE_FAILED`, `MISSING_PATH`, `RELATIVE_PATH`, `NOT_A_FILE` and `INVALID_FLAVOUR`. 0.33.x, the transition release, also returned `detail.legacyCode`, `message` and `suggestion`; 0.34.0 removed them. Read `error` instead of `message`, `hint` instead of `suggestion`, and `code` (with `detail.reason` for `INVALID_ARGUMENT`) instead of the old code: `FILE_NOT_FOUND` → `DOC_NOT_FOUND`, `PARSE_FAILED` → `INVALID_PDF`, `MISSING_PATH` / `RELATIVE_PATH` / `NOT_A_FILE` / `INVALID_FLAVOUR` → `INVALID_ARGUMENT`.
 
 Input that the MCP SDK rejects before the handler runs (for example a key the schema does not declare) keeps the SDK's own message.
 

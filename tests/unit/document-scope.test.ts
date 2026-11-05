@@ -152,7 +152,6 @@ describe('条文を名指しする拒否は、サーバの故障ではない', (
     const error = await validateClauses(file).catch((e: unknown) => e as PdfVerifyError);
     // INTERNAL_ERROR だと、受け側は「調べられませんでした」の枠に落とす
     expect(error.code).toBe('INVALID_PDF');
-    expect(error.legacyCode).toBe('PARSE_FAILED');
     expect(error.hint).toMatch(/finding about the file, not a failure of this server/);
   });
 

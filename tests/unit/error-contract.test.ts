@@ -28,18 +28,15 @@ const TOOLS = [
   'evaluate_policy',
 ] as const;
 
-/** 契約の最上位の項目と、移行の版だけ認める項目（006） */
+/** 契約の最上位の項目（001）。0.33.x の移行の版の `message`・`suggestion` は 0.34.0 で外した */
 const TOP_LEVEL = ['error', 'code', 'retryable', 'hint', 'detail'];
-const LEGACY = ['message', 'suggestion'];
 
 interface ErrorBody {
   error: unknown;
   code: string;
   retryable: unknown;
   hint?: string;
-  detail?: { legacyCode?: string; reason?: string };
-  message?: string;
-  suggestion?: string;
+  detail?: { reason?: string };
 }
 
 let client: Client;
@@ -80,7 +77,7 @@ async function callError(
 }
 
 function expectShape(body: ErrorBody): void {
-  for (const key of Object.keys(body)) expect([...TOP_LEVEL, ...LEGACY]).toContain(key);
+  for (const key of Object.keys(body)) expect(TOP_LEVEL).toContain(key);
   expect(typeof body.error).toBe('string');
   expect(body.error).not.toBe('');
   expect(typeof body.code).toBe('string');
@@ -104,6 +101,20 @@ describe('SPEC-VERIFY-COMMON-ERRORS-001 エラー応答の本文は family の�
     expect(body.code).toBe('INTERNAL_ERROR');
     expect(body.error).toBe('boom');
     expect(body.retryable).toBe(false);
+  });
+
+  it('SPEC-VERIFY-COMMON-ERRORS-001 移行の版の旧い名前を返さない', async () => {
+    const bodies = [
+      (await callError('identify_conformance', { file_path: files.missing })).body,
+      (await callError('identify_conformance', { file_path: files.notPdf })).body,
+      (await callError('identify_conformance', { file_path: 'relative/file.pdf' })).body,
+      handleStructuredError(new Error('boom')) as unknown as ErrorBody,
+    ];
+    for (const body of bodies) {
+      expect(body).not.toHaveProperty('message');
+      expect(body).not.toHaveProperty('suggestion');
+      expect(body.detail ?? {}).not.toHaveProperty('legacyCode');
+    }
   });
 });
 
@@ -211,32 +222,5 @@ describe('SPEC-VERIFY-COMMON-ERRORS-005 retryable は code ごとに 1 つの値
       INTERNAL_ERROR: false,
     };
     expect(RETRYABLE).toEqual(expected);
-  });
-});
-
-describe('SPEC-VERIFY-COMMON-ERRORS-006 移行の版のあいだは旧い名前も返す', () => {
-  it('SPEC-VERIFY-COMMON-ERRORS-006 存在しないパスの旧名', async () => {
-    const { body } = await callError('identify_conformance', { file_path: files.missing });
-    expect(body.detail?.legacyCode).toBe('FILE_NOT_FOUND');
-    expect(body.message).toBe(body.error);
-    expect(body.hint).toBeTypeOf('string');
-    expect(body.suggestion).toBe(body.hint);
-  });
-
-  it('SPEC-VERIFY-COMMON-ERRORS-006 PDF でないファイルの旧名', async () => {
-    const { body } = await callError('identify_conformance', { file_path: files.notPdf });
-    expect(body.detail?.legacyCode).toBe('PARSE_FAILED');
-  });
-
-  it('SPEC-VERIFY-COMMON-ERRORS-006 相対パスの旧名', async () => {
-    const { body } = await callError('identify_conformance', { file_path: 'relative/file.pdf' });
-    expect(body.detail?.legacyCode).toBe('RELATIVE_PATH');
-  });
-
-  it('SPEC-VERIFY-COMMON-ERRORS-006 名前の変わらないコードの旧名', () => {
-    const body = handleStructuredError(new Error('boom')) as unknown as ErrorBody;
-    expect(body.detail?.legacyCode).toBe('INTERNAL_ERROR');
-    expect(body.message).toBe(body.error);
-    expect(body.suggestion).toBeUndefined();
   });
 });
