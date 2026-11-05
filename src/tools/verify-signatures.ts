@@ -6,7 +6,7 @@ import { toReadingScope } from '@normativepdf/recover';
 import { z } from 'zod';
 import { MAX_SIGNATURES, ResponseFormat, RevocationMode } from '../constants.js';
 import { PdfToolInputShape, RevocationOptionShape } from '../schemas/common.js';
-import { parsePdf } from '../services/pdf-parser.js';
+import { keyNotDerived, parsePdf, SIGNATURES_NOT_READ_NOTE } from '../services/pdf-parser.js';
 import { verifySignatures } from '../services/verification-service.js';
 import type { SignatureVerificationResult } from '../types.js';
 import { handleStructuredError } from '../utils/error-handler.js';
@@ -66,7 +66,7 @@ Args:
   - password (string, optional): Password for an encrypted PDF (permission-encrypted PDFs are decrypted automatically with the empty user password)
 
 Returns:
-  An object of the form { scope, signatures: [...] }. The top level changed from an array to an object in v0.21.0 - read .signatures for the list.
+  An object of the form { scope, signatures: [...] }. The top level changed from an array to an object in v0.21.0 - read .signatures for the list. signatures is null - not [] - when the document is encrypted and the key could not be derived (supply password); note then says why. [] means the fields were looked for and none is signed (v0.35.0).
 
   Size (v0.29.0): a JSON response is never cut by length. At most 32 signature fields are verified (file order); when the file has more, signaturesTruncated = { returned, total } is set and the remaining fields are NOT verified — evaluate_policy verifies every field. A markdown response is cut at 50,000 characters with a visible marker.
 
@@ -108,12 +108,23 @@ Examples:
           trustedOcspResponderPaths: params.trusted_ocsp_responders,
           maxSignatures: MAX_SIGNATURES,
         });
-        const result: SignatureVerificationResult = {
-          scope: toReadingScope(parsed.scope),
-          signatures,
-          signaturesTruncated:
-            fieldCount > MAX_SIGNATURES ? { returned: signatures.length, total: fieldCount } : null,
-        };
+        // SPEC-VERIFY-VERIFY-SIGNATURES-001 (#31): without a key no field was
+        // looked for — say so instead of returning an empty list.
+        const result: SignatureVerificationResult = keyNotDerived(parsed)
+          ? {
+              scope: toReadingScope(parsed.scope),
+              signatures: null,
+              signaturesTruncated: null,
+              note: SIGNATURES_NOT_READ_NOTE,
+            }
+          : {
+              scope: toReadingScope(parsed.scope),
+              signatures,
+              signaturesTruncated:
+                fieldCount > MAX_SIGNATURES
+                  ? { returned: signatures.length, total: fieldCount }
+                  : null,
+            };
         const text = renderBody(
           params.response_format === ResponseFormat.JSON,
           params.file_path,

@@ -15,7 +15,12 @@ import { extractPdfaId } from '../services/conformance.js';
 import type { ConformanceValidationReport } from '../services/conformance-validation.js';
 import { validateConformance } from '../services/conformance-validation.js';
 import { inventoryContent } from '../services/content-inventory.js';
-import { loadPdfDocument, parsePdf } from '../services/pdf-parser.js';
+import {
+  keyNotDerived,
+  loadPdfDocument,
+  parsePdf,
+  SIGNATURES_NOT_READ_NOTE,
+} from '../services/pdf-parser.js';
 import {
   evaluatePolicy,
   POLICY_PROFILES,
@@ -102,7 +107,7 @@ Returns:
 
   Size (v0.29.0): the verdict is computed over EVERY signature; facts.signatures lists at most 32 of them and facts.signaturesTruncated = { returned, total } says when it was cut. JSON is never cut by length.
 
-  facts.signatureCount counts signatures and leaves out document timestamps (facts.documentTimestampCount); facts.signatures lists both, so its length can be larger.
+  facts.signatureCount counts signatures and leaves out document timestamps (facts.documentTimestampCount); facts.signatures lists both, so its length can be larger. When the document is encrypted and the key could not be derived, the three are null with facts.note, POL-CAUTION-UNSIGNED does not fire, and POL-REVIEW-SIGNATURES-NOT-READ (human_review_required) does instead (v0.35.0): "could not look" is not "unsigned".
 
   verdict, firedRules (rule IDs with per-rule verdict and reason), advisories (recommendations that do not affect the verdict), and the underlying facts summary.
 
@@ -167,8 +172,10 @@ Examples:
           logger.debug(CONTEXT, `content inventory failed: ${message}`);
         }
 
+        // #31: without a key no signature field was looked for
+        const signaturesObserved = !keyNotDerived(parsed);
         const evaluation = evaluatePolicy(
-          { signatures, integrity, pades, conformance, content },
+          { signatures, integrity, pades, conformance, content, signaturesObserved },
           params.profile,
         );
         if (profile.longTermChecks && conformance === null) {
@@ -192,12 +199,19 @@ Examples:
           scope: toReadingScope(parsed.scope),
           ...evaluation,
           facts: {
-            // SPEC-VERIFY-COMMON-OUTPUT-002: the same meaning as verify_integrity's
-            signatureCount: signatures.filter((s) => !s.isDocumentTimestamp).length,
-            documentTimestampCount: signatures.filter((s) => s.isDocumentTimestamp).length,
+            // SPEC-VERIFY-COMMON-OUTPUT-002: the same meaning as verify_integrity's.
+            // SPEC-VERIFY-EVALUATE-POLICY-001 / COMMON-OUTPUT-003: null, not 0 or [],
+            // when the signature fields could not be looked for.
+            signatureCount: signaturesObserved
+              ? signatures.filter((s) => !s.isDocumentTimestamp).length
+              : null,
+            documentTimestampCount: signaturesObserved
+              ? signatures.filter((s) => s.isDocumentTimestamp).length
+              : null,
             // v0.29.0 (#18): the verdict above was computed over every
             // signature; only this listing is capped.
-            signatures: factSignatures.items,
+            signatures: signaturesObserved ? factSignatures.items : null,
+            ...(signaturesObserved ? {} : { note: SIGNATURES_NOT_READ_NOTE }),
             signaturesTruncated: factSignatures.truncated,
             revisionCount: integrity.revisionCount,
             incrementalUpdateCount: integrity.incrementalUpdateCount,

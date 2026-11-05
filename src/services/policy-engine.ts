@@ -120,6 +120,13 @@ export interface PolicyFacts {
    * says so, because "not counted" is not "0".
    */
   content?: ContentInventory | null;
+  /**
+   * `false` when the signature fields could not be looked for (an encrypted
+   * document whose key cannot be derived, #31). Then `signatures` is empty
+   * because nothing was read, not because nothing is there, and the rules
+   * that say "no signature" must stay silent. Absent = `true`.
+   */
+  signaturesObserved?: boolean;
 }
 
 export interface FiredRule {
@@ -135,6 +142,11 @@ export interface PolicyEvaluation {
   /** Recommendations that do not affect the verdict */
   advisories: string[];
   notes: string[];
+}
+
+/** Whether "no signature" was observed rather than not looked for (SPEC-VERIFY-EVALUATE-POLICY-002) */
+function signaturesObserved(facts: PolicyFacts): boolean {
+  return facts.signaturesObserved !== false;
 }
 
 /** Signatures that carry content (exclude document timestamps) */
@@ -214,15 +226,26 @@ const RULES: RuleDef[] = [
     ruleId: 'POL-REVIEW-UNSIGNED-REQUIRED',
     verdict: 'human_review_required',
     applies: (f, p) =>
-      p.requireSignature && contentSignatures(f).length === 0
+      p.requireSignature && signaturesObserved(f) && contentSignatures(f).length === 0
         ? `Profile "${p.id}" requires a signature; the document has none (an image of a signature is not an electronic signature)`
         : null,
+  },
+  {
+    // SPEC-VERIFY-EVALUATE-POLICY-002 (#31). Without this, a document that could
+    // not be read at all would fire nothing and come out as trust_and_use —
+    // the opposite of "any missing evidence fires a rule" stated above.
+    ruleId: 'POL-REVIEW-SIGNATURES-NOT-READ',
+    verdict: 'human_review_required',
+    applies: (f) =>
+      signaturesObserved(f)
+        ? null
+        : 'Signatures could not be looked for: the document is encrypted and the key could not be derived without a password (ISO 32000-2 §7.6.4.3.2). Whether it is signed, and whether a signature holds, is unknown — supply the password',
   },
   {
     ruleId: 'POL-CAUTION-UNSIGNED',
     verdict: 'use_with_caution',
     applies: (f, p) =>
-      !p.requireSignature && contentSignatures(f).length === 0
+      !p.requireSignature && signaturesObserved(f) && contentSignatures(f).length === 0
         ? 'No signatures: authenticity has no technical backing (verify provenance by other means)'
         : null,
   },

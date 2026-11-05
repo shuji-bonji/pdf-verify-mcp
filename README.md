@@ -177,7 +177,7 @@ A failed call returns `isError: true` with a JSON body in the PDF family shape. 
 | `INVALID_ARGUMENT` | Missing or relative path, a path that is not a regular file, an unknown `flavour`. The reason is in `detail.reason` | `true` |
 | `DOC_NOT_FOUND` | No file at the path | `false` |
 | `INVALID_PDF` | The file breaks an ISO 32000 structural clause named in `error` (a text file or an empty file breaks §7.5.2). **A finding about the file, not a server failure** | `false` |
-| `ENCRYPTED_PDF` | Encryption stops the check (supply `password`, or use `engine: "native"`) | `true` |
+| `ENCRYPTED_PDF` | Encryption stops the check. Supply `password`. A PDF/A check of a document whose key cannot be derived returns this whatever the engine (0.35.0); for a document whose key can be derived, `engine: "native"` runs the subset | `true` |
 | `WRONG_PASSWORD` | The supplied password is wrong | `true` |
 | `FILE_TOO_LARGE` | Over the size limit | `false` |
 | `INVALID_BYTE_RANGE` | A signature's `/ByteRange` is malformed | `false` |

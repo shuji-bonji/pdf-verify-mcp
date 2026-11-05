@@ -181,6 +181,23 @@ async function collectFieldNames(doc: PdfDocument): Promise<Map<number, string>>
   return names;
 }
 
+/**
+ * The document is encrypted and no key could be derived (the empty user
+ * password failed and no password was supplied, or the supplied one was
+ * wrong — ISO 32000-2 §7.6.4.3.2). Then not a single object was handed over:
+ * whatever had to be looked for (signature fields, XMP, OutputIntent) was
+ * NOT looked for, and must not be reported as absent (#31).
+ */
+export function keyNotDerived(parsed: Pick<ParsedPdf, 'isEncrypted' | 'scope'>): boolean {
+  return parsed.isEncrypted && !parsed.scope.authenticated;
+}
+
+/** Why signatures are `null` when {@link keyNotDerived} holds (verify_signatures, evaluate_policy). */
+export const SIGNATURES_NOT_READ_NOTE =
+  'The document is encrypted and the key could not be derived from the empty user password ' +
+  '(ISO 32000-2 §7.6.4.3.2), so the signature fields could not be looked for. This is not a ' +
+  'document without signatures. Supply the password parameter to read them.';
+
 export interface ParseOptions {
   /** Password for encrypted PDFs (empty string tries the user/permission key) */
   password?: string;

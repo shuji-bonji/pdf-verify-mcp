@@ -148,6 +148,15 @@ export function formatReadingScope(scope: ReadingScope): string[] {
 export function formatSignatureReports(result: SignatureVerificationResult): string {
   const reports = result.signatures;
   const scope = formatReadingScope(result.scope);
+  if (reports === null) {
+    return [
+      '# Signature Verification',
+      '',
+      ...scope,
+      '',
+      `Signatures: not read. ${result.note ?? ''}`.trim(),
+    ].join('\n');
+  }
   if (reports.length === 0) {
     // 🔴 ここに射程が要る。「署名が無い」と「読めた範囲に署名が無い」は別で、
     // 表を組み直した文書では後者になりうる。見出しの直後に置く。
@@ -371,13 +380,17 @@ interface PolicyReportForFormat {
   facts: {
     signatureCount: number | null;
     documentTimestampCount: number | null;
-    signatures: {
-      fieldName: string | null;
-      verdict: string;
-      trust: string;
-      revocation: string | null;
-      isDocumentTimestamp: boolean;
-    }[];
+    signatures:
+      | {
+          fieldName: string | null;
+          verdict: string;
+          trust: string;
+          revocation: string | null;
+          isDocumentTimestamp: boolean;
+        }[]
+      | null;
+    /** Why `signatures` is null */
+    note?: string;
     signaturesTruncated: Truncation | null;
     revisionCount: number;
     incrementalUpdateCount: number;
@@ -414,7 +427,10 @@ export function formatPolicyReport(report: PolicyReportForFormat): string {
   } else {
     lines.push('', 'No rules fired — every positive condition for trust_and_use is satisfied.');
   }
-  if (report.facts.signatures.length > 0) {
+  const signatureFacts = report.facts.signatures;
+  if (signatureFacts === null) {
+    lines.push('', '## Signature facts', `- Not read. ${report.facts.note ?? ''}`.trimEnd());
+  } else if (signatureFacts.length > 0) {
     lines.push('', '## Signature facts');
     lines.push(
       ...truncationLine(
@@ -422,7 +438,7 @@ export function formatPolicyReport(report: PolicyReportForFormat): string {
         report.facts.signaturesTruncated,
       ),
     );
-    for (const s of report.facts.signatures) {
+    for (const s of signatureFacts) {
       const kind = s.isDocumentTimestamp ? ' (document timestamp)' : '';
       lines.push(
         `- ${s.fieldName ?? '(unnamed)'}${kind}: verdict=${s.verdict}, trust=${s.trust}, revocation=${s.revocation ?? 'n/a'}`,

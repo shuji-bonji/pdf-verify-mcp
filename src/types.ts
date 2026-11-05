@@ -24,7 +24,14 @@ export type { ReadingScope, XrefKind } from '@normativepdf/recover';
 export interface SignatureVerificationResult {
   /** どこまで読んだか。**判定ではない。** */
   scope: ReadingScope;
-  signatures: SignatureVerificationReport[];
+  /**
+   * 🔴 `null` is not `[]`. `[]` = signature fields were looked for and none is
+   * signed; `null` = they could not be looked for (an encrypted document whose
+   * key cannot be derived, #31). The reason is in `note`.
+   */
+  signatures: SignatureVerificationReport[] | null;
+  /** Why `signatures` is null */
+  note?: string;
   /**
    * Set when the file holds more signature fields than `MAX_SIGNATURES`
    * (v0.29.0). The fields beyond the cap were **not verified**: nothing is
@@ -227,9 +234,13 @@ export interface IntegrityReport {
    * counting document timestamps** — the same meaning in every tool
    * (SPEC-VERIFY-COMMON-OUTPUT-002; 0.34.0 counted them here).
    */
-  signatureCount: number;
-  /** Signed document timestamp dictionaries (/Type /DocTimeStamp, ISO 32000-2 §12.8.5) */
-  documentTimestampCount: number;
+  signatureCount: number | null;
+  /**
+   * Signed document timestamp dictionaries (/Type /DocTimeStamp, ISO 32000-2 §12.8.5).
+   * Both counts are `null` — not 0 — when the key could not be derived and no
+   * signature dictionary could be looked for (SPEC-VERIFY-COMMON-OUTPUT-003).
+   */
+  documentTimestampCount: number | null;
   /** Signatures whose signed range is followed by additional bytes */
   signaturesWithLaterChanges: {
     fieldName: string | null;

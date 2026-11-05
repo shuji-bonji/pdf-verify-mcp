@@ -31,7 +31,7 @@ const ValidateConformanceSchema = z
       .string()
       .optional()
       .describe(
-        'Password for an encrypted PDF (PDF/UA validation only — the document is decrypted before checking structure-dependent rules). Omit for permission-encrypted PDFs (an empty user password is tried automatically).',
+        'Password for an encrypted PDF. Omit for permission-encrypted PDFs (an empty user password is tried automatically). Without it, a PDF/A validation of a document whose key cannot be derived returns ENCRYPTED_PDF whatever the engine (v0.35.0); PDF/UA validation reports the structure-dependent rules as not checked.',
       ),
   })
   .strict();
@@ -60,7 +60,7 @@ Args:
   - response_format ('markdown' | 'json'): Output format (default: 'markdown')
   - flavour (string, optional): e.g. "pdfa-2b", "pdfa-4", "pdfa-4f", "pdfua-1". Defaults to the XMP declaration (PDF/A wins when both are declared; fallback: pdfa-2b). PDF/A-4 has no A/B/U level, so there is no "pdfa-4b"
   - engine ('auto' | 'verapdf' | 'native'): Engine selection (default: 'auto')
-  - password (string, optional): Password for an encrypted PDF. PDF/UA validation decrypts the document first so structure rules see real structures; permission-encrypted PDFs (empty user password) are decrypted automatically
+  - password (string, optional): Password for an encrypted PDF. The document is decrypted first so the rules see real structures; permission-encrypted PDFs (empty user password) are decrypted automatically. PDF/A without a derivable key: ENCRYPTED_PDF with next_actions naming the password (v0.35.0) — not a list of violations for objects that were never read
 
 When veraPDF does not run, the report says so before the numbers: authoritativeValidation.performed is false and names the reason ("not_installed", "configured_path_unusable" when PDF_VERIFY_VERAPDF points at something that is not executable, or "native_engine_requested"). A configured-but-unusable path is never silently replaced by another executable. With engine: "verapdf" the call fails instead of falling back to native: the error code is VERAPDF_NOT_AVAILABLE when PDF_VERIFY_VERAPDF is set but unusable, and VERAPDF_NOT_FOUND when veraPDF is in none of PDF_VERIFY_VERAPDF, PATH or the well-known install locations.
 

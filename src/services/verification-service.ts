@@ -42,7 +42,7 @@ import {
   verifyTimestampImprint,
   verifyTimestampToken,
 } from './cms-verifier.js';
-import { coversEntireFile, extractSignedBytes } from './pdf-parser.js';
+import { coversEntireFile, extractSignedBytes, keyNotDerived } from './pdf-parser.js';
 import { diffRevisions } from './revision-diff.js';
 import {
   checkRevocation,
@@ -832,8 +832,13 @@ async function analyze(parsed: ParsedPdf): Promise<Omit<IntegrityReport, 'scope'
     fileSize: parsed.fileSize,
     revisionCount: parsed.revisionCount,
     incrementalUpdateCount: Math.max(0, parsed.revisionCount - 1),
-    signatureCount: signed.filter((s) => !s.isDocumentTimestamp).length,
-    documentTimestampCount: signed.filter((s) => s.isDocumentTimestamp).length,
+    // SPEC-VERIFY-COMMON-OUTPUT-003: "could not look" is not "0"
+    signatureCount: keyNotDerived(parsed)
+      ? null
+      : signed.filter((s) => !s.isDocumentTimestamp).length,
+    documentTimestampCount: keyNotDerived(parsed)
+      ? null
+      : signed.filter((s) => s.isDocumentTimestamp).length,
     signaturesWithLaterChanges,
     certification,
     lastSignatureCoversFile: lastCovers,

@@ -24,7 +24,7 @@ import type { ParsedPdf, ReadingScope, Truncation } from '../types.js';
 import { invalidArgument, PdfVerifyError } from '../utils/error-handler.js';
 import { capArray } from '../utils/truncation.js';
 import { extractPdfaId, extractPdfuaPart } from './conformance.js';
-import { loadPdfDocument } from './pdf-parser.js';
+import { keyNotDerived, loadPdfDocument } from './pdf-parser.js';
 import { type PdfaFlavour, resolveFlavour, validatePdfaNative } from './pdfa-validator.js';
 import { type PdfuaFlavour, resolvePdfuaFlavour, validatePdfuaNative } from './pdfua-validator.js';
 import { decryptedCopy } from './plaintext-copy.js';
@@ -297,6 +297,34 @@ async function validate(
       'INVALID_FLAVOUR',
     );
   }
+  // SPEC-VERIFY-VALIDATE-CONFORMANCE-016 (#31): without a key not one object
+  // was read, so XMP, OutputIntent, fonts … would all be counted as missing.
+  // A verdict that skips nearly every rule has no use; refuse the same way
+  // whichever engine is in play (0.34.0 refused only when veraPDF was there).
+  if (keyNotDerived(parsed)) {
+    if (options.password !== undefined) {
+      throw new PdfVerifyError(
+        'The supplied password is wrong, or the security handler is unsupported',
+        'WRONG_PASSWORD',
+        'Check the password; only the Standard security handler is supported',
+      );
+    }
+    throw new PdfVerifyError(
+      'Document is encrypted and the key could not be derived from the empty user password, so no object could be read for PDF/A validation',
+      'ENCRYPTED_PDF',
+      'Supply the password parameter. Without it nothing beyond the encryption itself can be judged; PDF/A forbids encryption (ISO 19005-1, 6.1.3), but the other rules were not checked, not passed.',
+      undefined,
+      [
+        {
+          action: 'validate_conformance',
+          reason:
+            'Call again with the user password so the document can be decrypted and every rule checked.',
+          example: { file_path: filePath, password: '<user password>' },
+        },
+      ],
+    );
+  }
+
   if (!flavour) {
     flavour = { part: 2, conformance: 'B' };
     notes.push(

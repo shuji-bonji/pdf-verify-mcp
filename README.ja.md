@@ -171,7 +171,7 @@ PDF/UA のネイティブ違反には `severity` が付きます。`error` の�
 | `INVALID_ARGUMENT` | パスが無い・相対パス・通常のファイルでない・知らない `flavour`。理由は `detail.reason` | `true` |
 | `DOC_NOT_FOUND` | パスにファイルが無い | `false` |
 | `INVALID_PDF` | ファイルが ISO 32000 の構造の条文に反している（条文は `error` にあります。テキストのファイルや 0 バイトのファイルは §7.5.2 に反します）。**サーバーの故障ではなく、文書についての所見です** | `false` |
-| `ENCRYPTED_PDF` | 暗号化のため判定を進めない（`password` を渡すか、`engine: "native"` を使います） | `true` |
+| `ENCRYPTED_PDF` | 暗号化のため判定を進めない。`password` を渡してください。鍵を導けない文書の PDF/A の判定は、エンジンにかかわらずこのコードになります（0.35.0）。鍵を導ける文書なら `engine: "native"` で内蔵の規則を当てられます | `true` |
 | `WRONG_PASSWORD` | 渡したパスワードが違う | `true` |
 | `FILE_TOO_LARGE` | サイズの上限を超えた | `false` |
 | `INVALID_BYTE_RANGE` | 署名の `/ByteRange` が壊れている | `false` |

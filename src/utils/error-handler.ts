@@ -52,6 +52,17 @@ export const RETRYABLE: Readonly<Record<VerifyErrorCode, boolean>> = {
   INTERNAL_ERROR: false,
 };
 
+/**
+ * 次に取る手の候補（pdf-agent-stack `docs/specs/06` §2.3。reader・writer と同じ形）。
+ * 🔴 `action` と `example` のキーは受け側の Skill が分岐と再試行に使う。値を変えない。
+ */
+export interface NextAction {
+  action: string;
+  /** 英語の 1 文 */
+  reason: string;
+  example?: Record<string, unknown>;
+}
+
 /** pdf-verify-mcp specific error with a stable code and a recovery hint */
 export class PdfVerifyError extends Error {
   constructor(
@@ -59,6 +70,7 @@ export class PdfVerifyError extends Error {
     public readonly code: VerifyErrorCode,
     public readonly hint?: string,
     public readonly reason?: InvalidArgumentReason,
+    public readonly nextActions?: NextAction[],
   ) {
     super(message);
     this.name = 'PdfVerifyError';
@@ -90,6 +102,8 @@ export interface StructuredError {
   code: VerifyErrorCode;
   retryable: boolean;
   hint?: string;
+  /** 書くことがあるときだけ置く（SPEC-VERIFY-COMMON-ERRORS-001。0.35.0 は ENCRYPTED_PDF の 1 か所） */
+  next_actions?: NextAction[];
   /** 書くことがあるときだけ置く（`INVALID_ARGUMENT` の細かい理由） */
   detail?: {
     reason?: InvalidArgumentReason;
@@ -99,13 +113,16 @@ export interface StructuredError {
 function toBody(
   error: string,
   code: VerifyErrorCode,
-  options: { hint?: string; reason?: InvalidArgumentReason } = {},
+  options: { hint?: string; reason?: InvalidArgumentReason; nextActions?: NextAction[] } = {},
 ): StructuredError {
   return {
     error,
     code,
     retryable: RETRYABLE[code],
     ...(options.hint !== undefined ? { hint: options.hint } : {}),
+    ...(options.nextActions && options.nextActions.length > 0
+      ? { next_actions: options.nextActions }
+      : {}),
     ...(options.reason !== undefined ? { detail: { reason: options.reason } } : {}),
   };
 }
@@ -113,7 +130,11 @@ function toBody(
 /** Convert any thrown value into a structured error payload */
 export function handleStructuredError(error: unknown): StructuredError {
   if (error instanceof PdfVerifyError) {
-    return toBody(error.message, error.code, { hint: error.hint, reason: error.reason });
+    return toBody(error.message, error.code, {
+      hint: error.hint,
+      reason: error.reason,
+      nextActions: error.nextActions,
+    });
   }
   const message = error instanceof Error ? error.message : String(error);
   return toBody(message, 'INTERNAL_ERROR');

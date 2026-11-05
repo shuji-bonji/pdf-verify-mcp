@@ -29,7 +29,7 @@ const TOOLS = [
 ] as const;
 
 /** 契約の最上位の項目（001）。0.33.x の移行の版の `message`・`suggestion` は 0.34.0 で外した */
-const TOP_LEVEL = ['error', 'code', 'retryable', 'hint', 'detail'];
+const TOP_LEVEL = ['error', 'code', 'retryable', 'hint', 'next_actions', 'detail'];
 
 interface ErrorBody {
   error: unknown;
