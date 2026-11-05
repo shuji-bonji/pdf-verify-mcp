@@ -6,19 +6,19 @@
 
 ## 1. 受入テスト（先に落ちることを確かめる）
 
-- [ ] 1.1 `tests/unit/common-output.test.ts` を足す。名前を「SPEC-VERIFY-COMMON-OUTPUT-<3 桁> <Scenario 名>」で始める。ツールは McpServer に登録した実物を in-memory の transport で呼ぶ（`error-contract.test.ts` と同じ）
-- [ ] 1.2 変更前の `src/` で落ちることを確かめる
+- [x] 1.1 `tests/unit/common-output.test.ts` を足す。名前を「SPEC-VERIFY-COMMON-OUTPUT-<3 桁> <Scenario 名>」で始める。ツールは McpServer に登録した実物を in-memory の transport で呼ぶ（`error-contract.test.ts` と同じ）
+- [x] 1.2 変更前の `src/` で落ちることを確かめる
 
 ## 2. 実装
 
-- [ ] 2.1 `src/utils/formatter.ts` の `renderBody` が `file_path` を受け取り、JSON の最初の項目と markdown の見出しの次の行に書く。7 ツールの呼び出しを直す
-- [ ] 2.2 `analyzeIntegrity` の `signatureCount` から文書タイムスタンプを除き、`documentTimestampCount` を足す。`evaluate_policy` の `facts` にも足す。markdown の「Signatures:」の行を直す
-- [ ] 2.3 ツールの説明（description）に `file_path` と `documentTimestampCount` を書く
-- [ ] 2.4 CI の一覧が終了コード 0
+- [x] 2.1 `src/utils/formatter.ts` の `renderBody` が `file_path` を受け取り、JSON の最初の項目と markdown の見出しの次の行に書く。7 ツールの呼び出しを直す
+- [x] 2.2 `analyzeIntegrity` の `signatureCount` から文書タイムスタンプを除き、`documentTimestampCount` を足す。`evaluate_policy` の `facts` にも足す。markdown の「Signatures:」の行を直す
+- [x] 2.3 ツールの説明（description）に `file_path` と `documentTimestampCount` を書く
+- [x] 2.4 CI の一覧が終了コード 0
 
 ## 3. 確認
 
-- [ ] 3.1 `tools/list` の差がツールの説明の文だけであることを確かめる
+- [x] 3.1 `tools/list` の差がツールの説明の文だけであることを確かめる
 
 ## 4. 承認と取り込み（人が判断する）
 

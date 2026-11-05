@@ -2,6 +2,59 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+Proposed version: 0.35.0 (the maintainer decides). OpenSpec changes
+`revision-diff-reads-past-contents` (SPEC-VERIFY-VERIFY-INTEGRITY-001–002, new capability),
+`signature-count-and-file-path` (SPEC-VERIFY-COMMON-OUTPUT-001–002, new capability) and
+`unauthenticated-encrypted-document` (SPEC-VERIFY-VALIDATE-CONFORMANCE-010 modified, -016;
+SPEC-VERIFY-COMMON-ERRORS-001 modified; SPEC-VERIFY-EVALUATE-POLICY-001–002 and
+SPEC-VERIFY-VERIFY-SIGNATURES-001, new capabilities; SPEC-VERIFY-COMMON-OUTPUT-003).
+
+### Changed (breaking)
+
+- **`signatureCount` no longer counts document timestamps in `verify_integrity`** (#34, F-17).
+  It now means the same in every tool: signed signature dictionaries other than
+  `/Type /DocTimeStamp`. Document timestamps are counted in the new `documentTimestampCount`,
+  in `verify_integrity` and in `evaluate_policy` `facts`. A file with one signature and one
+  document timestamp used to report `signatureCount: 2` from `verify_integrity` and `1` from
+  `evaluate_policy`; both now report `1`, with `documentTimestampCount: 1`.
+- **An encrypted document whose key cannot be derived is no longer reported as unsigned or as
+  failing PDF/A rules it could not read** (#31, F-02, F-03). Without a `password`:
+  - `validate_conformance` (PDF/A) returns `ENCRYPTED_PDF` (`retryable: true`) whatever the
+    engine. 0.34.0 returned the error only when veraPDF was present, and otherwise listed
+    "no pdfaid in XMP" and "no OutputIntent" as violations. The error carries
+    `next_actions: [{ action: "validate_conformance", example: { file_path, password } }]`.
+    PDF/UA validation is unchanged (structure rules are reported as not checked).
+  - `verify_signatures` returns `signatures: null` with a `note`, not `[]`.
+  - `evaluate_policy` returns `facts.signatures`, `facts.signatureCount` and
+    `facts.documentTimestampCount` as `null` with `facts.note`. `POL-CAUTION-UNSIGNED` and
+    `POL-REVIEW-UNSIGNED-REQUIRED` no longer fire; the new rule
+    `POL-REVIEW-SIGNATURES-NOT-READ` (`human_review_required`) fires instead, so the verdict
+    moves from `use_with_caution` to `human_review_required`.
+  - `verify_integrity` returns `signatureCount` and `documentTimestampCount` as `null`.
+
+### Added
+
+- **Every successful response starts with `file_path`**, the path as received (#34, F-29), so
+  answers to calls made side by side can be matched to their inputs. Markdown shows it as
+  `File: <path>` under the heading. Error bodies are unchanged.
+- Error bodies may carry `next_actions` (`action`, `reason`, `example`), as in pdf-reader-mcp
+  and pdf-writer-mcp. Only the `ENCRYPTED_PDF` above uses it.
+
+### Fixed
+
+- **`verify_integrity` reads `/Type` after a long `/Contents`** (#33, F-24). The revision diff
+  scanned only the first 4,096 bytes of a changed object, so a signature dictionary that
+  wrote its `/Contents` hex string before `/Type` came out as `type: null`,
+  `changeClass: "unknown"`, and a lawful signature added to a P=2 / P=3 certified document
+  was assessed `indeterminate`. The scan now skips strings and reads until the dictionary
+  closes (capped at 1 MiB). An untyped dictionary with `/Filter`, `/ByteRange` and
+  `/Contents` is read as a signature dictionary (ISO 32000-2 Table 255: `Type` is optional
+  with the default `Sig`).
+- `openspec/changes/remove-legacy-error-names/` (left behind on `main` after the 0.34.0 archive)
+  is removed; `npx openspec validate --all` failed on it.
+
 ## [0.34.0] - 2026-11-05
 
 Target version: 0.34.0. OpenSpec change `remove-legacy-error-names`
