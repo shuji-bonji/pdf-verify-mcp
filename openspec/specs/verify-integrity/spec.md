@@ -1,7 +1,12 @@
+---
+spec_id: VERIFY
+kind: tool
+introduced_by: revision-diff-reads-past-contents
+---
 # verify-integrity Specification
 
 ## Purpose
-TBD - created by archiving change revision-diff-reads-past-contents. Update Purpose after archive.
+`verify_integrity` ツールが、署名の後の増分更新と改ざんを報告するときの規則を定めます。この初版には、リビジョン差分で変わったオブジェクトの種類（`type`・`role`・`changeClass`）を、辞書のキーの順序や文字列の長さにかかわらず読む振る舞いと、`/Type` の無い署名の辞書を ISO 32000-2 Table 255 の必須の項目で見分ける振る舞いだけを書きます。DocMDP の評価・`revisionChain`・`revisionCountAgreement` は既存のテスト（`tests/unit/verify-integrity.test.ts`）が固定していて、ここでは起こしていません。
 
 ## Requirements
 

@@ -1,7 +1,12 @@
+---
+spec_id: VERIFY
+kind: common
+introduced_by: signature-count-and-file-path
+---
 # common-output Specification
 
 ## Purpose
-TBD - created by archiving change signature-count-and-file-path. Update Purpose after archive.
+7 ツールに共通する、成功の応答の項目を定めます。応答がどのファイルについての答えか（`file_path`）と、署名の数（`signatureCount`・`documentTimestampCount`）が何を数えたものかを、ツールによらず同じ意味にします。鍵を導けない暗号化文書では、数えられなかった数を `0` ではなく `null` で返します。エラーの本文の形は `common-errors` が扱います。
 
 ## Requirements
 

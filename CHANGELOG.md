@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.35.0] - 2026-11-06
 
 Proposed version: 0.35.0 (the maintainer decides). OpenSpec changes
 `revision-diff-reads-past-contents` (SPEC-VERIFY-VERIFY-INTEGRITY-001–002, new capability),

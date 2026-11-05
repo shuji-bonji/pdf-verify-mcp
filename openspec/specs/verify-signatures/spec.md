@@ -1,7 +1,12 @@
+---
+spec_id: VERIFY
+kind: tool
+introduced_by: unauthenticated-encrypted-document
+---
 # verify-signatures Specification
 
 ## Purpose
-TBD - created by archiving change unauthenticated-encrypted-document. Update Purpose after archive.
+`verify_signatures` ツールが、署名の暗号学的な検証と、信頼・失効の評価を報告するときの規則を定めます。この初版には、鍵を導けない暗号化文書で署名フィールドを探せなかったことを、空の一覧ではなく `signatures: null` と `note` で示す振る舞いだけを書きます。検証の中身は既存のテスト（`tests/unit/verify-signatures.test.ts`）が固定しています。
 
 ## Requirements
 

@@ -1,7 +1,12 @@
+---
+spec_id: VERIFY
+kind: tool
+introduced_by: unauthenticated-encrypted-document
+---
 # evaluate-policy Specification
 
 ## Purpose
-TBD - created by archiving change unauthenticated-encrypted-document. Update Purpose after archive.
+`evaluate_policy` ツールが、署名・改ざん・長期保存などの事実から決定論的な規則で判定（`verdict`）を下すときの規則を定めます。この初版には、鍵を導けない暗号化文書で署名フィールドを探せなかったことを「署名が無い」と数えず、`null` と `note` で示し、読めなかった文書を `trust_and_use` にしない振る舞いだけを書きます。規則の全体は既存のテスト（`tests/unit/evaluate-policy.test.ts`）が固定しています。
 
 ## Requirements
 
