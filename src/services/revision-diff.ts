@@ -64,8 +64,17 @@ import { logger } from '../utils/logger.js';
 
 const CONTEXT = 'revision-diff';
 
-/** How far past an object's offset the type peek is willing to read. */
-const OBJECT_PEEK_BYTES = 4096;
+/**
+ * How far past an object's offset the type peek is willing to read.
+ *
+ * 0.34.0 used a 4,096-byte window, and a signature dictionary that wrote its
+ * /Contents (a hex string of several kilobytes) before /Type lost its type
+ * (#33: /Type at byte 14,901 of the object). The scan now skips strings and
+ * stops when the dictionary closes; this cap only guards against a dictionary
+ * that never closes, so a malformed file cannot make every peek run to EOF.
+ * Signature /Contents allocations are tens of kilobytes in practice.
+ */
+const OBJECT_SCAN_LIMIT = 1024 * 1024;
 /**
  * Upper bound on the object changes listed per revision. A full rewrite (a
  * "Save As" rather than an incremental update) can touch six figures of
@@ -123,16 +132,18 @@ function readName(bytes: Uint8Array, index: number): { name: string; next: numbe
  */
 function peekObject(bytes: Uint8Array, offset: number): PeekedObject | null {
   if (offset <= 0 || offset >= bytes.length) return null;
-  const window = bytes.subarray(offset, Math.min(bytes.length, offset + OBJECT_PEEK_BYTES));
+  const window = bytes.subarray(offset, Math.min(bytes.length, offset + OBJECT_SCAN_LIMIT));
   const objNum = readToken(window, 0);
   const gen = objNum ? readToken(window, objNum.next) : null;
   const objKeyword = gen ? readToken(window, gen.next) : null;
   if (!objNum || !gen || !objKeyword || objKeyword.token !== 'obj') return null;
 
-  // The dictionary is scanned from `<<` to the end of the window rather than
-  // to a matching `>>`: a signature dictionary's /Contents is a hex string of
-  // several kilobytes, so requiring the closing marker inside the window would
-  // lose the type of exactly the objects that matter most here.
+  // The dictionary is scanned from `<<` until it closes (depth back to 0).
+  // Strings are skipped to their closing delimiter, so a long /Contents ahead
+  // of /Type no longer hides the type (SPEC-VERIFY-VERIFY-INTEGRITY-001). Key
+  // order is not fixed by ISO 32000-2 §7.3.7, so every order must give the
+  // same answer. A window cut short (scan limit, end of file) still yields
+  // the keys read so far.
   const dictStart = skipWhitespace(window, objKeyword.next);
   if (window[dictStart] !== 0x3c || window[dictStart + 1] !== 0x3c) {
     return { type: null, subtype: null, keys: [] };
@@ -195,6 +206,17 @@ function peekObject(bytes: Uint8Array, offset: number): PeekedObject | null {
   return { type, subtype, keys };
 }
 
+/**
+ * A signature dictionary may omit /Type — it is Optional with the default
+ * `Sig` (ISO 32000-2 §12.8.1 Table 255) — so an untyped dictionary carrying
+ * the entries Table 255 requires of a field signature (/Filter, /Contents,
+ * and /ByteRange) is read as one (SPEC-VERIFY-VERIFY-INTEGRITY-002).
+ * /SubFilter is Optional and is not part of the test.
+ */
+function isUntypedSignatureDictionary(keys: string[]): boolean {
+  return keys.includes('Filter') && keys.includes('ByteRange') && keys.includes('Contents');
+}
+
 /** Plain-language role, so a report does not have to teach PDF object types. */
 function describeRole(peeked: PeekedObject | null): string | null {
   if (!peeked) return null;
@@ -221,6 +243,7 @@ function describeRole(peeked: PeekedObject | null): string | null {
   if (type === 'StructTreeRoot' || type === 'StructElem') return 'logical structure';
   if (type === 'OCG' || type === 'OCMD') return 'optional content';
   if (type !== null) return type;
+  if (isUntypedSignatureDictionary(keys)) return 'signature dictionary';
   if (keys.includes('Fields') && (keys.includes('SigFlags') || keys.includes('DA'))) {
     return 'interactive form dictionary (AcroForm)';
   }
@@ -268,6 +291,7 @@ function classifyChange(peeked: PeekedObject | null, bookkeeping: boolean): DocM
   if (type !== null) return 'content';
 
   // Untyped dictionaries — identified by the keys they carry.
+  if (isUntypedSignatureDictionary(keys)) return 'signature';
   if (keys.includes('Fields') && (keys.includes('SigFlags') || keys.includes('DA')))
     return 'form-fill';
   if (keys.includes('Kids') && keys.includes('Fields')) return 'form-fill';
