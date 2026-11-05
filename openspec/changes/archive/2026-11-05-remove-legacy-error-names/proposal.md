@@ -1,6 +1,6 @@
 ---
 approved: 2026-11-05
-pr: 35
+pr: 37
 implementation: required
 targets: [common-errors]
 ---
@@ -9,7 +9,7 @@ targets: [common-errors]
 
 ## Why
 
-0.33.0（変更 `family-error-contract`、#35）はエラー応答を PDF family の形（pdf-agent-stack `docs/specs/06` §2.3）に移し、移行の版として 1 つの minor のあいだだけ旧い名前も返すと決めました（SPEC-VERIFY-COMMON-ERRORS-006。2026-11-04 決定）。その minor が 0.33.x で、次の minor（0.34.0）で外すことになっています。
+0.33.0（変更 `family-error-contract`、#37）はエラー応答を PDF family の形（pdf-agent-stack `docs/specs/06` §2.3）に移し、移行の版として 1 つの minor のあいだだけ旧い名前も返すと決めました（SPEC-VERIFY-COMMON-ERRORS-006。2026-11-04 決定）。その minor が 0.33.x で、次の minor（0.34.0）で外すことになっています。
 
 受け側の準備は済んでいます（2026-11-05 時点）。
 

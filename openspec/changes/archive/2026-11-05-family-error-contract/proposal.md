@@ -9,7 +9,7 @@ targets: [common-errors]
 
 ## Why
 
-PDF family のエラー応答の規約（pdf-agent-stack `docs/specs/06` §2.3。2026-11-04 改訂、pdf-agent-stack#48）は、ツール結果の本文を平らな JSON（`error` 英語の文・`code`・`retryable` が必須、`hint`・`next_actions`・`detail` が任意）にし、同じ状況には同じ `code`（houki-hub family の共通語彙）を返すと定めました。reader・writer・spec はこの形でそろっていて、ずれているのは verify だけです（pdf-verify-mcp#35）。
+PDF family のエラー応答の規約（pdf-agent-stack `docs/specs/06` §2.3。2026-11-04 改訂、pdf-agent-stack#48）は、ツール結果の本文を平らな JSON（`error` 英語の文・`code`・`retryable` が必須、`hint`・`next_actions`・`detail` が任意）にし、同じ状況には同じ `code`（houki-hub family の共通語彙）を返すと定めました。reader・writer・spec はこの形でそろっていて、ずれているのは verify だけです（pdf-verify-mcp#37）。
 
 0.32.2 の `identify_conformance` に 4 種類の失敗の入力を渡した結果（pdf-agent-stack `eval/e2e/tests/s6-error-contract.test.mjs`）:
 

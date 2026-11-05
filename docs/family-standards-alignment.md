@@ -10,7 +10,7 @@ verify はほぼ準拠済み: McpServer + registerTool + zod、annotations、std
 
 ## 残タスク（優先度順）
 
-1. **エラー応答の語彙を reader 形式へ寄せる** —— ✅ 0.33.0 で対応（#35・pdf-agent-stack#48。
+1. **エラー応答の語彙を reader 形式へ寄せる** —— ✅ 0.33.0 で対応（#37・pdf-agent-stack#48。
    規約 §2.3 は 2026-11-04 に平らな形へ改訂。正本は `openspec/specs/common-errors/`）。以下は当時の記述
    現在の `PdfVerifyError` は `code` + `suggestion`。family 標準（規約 §2.3）は
    `code` / `retryable` / `hint` / `next_actions`。内部クラスは維持してよく、

@@ -23,7 +23,7 @@ Target version: 0.34.0. OpenSpec change `remove-legacy-error-names`
 
 ### Changed (breaking for callers that branch on error codes)
 
-- **Error responses now use the PDF family shape and vocabulary** (#35, pdf-agent-stack#48,
+- **Error responses now use the PDF family shape and vocabulary** (#37, pdf-agent-stack#48,
   `docs/specs/06` §2.3; SPEC-VERIFY-COMMON-ERRORS-001–006). The body of an `isError: true`
   result is `{ error, code, retryable, hint?, detail }`: `error` is the English sentence that
   used to be `message`, `hint` is what used to be `suggestion`, and `retryable` is always
